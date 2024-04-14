@@ -28,7 +28,7 @@ index_html = """
 # Creating links that point to the HTML files in the data/HTML directory
 for file in files:
     display_name = file.replace('_', ' ').replace('.html', '')
-    index_html += f'<li><a href="data/HTML/{file}" target="contentFrame">{display_name}</a></li>\n'
+    index_html += f'<li><a href="{file}" target="contentFrame">{display_name}</a></li>\n'
 
 index_html += """
         </ul>
@@ -41,6 +41,6 @@ index_html += """
 """
 
 # Save the index.html in the root directory
-index_file_path = os.path.join(root_directory, "index.html")
+index_file_path = os.path.join(directory, "index.html")
 with open(index_file_path, "w") as f:
     f.write(index_html)
