@@ -1,0 +1,15 @@
+name: finance_env
+channels:
+  - defaults
+  - conda-forge  # Optional: for additional package versions and availability
+dependencies:
+  - python=3.9.6  # Specify the latest version of Python you want to use
+  - ipykernel
+  - pip
+  - pip:
+      - yfinance
+      - plotly
+      - jinja2
+      - markdown2
+      - IPython
+      - dash
