@@ -13,3 +13,4 @@ dependencies:
       - markdown2
       - IPython
       - dash
+      - opencv-python
