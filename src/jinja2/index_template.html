@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Futures Charts Index</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            height: 100vh;
+            margin: 0; /* Ensure no margin */
+            padding: 0; /* Ensure no padding */
+        }
+
+        #navbar {
+            overflow-y: auto;
+            width: 150px; /* Fixed width of the navigation bar */
+            height: 100%;
+            border-right: 1px solid #ccc;
+        }
+
+        #content {
+            flex-grow: 1; /* Content area takes up remaining space */
+        }
+
+        iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="navbar">
+        <ul style="list-style-type: none; padding: 20px;">
+            {% for file in files %}
+            {% set display_name = file.split('_')[-1].replace('.html', '') %}
+            <li><a href="{{ file }}" target="contentFrame">{{ display_name }}</a></li>
+            {% endfor %}
+        </ul>
+    </div>
+    <div id="content">
+        <iframe name="contentFrame"></iframe>
+    </div>
+</body>
+</html>

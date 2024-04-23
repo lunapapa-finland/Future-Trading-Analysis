@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Data Visualization</title>
+    <link rel="stylesheet" href="./src/styles.css">
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    {% if fig_assemble_json %}
+    <script id="plot_assemble_data" type="application/json">{{ fig_assemble_json|safe }}</script>
+    {% endif %}
+    <script id="plot_statistic_data" type="application/json">{{ fig_statistic_json|safe }}</script>
+
+</head>
+<body>
+    {% if fig_assemble_json %}
+    <div id='plot_assemble'></div>
+    {% endif %}
+    <div class="button-container">
+        <button onclick='toggleAllTrades()'>Trading Details</button>
+        <button onclick='toggleSummary()'>Summary</button>
+        {% if fig_assemble_json %}
+        <button onclick="replayCandlesticks()">Clear Candle for Replay</button>
+        {% endif %}
+    </div>
+    <div id='plot_statistic' style='display: none;'></div>
+    <div id='plot_summary' style='display: none;'>{{ html_summary|safe }}</div>
+
+    <script src="./src/plot_data.js"></script>
+    <script src="./src/interaction_handlers.js"></script>
+</body>
+</html>

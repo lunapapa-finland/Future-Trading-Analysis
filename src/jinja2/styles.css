@@ -1,0 +1,9 @@
+#plot_assemble, #plot_statistic, #plot_summary {
+    width: 95vw;
+    height: 95vh;
+    transition: width 0.5s ease-in-out, height 0.5s ease-in-out;
+}
+
+.button-container {
+    margin-top: 20px;
+}

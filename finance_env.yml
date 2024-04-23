@@ -1,9 +1,9 @@
 name: finance_env
 channels:
   - defaults
-  - conda-forge  # Optional: for additional package versions and availability
+  - conda-forge  
 dependencies:
-  - python=3.9.6  # Specify the latest version of Python you want to use
+  - python=3.9.6 
   - ipykernel
   - pip
   - pip:
@@ -14,3 +14,4 @@ dependencies:
       - IPython
       - dash
       - opencv-python
+      - cookiecutter
