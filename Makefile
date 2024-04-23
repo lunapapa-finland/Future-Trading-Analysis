@@ -1,4 +1,4 @@
-.PHONY: clean data 
+.PHONY: clean data report test_environment setup
 
 #################################################################################
 # GLOBALS                                                                       #
@@ -8,11 +8,6 @@ PROJECT_DIR := $(shell dirname $(realpath $(lastword $(MAKEFILE_LIST))))
 PROJECT_NAME = Future_Trading_Analysis
 PYTHON_INTERPRETER = python3
 
-ifeq (,$(shell which conda))
-HAS_CONDA=False
-else
-HAS_CONDA=True
-endif
 
 #################################################################################
 # COMMANDS                                                                      #
@@ -22,10 +17,12 @@ endif
 ## Make Dataset
 data: setup
 	$(PYTHON_INTERPRETER) src/data/get_dataset.py
+	@$(MAKE) clean
 
 ## Generate Analysis
 report: setup
 	$(PYTHON_INTERPRETER) src/visualization/generate_report.py
+	@$(MAKE) clean
 
 ## Delete all compiled Python files
 clean:
