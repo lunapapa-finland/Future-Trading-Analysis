@@ -1,30 +1,32 @@
-# Future Data Acquiring, Candlestick Plotting, and Intraday Performance Analysis
+# Future Data Acquisition, Candlestick Plotting, and Intraday Performance Analysis
 
 ## Introduction
-This project provides tools for retrieving stock data at specified intervals (e.g., every n minutes) from [yfinance](https://pypi.org/project/yfinance/) and conducting analyses tailored for intraday traders. The results are conveniently saved in the `./html` directory, providing easy access and organization.
+This project offers a robust suite of tools for financial data acquisition, candlestick plotting, and performance analysis tailored for intraday traders. It integrates data fetching from [yfinance](https://pypi.org/project/yfinance/) at custom intervals (e.g., every 1, 5 minutes) and leverages [plotly](https://plotly.com/) for dynamic visualizations. Key features include:
+
+- **EMA 20, Pre-high, Pre-low, Pre-open, and Pre-close** support for Regular Trading Hours (RTH).
+- **Replay functionality** from the first to the nth bar, enhancing analysis flexibility.
+- **Compatibility with Tradovate** for downloading and visualizing intraday trading performance directly on the graph, including entry/exit points and P&L metrics.
+- **Alternative to paid versions** of platforms like [TradingView](https://tradingview.com/), offering cost-effective solutions with similar functionalities.
+
+Results are efficiently organized and saved in the `./html` directory for easy access.
 
 ![Screenshot](./img/sample.png)
 
 ## Getting Started
-To utilize the tools in this project, follow the steps outlined below:
+Begin by executing the following commands:
 
-- `make` - Lists all available commands.
-- `make data` - Downloads data via yfinance.
-- `make report` - Generates future data in the form of candlestick plots with 5-minute intervals, and plots performance metrics. Users can also include summaries by adding them to `./html/Summary.md`, which can be included in the HTML report.
-- `make clean` - Cleans all compiled files necessary for a fresh start.
-
-Sure, here's the added section for your Markdown document detailing the `config.ini` parameters setup. This section explains the different configuration settings that users can adjust to tailor the tool's behavior to their needs.
-
+- `make`: Displays all available commands.
+- `make data`: Retrieves data via yfinance.
+- `make report`: Generates candlestick plots with specified intervals and includes performance summaries in `./html/Summary.md` for comprehensive HTML reports.
+- `make clean`: Clears compiled files to ensure a clean setup.
 
 ## Configuration Settings
-
-The `config.ini` file is essential for setting up the environment and parameters for data retrieval and analysis. Below, you'll find a detailed explanation of each section and its function:
+Configure the project settings through the `config.ini` file, detailed as follows:
 
 ### Global Configuration
-
-- **log_path**: Specifies the directory where log files will be stored. Default is `./log`.
-- **performance_data_path**: The path where performance data will be stored. Default is `./data/performance/`. The performace data I used in from [Tradovate](https://www.tradovate.com/)
-- **future_data_path**: The directory for storing future data. Default is `./data/future/`. The Fugure data is downloaded from [yfinance](https://pypi.org/project/yfinance/)
+- **log_path**: Sets the log file storage directory, defaulting to `./log`.
+- **performance_data_path**: Specifies where performance data is stored, default from [Tradovate](https://www.tradovate.com/), default `./data/performance/`.
+- **future_data_path**: Defines the directory for future data sourced from [yfinance](https://pypi.org/project/yfinance/), default `./data/future/`.
 
 ```ini
 [global]
@@ -34,10 +36,9 @@ future_data_path = ./data/future/
 ```
 
 ### Future Data Configuration
-
-- **start_date**: The starting date for which trading data is to be retrieved.
-- **interval**: Specifies the intervals (in minutes) for the future data.
-- **tickers**: Lists the ticker symbols to be used.
+- **start_date**: Sets the initial date for data retrieval.
+- **interval**: Defines the data intervals in minutes.
+- **tickers**: Lists the ticker symbols for data acquisition.
 
 ```ini
 [future]
@@ -47,13 +48,12 @@ tickers = MESM24.CME, MNQM24.CME
 ```
 
 ### Report Configuration
-
-- **date**: The specific date for which the analysis is to be conducted.
-- **ticker**: The ticker symbol that is to be analyzed.
-- **summary_md_file**: The path to the Markdown file containing the summary of the analysis.
-- **html_path**: The path where HTML reports will be stored.
+- **date**: Specifies the date for analysis.
+- **ticker**: Indicates the ticker symbol under analysis.
+- **summary_md_file**: Path to the Markdown summary file.
+- **html_path**: Directory for storing HTML reports.
 - **html_src_path**: Directory for HTML source files.
-- **template_path**: Path to Jinja2 template files used for report generation.
+- **template_path**: Location of Jinja2 template files for report generation.
 
 ```ini
 [report]
@@ -65,24 +65,20 @@ html_src_path = ./html/src/
 template_path = ./src/jinja2/
 ```
 
-By adjusting these parameters in the `config.ini` file, you can customize the data acquisition and analysis processes to fit their specific requirements. This flexibility helps in optimizing the tool's functionality for various trading scenarios.
-
+Adjust these parameters in the `config.ini` file to tailor the data acquisition and analysis processes to your specific needs, optimizing the tool’s functionality across various trading scenarios.
 
 ## Setup Environment
-Setting up the correct environment is crucial for ensuring that the tools function properly. Use Conda to install the necessary dependencies:
+Ensure proper tool functionality by setting up the correct environment using Conda:
 
 ```bash
 conda create -f finance_env.yml
 ```
 
-This will set up a Conda environment named `finance_env` based on the specifications in the `finance_env.yml` file.
-
 ## Contributing
-We highly value contributions from the community. If you have suggestions for improvements or new features, feel free to submit a pull request or open an issue on GitHub. Your insights and enhancements help make this tool more effective for everyone.
+Contributions are highly appreciated. Feel free to submit pull requests or open issues on GitHub to suggest improvements or new features. Your insights are invaluable in enhancing this tool for all users.
 
 ## License
-This project adheres to the [MIT License](LICENSE). For more details, please review the LICENSE file in the repository.
+This project is licensed under the [MIT License](LICENSE). For more information, please refer to the LICENSE file in the repository.
 
 ## Support
-For any issues or assistance, refer to the `Issues` section on the GitHub repository page or contact the project maintainers via email.
-
+For assistance or inquiries, consult the `Issues` section on GitHub or contact me via email.
