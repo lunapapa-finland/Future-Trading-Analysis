@@ -50,7 +50,7 @@ if __name__ == "__main__":
  
     # Create a logger
     logger = get_logger('data.log', parameters_global['log_path'])
-    logger.info(f'==========New Line==========')
+    logger.info(f"==========Acquiring Data for {parameters_future['start_date']}==========")
     print(f"Check log later in {parameters_global['log_path']}")
 
     # Call the get_future_data function with parsed arguments

@@ -16,31 +16,32 @@ PYTHON_INTERPRETER = python3
 
 ## Make Dataset
 data: setup
-	$(PYTHON_INTERPRETER) src/data/get_dataset.py
-	@$(MAKE) clean
+	@$(PYTHON_INTERPRETER) src/data/get_dataset.py
+	@$(MAKE) clean >/dev/null 2>&1
 
 ## Generate Analysis
 report: setup
-	$(PYTHON_INTERPRETER) src/visualization/generate_report.py
-	@$(MAKE) clean
+	@$(PYTHON_INTERPRETER) src/visualization/generate_report.py
+	@$(MAKE) clean >/dev/null 2>&1
 
 ## Delete all compiled Python files
 clean:
-	find . -type f -name "*.py[co]" -delete
-	find . -type d -name "__pycache__" -exec rm -r {} \; || true
-	find . -type d -name ".ipynb_checkpoints" -exec rm -r {} \; || true
-	find . -type d -name "build" -exec rm -r {} \; || true
-	find . -type d -name "dist" -exec rm -r {} \; || true  
-	find . -type d -name "src.egg-info" -exec rm -r {} \; || true
+	@find . -type f -name "*.py[co]" -delete
+	@find . -type d -name "__pycache__" -exec rm -r {} + >/dev/null 2>&1
+	@find . -type d -name ".ipynb_checkpoints" -exec rm -r {} + >/dev/null 2>&1
+	@find . -type d -name "build" -exec rm -r {} + >/dev/null 2>&1
+	@find . -type d -name "dist" -exec rm -r {} + >/dev/null 2>&1
+	@find . -type d -name "src.egg-info" -exec rm -r {} + >/dev/null 2>&1
+
+## run setup script
+setup:
+	@$(PYTHON_INTERPRETER) setup.py install >/dev/null 2>&1
 
 
 ## Test python environment is setup correctly
 test_environment:
 	$(PYTHON_INTERPRETER) test_environment.py
 
-## run setup script
-setup:
-	$(PYTHON_INTERPRETER) setup.py install
 
 #################################################################################
 # PROJECT RULES                                                                 #
