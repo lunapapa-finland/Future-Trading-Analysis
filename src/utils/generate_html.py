@@ -25,9 +25,13 @@ def move_static_files(template_path, html_src_path):
     
     # Iterate over the files and copy CSS and JS files to the HTML path
     for file in files:
-        if file.endswith('.css') or file.endswith('.js'):
+        if file.endswith('.css'):
             src_file = os.path.join(template_path, file)
-            dest_file = os.path.join(html_src_path, file)
+            dest_file = os.path.join(html_src_path + "css/", file)
+            shutil.copy(src_file, dest_file)
+        elif file.endswith('.js'):
+            src_file = os.path.join(template_path, file)
+            dest_file = os.path.join(html_src_path + "js/", file)
             shutil.copy(src_file, dest_file)
 
 

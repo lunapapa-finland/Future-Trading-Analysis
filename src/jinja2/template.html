@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Interactive Data Visualization</title>
-    <link rel="stylesheet" href="./src/styles.css">
+    <link rel="stylesheet" href="./assets/css/styles.css">
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
     {% if fig_assemble_json %}
     <script id="plot_assemble_data" type="application/json">{{ fig_assemble_json|safe }}</script>
@@ -26,7 +26,7 @@
     <div id='plot_statistic' style='display: none;'></div>
     <div id='plot_summary' style='display: none;'>{{ html_summary|safe }}</div>
 
-    <script src="./src/plot_data.js"></script>
-    <script src="./src/interaction_handlers.js"></script>
+    <script src="./assets/js/plot_data.js"></script>
+    <script src="./assets/js/interaction_handlers.js"></script>
 </body>
 </html>

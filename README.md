@@ -10,7 +10,7 @@ To utilize the tools in this project, follow the steps outlined below:
 
 - `make` - Lists all available commands.
 - `make data` - Downloads data via yfinance.
-- `make report` - Generates future data in the form of candlestick plots with 5-minute intervals, and plots performance metrics. Users can also include summaries by adding them to `./note/Summary.md`, which can be included in the HTML report.
+- `make report` - Generates future data in the form of candlestick plots with 5-minute intervals, and plots performance metrics. Users can also include summaries by adding them to `./html/Summary.md`, which can be included in the HTML report.
 - `make clean` - Cleans all compiled files necessary for a fresh start.
 
 Sure, here's the added section for your Markdown document detailing the `config.ini` parameters setup. This section explains the different configuration settings that users can adjust to tailor the tool's behavior to their needs.
