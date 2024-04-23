@@ -1,4 +1,4 @@
-# Future Data Acquiring, Candlestick Plotting, and Performance Analysis
+# Future Data Acquiring, Candlestick Plotting, and Intraday Performance Analysis
 
 ## Introduction
 This project provides tools for retrieving stock data at specified intervals (e.g., every n minutes) from [yfinance](https://pypi.org/project/yfinance/) and conducting analyses tailored for intraday traders. The results are conveniently saved in the `./html` directory, providing easy access and organization.
