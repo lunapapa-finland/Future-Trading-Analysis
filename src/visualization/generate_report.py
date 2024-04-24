@@ -19,9 +19,9 @@ def get_daily_data(logger, parameters_global, parameters_report):
 
     # Load and preprocess data
     trade, df, df_previous = load_data(logger, date, ticker, date_previous, parameters_global)
-    trade_rth = get_trade_rth(trade)
-    df_rth = get_future_rth(df)
-    df_previous_rth = get_future_rth(df_previous)
+    trade_rth = get_trade_rth(trade, parameters_report)
+    df_rth = get_future_rth(df, parameters_report)
+    df_previous_rth = get_future_rth(df_previous, parameters_report)
     pre_market = get_pre_market(df_previous_rth)
     df_rth = get_ema(df_rth, df_previous_rth)
     winning_trades, losing_trades = get_trades_sum(trade_rth)
@@ -45,7 +45,7 @@ def get_overall_data(logger, parameters_global, parameters_report):
 
     # Combine all DataFrames into one
     df_overall = pd.concat(dfs, ignore_index=True)
-    df_overall_rth = get_trade_rth(df_overall)
+    df_overall_rth = get_trade_rth(df_overall, parameters_report)
     overall_winning_trades, overall_losing_trades = get_trades_sum(df_overall_rth)
     overall_win_loss_counts = {'Winning Trades': len(overall_winning_trades), 'Losing Trades': len(overall_losing_trades)}
     overall_trades_stats = get_trade_stats(df_overall_rth, parameters_report)

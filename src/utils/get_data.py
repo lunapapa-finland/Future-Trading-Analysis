@@ -30,18 +30,19 @@ def get_previous_date(date):
 
 def load_data(logger, date, ticker, date_previous, parameters_global):
     trade = pd.read_csv(f"{parameters_global['performace_data_path']}Performance_{date.strftime('%Y-%m-%d')}.csv")
-    df = pd.read_csv(f"{parameters_global['future_data_path']}{ticker}/{ticker}_5min_data_{date.strftime('%Y-%m-%d')}.csv")
+    df = pd.read_csv(f"{parameters_global['future_data_path']}{ticker}/{ticker}_1min_data_{date.strftime('%Y-%m-%d')}.csv")
     try:
-        df_previous = pd.read_csv(f"{parameters_global['future_data_path']}{ticker}/{ticker}_5min_data_{date_previous.strftime('%Y-%m-%d')}.csv")
+        df_previous = pd.read_csv(f"{parameters_global['future_data_path']}{ticker}/{ticker}_1min_data_{date_previous.strftime('%Y-%m-%d')}.csv")
     except FileNotFoundError as e:
         df_previous = df.copy()
         logger.info(f"Cannot find file '{e.filename}'")
     return trade, df, df_previous
 
-def get_trade_rth(trade):
+def get_trade_rth(trade, parameters_report):
 
     ## Preprocess trade to trade_rth
-    trade = trade.drop(columns=['symbol','_priceFormat', '_priceFormatType', '_tickSize', 'buyFillId','sellFillId'])
+    trade = trade.drop(columns=['_priceFormat', '_priceFormatType', '_tickSize', 'buyFillId','sellFillId'])
+
     # 1. Convert pnl to numeric format with proper handling of negative values
     trade['pnl'] = trade['pnl'].str.replace('$', '')
     trade['pnl'] = trade['pnl'].str.replace('(', '-').str.replace(')', '').astype(float)
@@ -67,7 +68,17 @@ def get_trade_rth(trade):
     return trade_rth
 
 
-def get_future_rth(df): 
+def get_aggregated_rth(df, parameters_report):
+    return df.resample(f"{parameters_report['aggregated_length']}").agg({
+    'Open': 'first',      # First of 'Open' in each 5-minute window
+    'High': 'max',        # Maximum of 'High' in the window
+    'Low': 'min',         # Minimum of 'Low' in the window
+    'Close': 'last',      # Last of 'Close' in the window
+    'Adj Close': 'last',  # Last of 'Adj Close' in the window
+    'Volume': 'sum'       # Sum of 'Volume' in the window
+})
+
+def get_future_rth(df, parameters_report): 
     ## Preprocess TradingData(df) to df_rth
 
     # 0. Convert the 'Datetime' column to datetime dtype
@@ -80,7 +91,8 @@ def get_future_rth(df):
     # 2. Filter rows within the specified time range directly using the index
     df_rth = df[(df.index.time >= pd.Timestamp('09:30').time()) & (df.index.time <= pd.Timestamp('16:10').time())]
 
-    return df_rth
+
+    return get_aggregated_rth(df_rth, parameters_report)
 
 def get_pre_market(df_previous_rth): 
     pre_high = df_previous_rth['High'].max()
@@ -130,8 +142,9 @@ def get_trade_stats(trades, parameters_report):
         'AveragePnL': round(trades['pnl'].mean(), 2),
         'MaxPnL': round(trades['pnl'].max(), 2),
         'MinPnL': round(trades['pnl'].min(), 2),
-        'TotalPnL(Gross)': round(trades['pnl'].sum(), 2),
-        'TotalPnL(Net)': round(trades['pnl'].sum(), 2) - round(len(trades) * float(parameters_report['fee_rate']), 2),
-        'Count': len(trades)
+        'PnL(Gross)': round(trades['pnl'].sum(), 2),
+        'PnL(Net)': round(trades['pnl'].sum(), 2) - round(len(trades) * float(parameters_report['fee_rate']), 2),
+        'Count': len(trades), 
+        'Duration(s)': round(trades['duration'].mean().total_seconds(), 2),
     }
 
