@@ -26,14 +26,14 @@ def get_daily_data(logger, parameters_global, parameters_report):
     df_rth = get_ema(df_rth, df_previous_rth)
     winning_trades, losing_trades = get_trades_sum(trade_rth)
     win_loss_counts = {'Winning Trades': len(winning_trades), 'Losing Trades': len(losing_trades)}
-    all_trades_stats = get_trade_stats(trade_rth)
-    winning_trades_stats = get_trade_stats(winning_trades)
-    losing_trades_stats = get_trade_stats(losing_trades)
+    all_trades_stats = get_trade_stats(trade_rth, parameters_report)
+    winning_trades_stats = get_trade_stats(winning_trades, parameters_report)
+    losing_trades_stats = get_trade_stats(losing_trades, parameters_report)
 
     return trade_rth, df_rth, df_previous_rth, pre_market, winning_trades, losing_trades, win_loss_counts, all_trades_stats, winning_trades_stats, losing_trades_stats
 
 # Function to aggregate overall trading data
-def get_overall_data(logger, parameters_global):
+def get_overall_data(logger, parameters_global, parameters_report):
     dfs = []
 
     # Iterate through CSV files in the specified directory and load data
@@ -48,9 +48,9 @@ def get_overall_data(logger, parameters_global):
     df_overall_rth = get_trade_rth(df_overall)
     overall_winning_trades, overall_losing_trades = get_trades_sum(df_overall_rth)
     overall_win_loss_counts = {'Winning Trades': len(overall_winning_trades), 'Losing Trades': len(overall_losing_trades)}
-    overall_trades_stats = get_trade_stats(df_overall_rth)
-    overall_winning_trades_stats = get_trade_stats(overall_winning_trades)
-    overall_losing_trades_stats = get_trade_stats(overall_losing_trades)
+    overall_trades_stats = get_trade_stats(df_overall_rth, parameters_report)
+    overall_winning_trades_stats = get_trade_stats(overall_winning_trades, parameters_report)
+    overall_losing_trades_stats = get_trade_stats(overall_losing_trades, parameters_report)
 
     return df_overall_rth, overall_winning_trades, overall_losing_trades, overall_win_loss_counts, overall_trades_stats, overall_winning_trades_stats, overall_losing_trades_stats
 
@@ -75,7 +75,7 @@ if __name__ == "__main__":
     logger.info(f'Daily chart is done')
 
     # Overall data processing and plotting
-    df_overall_rth, overall_winning_trades, overall_losing_trades, overall_win_loss_counts, overall_trades_stats, overall_winning_trades_stats, overall_losing_trades_stats = get_overall_data(logger, parameters_global)
+    df_overall_rth, overall_winning_trades, overall_losing_trades, overall_win_loss_counts, overall_trades_stats, overall_winning_trades_stats, overall_losing_trades_stats = get_overall_data(logger, parameters_global, parameters_report)
     logger.info(f'Aggregated data preprocessing is done')
     overall_html_summary = create_summary(parameters_report['summary_md_file'], parameters_report['date'], True)
     overall_fig_statistic = create_pie_chart(overall_win_loss_counts, overall_trades_stats, overall_winning_trades_stats, overall_losing_trades_stats)

@@ -123,14 +123,15 @@ def get_trades_sum(trade_rth):
     return winning_trades, losing_trades
 
 # Generate statistics for tables
-def get_trade_stats(trades):
+def get_trade_stats(trades, parameters_report):
     if len(trades) == 0:
         return {'AveragePnL': 0, 'MaxPnL': 0, 'MinPnL': 0, 'TotalPnL': 0, 'Count': 0}
     return {
         'AveragePnL': round(trades['pnl'].mean(), 2),
         'MaxPnL': round(trades['pnl'].max(), 2),
         'MinPnL': round(trades['pnl'].min(), 2),
-        'TotalPnL': round(trades['pnl'].sum(), 2),
+        'TotalPnL(Gross)': round(trades['pnl'].sum(), 2),
+        'TotalPnL(Net)': round(trades['pnl'].sum(), 2) - round(len(trades) * float(parameters_report['fee_rate']), 2),
         'Count': len(trades)
     }
 
