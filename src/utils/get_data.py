@@ -60,11 +60,11 @@ def get_trade_rth(trade, parameters_report):
                         (trade['soldTimestamp'].dt.time >= pd.Timestamp('09:30').time()) &
                         (trade['soldTimestamp'].dt.time <= pd.Timestamp('16:10').time())].copy()  # Ensure a copy of the DataFrame is created
 
-    trade_rth['boughtTimestamp'] = trade_rth['boughtTimestamp'].dt.floor('min')
-    trade_rth['soldTimestamp'] = trade_rth['soldTimestamp'].dt.floor('min')
+    # trade_rth['boughtTimestamp'] = trade_rth['boughtTimestamp'].dt.floor('min')
+    # trade_rth['soldTimestamp'] = trade_rth['soldTimestamp'].dt.floor('min')
 
-    trade_rth['boughtTimestamp'] = trade_rth['boughtTimestamp'].dt.floor('5min')
-    trade_rth['soldTimestamp'] = trade_rth['soldTimestamp'].dt.floor('5min')
+    trade_rth['boughtTimestamp'] = trade_rth['boughtTimestamp'].dt.floor(f"{parameters_report['aggregated_length']}")
+    trade_rth['soldTimestamp'] = trade_rth['soldTimestamp'].dt.floor(f"{parameters_report['aggregated_length']}")
     return trade_rth
 
 
@@ -108,20 +108,21 @@ def get_pre_market(df_previous_rth):
         'pre_close': pre_close
     }
 
-def get_ema(df_rth, df_previous_rth):
-    # Copy the last 20 entries from the previous RTH DataFrame to ensure it's a separate DataFrame
-    df_previous_rth = df_previous_rth[-20:].copy()
+def get_ema(df_rth, df_previous_rth, parameters_report):
+    # Copy the last ema entries from the previous RTH DataFrame to ensure it's a separate DataFrame
+    ema_length = int(parameters_report['ema'])
+    df_previous_rth = df_previous_rth[(ema_length* -1):].copy()
 
     # Combine previous and current trading session data into a new DataFrame
     combined_df = pd.concat([df_previous_rth, df_rth])
 
     # Calculate the 20-period EMA on the combined close prices and round to 2 decimal places
-    combined_df['EMA_20'] = combined_df['Close'].ewm(span=20, adjust=False).mean().round(2)
+    combined_df[f"EMA_{parameters_report['ema']}"] = combined_df['Close'].ewm(span=ema_length, adjust=False).mean().round(2)
 
     # Now, slice back out the EMA values that correspond only to df_rth dates
     # Ensure df_rth is also treated as a separate DataFrame if not already
     df_rth = df_rth.copy()
-    df_rth.loc[:, 'EMA_20'] = combined_df['EMA_20'].iloc[-len(df_rth):].values
+    df_rth.loc[:, f"EMA_{parameters_report['ema']}"] = combined_df[f"EMA_{parameters_report['ema']}"].iloc[-len(df_rth):].values
 
     return df_rth
 

@@ -35,13 +35,13 @@ def create_trade_lines(trade_df):
         trade_lines.append(trade_line)
     return trade_lines
 
-def create_ema_trace(df):
+def create_ema_trace(df, parameters_report):
     return go.Scatter(
         x=df.index.strftime('%Y-%m-%d %H:%M'),
-        y=df['EMA_20'],
+        y=df[f"EMA_{parameters_report['ema']}"],
         mode='lines',
         line=dict(color='blue', width=2),
-        name='EMA 20'
+        name=f"EMA {parameters_report['ema']}"
     )
 def create_horizontal_lines(df, values, colors, labels):
     return [
@@ -91,7 +91,7 @@ def create_candlestick_traces(df):
 
 def get_assemble_plot(df, trade_df, pre_market, parameters_report, pre_colors):
     fig = go.Figure()
-    fig.add_trace(create_ema_trace(df))
+    fig.add_trace(create_ema_trace(df, parameters_report))
     fig.add_traces(create_horizontal_lines(df, list(pre_market.values()), pre_colors, list(pre_market.keys())))
     candle_traces, candle_annotations = create_candlestick_traces(df)
     for trace in candle_traces:

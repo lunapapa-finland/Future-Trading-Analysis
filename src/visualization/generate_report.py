@@ -23,7 +23,7 @@ def get_daily_data(logger, parameters_global, parameters_report):
     df_rth = get_future_rth(df, parameters_report)
     df_previous_rth = get_future_rth(df_previous, parameters_report)
     pre_market = get_pre_market(df_previous_rth)
-    df_rth = get_ema(df_rth, df_previous_rth)
+    df_rth = get_ema(df_rth, df_previous_rth, parameters_report)
     winning_trades, losing_trades = get_trades_sum(trade_rth)
     win_loss_counts = {'Winning Trades': len(winning_trades), 'Losing Trades': len(losing_trades)}
     all_trades_stats = get_trade_stats(trade_rth, parameters_report)
