@@ -68,7 +68,9 @@ def get_statistical_future_data(logger, parameters_global, parameters_report):
             df = get_future_rth(df, parameters_report)
             # Concatenate the DataFrame to the existing concatenated DataFrame along axis 1
             concatenated_df = pd.concat([concatenated_df, df], axis=0)
-    get_statistical_data(logger, parameters_report, concatenated_df.sort_index())
+    aggregated_rth_data = concatenated_df.sort_index()
+    aggregated_rth_data.to_csv(f"{parameters_global['future_aggdata_path']}{parameters_report['ticker']}.csv")
+    get_statistical_data(logger, parameters_report, aggregated_rth_data)
 
 if __name__ == "__main__":
     # Configuration and logger setup
