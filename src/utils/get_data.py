@@ -149,3 +149,21 @@ def get_trade_stats(trades, parameters_report):
         'Duration(s)': round(trades['duration'].mean().total_seconds(), 2),
     }
 
+
+def get_statistical_data(logger, parameters_report, df): 
+
+    high_low_diff = df['High'] - df['Low']
+    open_close_diff = abs(df['Open'] - df['Close'])
+    high_low_mean = round(high_low_diff.mean(),2)
+    high_low_max = round(high_low_diff.max(),2)
+    high_low_min = round(high_low_diff.min(),2)
+    open_close_mean = round(open_close_diff.mean(),2)
+    open_close_max = round(open_close_diff.max(),2)
+    open_close_min = round(open_close_diff.min(),2)
+
+    logger.info(f"Average Mean for {parameters_report['aggregated_length']} Bar range(HL) is {high_low_mean}")
+    logger.info(f"Average Max for {parameters_report['aggregated_length']} Bar range(HL) is {high_low_max}")
+    logger.info(f"Average Min for {parameters_report['aggregated_length']} Bar range(HL) is {high_low_min}")
+    logger.info(f"Average Mean for {parameters_report['aggregated_length']} Bar range(OC) is {open_close_mean}")
+    logger.info(f"Average Max for {parameters_report['aggregated_length']} Bar range(OC) is {open_close_max}")
+    logger.info(f"Average Min for {parameters_report['aggregated_length']} Bar range(OC) is {open_close_min}")

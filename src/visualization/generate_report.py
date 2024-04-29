@@ -54,6 +54,22 @@ def get_overall_data(logger, parameters_global, parameters_report):
 
     return df_overall_rth, overall_winning_trades, overall_losing_trades, overall_win_loss_counts, overall_trades_stats, overall_winning_trades_stats, overall_losing_trades_stats
 
+# Function to get statistical future data
+def get_statistical_future_data(logger, parameters_global, parameters_report):
+    
+    concatenated_df = pd.DataFrame()
+
+    future_data_path = os.path.join(parameters_global['future_data_path'], parameters_report['ticker'])
+     # Iterate through CSV files in the specified directory and load data
+    for filename in os.listdir(future_data_path):
+        if '1min' in filename and filename.endswith('.csv'):
+            filepath = os.path.join(future_data_path, filename)
+            df = pd.read_csv(filepath)
+            df = get_future_rth(df, parameters_report)
+            # Concatenate the DataFrame to the existing concatenated DataFrame along axis 1
+            concatenated_df = pd.concat([concatenated_df, df], axis=0)
+    get_statistical_data(logger, parameters_report, concatenated_df.sort_index())
+
 if __name__ == "__main__":
     # Configuration and logger setup
     config = configparser.ConfigParser()
@@ -84,3 +100,7 @@ if __name__ == "__main__":
     logger.info(f'Overall Performance is done')
     generate_index(parameters_report)
     logger.info(f'Index Generation is done')
+
+    # statistical future data
+    get_statistical_future_data(logger, parameters_global, parameters_report)
+    logger.info(f'Statistical Future Data Generation is done')
