@@ -57,20 +57,31 @@ def get_overall_data(logger, parameters_global, parameters_report):
 # Function to get statistical future data
 def get_statistical_future_data(logger, parameters_global, parameters_report):
     
+    # Get the date from parameters_report['date']
+    report_date = datetime.strptime(parameters_report['date'], '%Y-%m-%d').date()
+
     concatenated_df = pd.DataFrame()
 
     future_data_path = os.path.join(parameters_global['future_data_path'], parameters_report['ticker'])
      # Iterate through CSV files in the specified directory and load data
     for filename in os.listdir(future_data_path):
         if '1min' in filename and filename.endswith('.csv'):
-            filepath = os.path.join(future_data_path, filename)
-            df = pd.read_csv(filepath)
-            df = get_future_rth(df, parameters_report)
-            # Concatenate the DataFrame to the existing concatenated DataFrame along axis 1
-            concatenated_df = pd.concat([concatenated_df, df], axis=0)
+            # Extract date from the filename
+            file_date_str = filename.split("_")[-1].split(".")[0]
+            file_date = datetime.strptime(file_date_str, '%Y-%m-%d').date()
+            # Compare the file date with the report date
+            if file_date <= report_date:
+                # Construct the full file path
+                filepath = os.path.join(future_data_path, filename)
+                # Read the CSV file into a DataFrame
+                df = pd.read_csv(filepath)
+                # Process the DataFrame
+                df = get_future_rth(df, parameters_report)
+                # Concatenate the DataFrame to the existing concatenated DataFrame along axis 0
+                concatenated_df = pd.concat([concatenated_df, df], axis=0)
     aggregated_rth_data = concatenated_df.sort_index()
     aggregated_rth_data.to_csv(f"{parameters_global['future_aggdata_path']}{parameters_report['ticker']}.csv")
-    get_statistical_data(logger, parameters_report, aggregated_rth_data)
+    get_statistical_data(logger, parameters_global, parameters_report, aggregated_rth_data)
 
 if __name__ == "__main__":
     # Configuration and logger setup

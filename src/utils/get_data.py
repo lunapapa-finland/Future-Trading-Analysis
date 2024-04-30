@@ -150,24 +150,60 @@ def get_trade_stats(trades, parameters_report):
     }
 
 
-def get_statistical_data(logger, parameters_report, df): 
+def get_statistical_data(logger, parameters_global ,parameters_report, df): 
 
+    # Define the file path
+    file_path = f"{parameters_global['future_aggdata_path']}{parameters_report['ticker']}_statistics.csv"
+
+    # Check if the file exists
+    if os.path.exists(file_path):
+        # If the file exists, read the existing CSV file
+        try:
+            result_df = pd.read_csv(file_path, index_col=0)
+        except pd.errors.EmptyDataError:
+            # Handle the case when the CSV file is empty
+            result_df = pd.DataFrame()
+    else:
+        # If the file does not exist, create an empty DataFrame
+        result_df = pd.DataFrame()
+
+    # Calculations
     high_low_diff = df['High'] - df['Low']
     open_close_diff = abs(df['Open'] - df['Close'])
-    high_low_mean = round(high_low_diff.mean(),2)
-    high_low_max = round(high_low_diff.max(),2)
-    high_low_min = round(high_low_diff.min(),2)
+    high_low_mean = round(high_low_diff.mean(), 2)
+    high_low_max = round(high_low_diff.max(), 2)
+    high_low_min = round(high_low_diff.min(), 2)
     high_low_std = round(high_low_diff.std(), 2)
-    open_close_mean = round(open_close_diff.mean(),2)
-    open_close_max = round(open_close_diff.max(),2)
-    open_close_min = round(open_close_diff.min(),2)
+    open_close_mean = round(open_close_diff.mean(), 2)
+    open_close_max = round(open_close_diff.max(), 2)
+    open_close_min = round(open_close_diff.min(), 2)
     open_close_std = round(open_close_diff.std(), 2)
 
-    logger.info(f"Mean for {parameters_report['aggregated_length']} Bar range(HL) is {high_low_mean}")
-    logger.info(f"Max for {parameters_report['aggregated_length']} Bar range(HL) is {high_low_max}")
-    logger.info(f"Min for {parameters_report['aggregated_length']} Bar range(HL) is {high_low_min}")
-    logger.info(f"STD for {parameters_report['aggregated_length']} Bar range(HL) is {high_low_std}")
-    logger.info(f"Mean for {parameters_report['aggregated_length']} Bar range(OC) is {open_close_mean}")
-    logger.info(f"Max for {parameters_report['aggregated_length']} Bar range(OC) is {open_close_max}")
-    logger.info(f"Min for {parameters_report['aggregated_length']} Bar range(OC) is {open_close_min}")
-    logger.info(f"STD for {parameters_report['aggregated_length']} Bar range(OC) is {open_close_std}")
+    # Create a dictionary with the calculated values
+    data = {
+        'high_low_mean': high_low_mean,
+        'high_low_max': high_low_max,
+        'high_low_min': high_low_min,
+        'high_low_std': high_low_std,
+        'open_close_mean': open_close_mean,
+        'open_close_max': open_close_max,
+        'open_close_min': open_close_min,
+        'open_close_std': open_close_std
+    }
+
+    # Convert the dictionary to a DataFrame
+    new_row = pd.DataFrame(data, index=[parameters_report['date']])
+
+    # Check if the index already exists in the DataFrame
+    if parameters_report['date'] in result_df.index:
+        # Update the existing row
+        result_df.loc[parameters_report['date']] = new_row.iloc[0]
+    else:
+        # Add the new row
+        result_df = pd.concat([result_df, new_row])
+
+    # Sort the index
+    result_df.sort_index(inplace=True)
+
+    # Save the DataFrame back to the same CSV file
+    result_df.to_csv(file_path)
