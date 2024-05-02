@@ -45,7 +45,7 @@ def get_trade_rth(trade, parameters_report):
 
     # 1. Convert pnl to numeric format with proper handling of negative values
     trade['pnl'] = trade['pnl'].str.replace('$', '')
-    trade['pnl'] = trade['pnl'].str.replace('(', '-').str.replace(')', '').astype(float)
+    trade['pnl'] = trade['pnl'].str.replace('(', '-').str.replace(')', '').str.replace(',', '').astype(float)
 
     # 2. Convert boughtTimestamp and soldTimestamp to datetime format and adjust to UTC
     trade['boughtTimestamp'] = pd.to_datetime(trade['boughtTimestamp']) - pd.Timedelta(hours=7)
