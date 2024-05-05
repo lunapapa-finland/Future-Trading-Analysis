@@ -8,6 +8,7 @@ import os
 import sys
 from io import StringIO
 import re 
+from src.db.db import save_to_db
 
 def get_future_data(logger, parameters_global, parameters_future):
     start_date = datetime.strptime(parameters_future['start_date'], '%Y-%m-%d')
@@ -31,7 +32,6 @@ def get_future_data(logger, parameters_global, parameters_future):
                 logger.info(cleaned_output)
                 mystdout.seek(0)
                 mystdout.truncate(0)
-                
                 if not df.empty:
                     # Extract the date from the first index
                     date_str = str(df.index[0].date())
@@ -47,7 +47,11 @@ def get_future_data(logger, parameters_global, parameters_future):
                     logger.info(f'{file_name} saved to {file_path}')
             except Exception as e:
                 logger.error(f"Failed to download data for {ticker} at interval {interval} minutes on {start_date}: {str(e)}")
-
+            if interval == '1' and 'ES' in ticker:
+                save_to_db(logger, df, 'es')
+            elif interval == '1' and 'NQ' in ticker:
+                save_to_db(logger, df, 'nq')
+                
     # Restore stdout and stderr
     sys.stdout = old_stdout
     sys.stderr = old_stderr
