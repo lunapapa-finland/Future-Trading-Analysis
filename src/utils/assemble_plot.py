@@ -19,9 +19,9 @@ from src.utils.logger import get_logger
 def create_trade_lines(trade_df):
     trade_lines = []
     for index, row in trade_df.iterrows():
-        entry_time, exit_time = sorted([row['boughtTimestamp'], row['soldTimestamp']])
-        entry_price, exit_price = (row['buyPrice'], row['sellPrice']) if entry_time == row['boughtTimestamp'] else (row['sellPrice'], row['buyPrice'])
-        color = 'green' if row['pnl'] > 0 else 'red'
+        entry_time, exit_time = sorted([row['EnteredAt'], row['ExitedAt']])
+        entry_price, exit_price = (row['EntryPrice'], row['ExitPrice']) if entry_time == row['EnteredAt'] else (row['ExitedAt'], row['EnteredAt'])
+        color = 'green' if row['PnL'] > 0 else 'red'
         trade_line = go.Scatter(
             x=[entry_time, exit_time],
             y=[entry_price, exit_price],
@@ -30,7 +30,7 @@ def create_trade_lines(trade_df):
             marker=dict(color=color, size=8),
             name=f"Trade {index}",
             hoverinfo='text',
-            hovertext=f"Entry: {entry_time}, Price: {entry_price} | Exit: {exit_time}, Price: {exit_price}, PnL: {row['pnl']}"
+            hovertext=f"Entry: {entry_time}, Price: {entry_price} | Exit: {exit_time}, Price: {exit_price}, PnL: {row['PnL']}"
         )
         trade_lines.append(trade_line)
     return trade_lines
@@ -89,7 +89,7 @@ def create_candlestick_traces(df):
 
     return candle_data, annotations
 
-def get_assemble_plot(df, trade_df, pre_market, parameters_report, pre_colors):
+def get_assemble_plot(ticker, df, trade_df, pre_market, parameters_report, pre_colors):
     fig = go.Figure()
     fig.add_trace(create_ema_trace(df, parameters_report))
     fig.add_traces(create_horizontal_lines(df, list(pre_market.values()), pre_colors, list(pre_market.keys())))
@@ -102,7 +102,7 @@ def get_assemble_plot(df, trade_df, pre_market, parameters_report, pre_colors):
         fig.add_annotation(ann)
     
     fig.update_layout(
-        title=f"{parameters_report['ticker']} Candlestick Chart - {df.index.date[0]}",
+        title=f"{ticker} Candlestick Chart - {df.index.date[0]}",
         xaxis_title='Datetime', 
         yaxis_title='Price',
         xaxis_rangeslider_visible=False, 

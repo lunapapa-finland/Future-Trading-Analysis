@@ -33,7 +33,7 @@
     <div id="navbar">
         <ul style="list-style-type: none; padding: 20px;">
             {% for file in files %}
-            {% set display_name = file.split('_')[-1].replace('.html', '') %}
+            {% set display_name = file.split('_')[0].split('.')[0] + file.split('_')[-1].replace('.html', '') %}
             <li><a href="{{ file }}" target="contentFrame">{{ display_name }}</a></li>
             {% endfor %}
         </ul>

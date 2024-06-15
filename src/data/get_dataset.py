@@ -16,6 +16,7 @@ def get_future_data(logger, parameters_global, parameters_future):
     intervals = [interval.strip() for interval in parameters_future['interval'].split(',')]
     tickers = [tickers.strip() for tickers in parameters_future['tickers'].split(',')]
 
+
     # Redirect stdout and stderr to capture output from yfinance
     old_stdout = sys.stdout
     old_stderr = sys.stderr
@@ -36,21 +37,23 @@ def get_future_data(logger, parameters_global, parameters_future):
                     # Extract the date from the first index
                     date_str = str(df.index[0].date())
                     # Define the folder path
-                    folder_path = f"{parameters_global['future_data_path']}{ticker.split('.')[0]}"
+                    ticker_path = ticker.split('.')[0]
+                    ticker_path = re.sub(r'\d+', '', ticker_path)
+                    folder_path = f"{parameters_global['future_data_path']}{ticker_path}"
                     # Create the folder if it doesn't exist
                     if not os.path.exists(folder_path):
                         os.makedirs(folder_path)
                     # Save the data to a CSV file
-                    file_name = f"{ticker.split('.')[0]}_{interval}min_data_{date_str}.csv"
+                    file_name = f"{ticker_path}_{interval}min_data_{date_str}.csv"
                     file_path = os.path.join(folder_path, file_name)
                     df.to_csv(file_path)
                     logger.info(f'{file_name} saved to {file_path}')
             except Exception as e:
                 logger.error(f"Failed to download data for {ticker} at interval {interval} minutes on {start_date}: {str(e)}")
-            if interval == '1' and 'ES' in ticker:
-                save_to_db(logger, df, 'es')
-            elif interval == '1' and 'NQ' in ticker:
-                save_to_db(logger, df, 'nq')
+            # if interval == '1' and 'ES' in ticker:
+            #     save_to_db(logger, df, 'es')
+            # elif interval == '1' and 'NQ' in ticker:
+            #     save_to_db(logger, df, 'nq')
                 
     # Restore stdout and stderr
     sys.stdout = old_stdout

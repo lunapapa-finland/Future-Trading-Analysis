@@ -13,6 +13,7 @@ import plotly
 import configparser
 from src.utils.configparser import remove_comments_and_convert
 from src.utils.logger import get_logger
+import re
 
 def get_previous_date(date):
     ## considering the previous date could be last week friday, but if there is holiday, you should adjust this part manually
@@ -30,6 +31,9 @@ def get_previous_date(date):
 
 def load_data(logger, date, ticker, date_previous, parameters_global):
     trade = pd.read_csv(f"{parameters_global['performace_data_path']}Performance_{date.strftime('%Y-%m-%d')}.csv")
+
+    trade = trade[trade['ContractName'].str.startswith(ticker)]
+
     df = pd.read_csv(f"{parameters_global['future_data_path']}{ticker}/{ticker}_1min_data_{date.strftime('%Y-%m-%d')}.csv")
     try:
         df_previous = pd.read_csv(f"{parameters_global['future_data_path']}{ticker}/{ticker}_1min_data_{date_previous.strftime('%Y-%m-%d')}.csv")
@@ -41,31 +45,32 @@ def load_data(logger, date, ticker, date_previous, parameters_global):
 def get_trade_rth(trade, parameters_report):
 
     ## Preprocess trade to trade_rth
-    trade = trade.drop(columns=['_priceFormat', '_priceFormatType', '_tickSize', 'buyFillId','sellFillId'])
+    trade = trade.drop(columns=['Id', 'TradeDay'])
 
     # 1. Convert pnl to numeric format with proper handling of negative values
-    trade['pnl'] = trade['pnl'].str.replace('$', '')
-    trade['pnl'] = trade['pnl'].str.replace('(', '-').str.replace(')', '').str.replace(',', '').astype(float)
+    # trade['pnl'] = trade['pnl'].str.replace('$', '')
+    # trade['pnl'] = trade['pnl'].str.replace('(', '-').str.replace(')', '').str.replace(',', '').astype(float)
 
     # 2. Convert boughtTimestamp and soldTimestamp to datetime format and adjust to UTC
-    trade['boughtTimestamp'] = pd.to_datetime(trade['boughtTimestamp']) - pd.Timedelta(hours=7)
-    trade['soldTimestamp'] = pd.to_datetime(trade['soldTimestamp']) - pd.Timedelta(hours=7)
+    trade['EnteredAt'] = pd.to_datetime(trade['EnteredAt']) - pd.Timedelta(hours=4)
+    trade['ExitedAt'] = pd.to_datetime(trade['ExitedAt']) - pd.Timedelta(hours=4)
 
-    # 3. Convert duration to time format
-    trade['duration'] = pd.to_timedelta(trade['duration'])
 
-    #4. Filter out trades with boughtTimestamp or soldTimestamp between 9:30 and 16:10
-    trade_rth = trade[(trade['boughtTimestamp'].dt.time >= pd.Timestamp('09:30').time()) &
-                        (trade['boughtTimestamp'].dt.time <= pd.Timestamp('16:10').time()) |
-                        (trade['soldTimestamp'].dt.time >= pd.Timestamp('09:30').time()) &
-                        (trade['soldTimestamp'].dt.time <= pd.Timestamp('16:10').time())].copy()  # Ensure a copy of the DataFrame is created
+    # #4. Filter out trades with boughtTimestamp or soldTimestamp between 9:30 and 16:10
+    trade_rth = trade[(trade['EnteredAt'].dt.time >= pd.Timestamp('09:30').time()) &
+                        (trade['EnteredAt'].dt.time <= pd.Timestamp('16:10').time()) |
+                        (trade['ExitedAt'].dt.time >= pd.Timestamp('09:30').time()) &
+                        (trade['ExitedAt'].dt.time <= pd.Timestamp('16:10').time())].copy()  # Ensure a copy of the DataFrame is created
+    
+    # trade_rth['EnteredAt'] = trade_rth['EnteredAt'].dt.floor('min')
+    # trade_rth['ExitedAt'] = trade_rth['ExitedAt'].dt.floor('min')
 
-    # trade_rth['boughtTimestamp'] = trade_rth['boughtTimestamp'].dt.floor('min')
-    # trade_rth['soldTimestamp'] = trade_rth['soldTimestamp'].dt.floor('min')
+    trade_rth['EnteredAt'] = trade_rth['EnteredAt'].dt.floor(f"{parameters_report['aggregated_length']}")
+    trade_rth['ExitedAt'] = trade_rth['ExitedAt'].dt.floor(f"{parameters_report['aggregated_length']}")
+    trade_rth.reset_index(drop=True, inplace=True)
 
-    trade_rth['boughtTimestamp'] = trade_rth['boughtTimestamp'].dt.floor(f"{parameters_report['aggregated_length']}")
-    trade_rth['soldTimestamp'] = trade_rth['soldTimestamp'].dt.floor(f"{parameters_report['aggregated_length']}")
     return trade_rth
+
 
 
 def get_aggregated_rth(df, parameters_report):
@@ -129,8 +134,8 @@ def get_ema(df_rth, df_previous_rth, parameters_report):
 
 def get_trades_sum(trade_rth):
     # Calculate winning and losing trades
-    winning_trades = trade_rth[trade_rth['pnl'] > 0]
-    losing_trades = trade_rth[trade_rth['pnl'] <= 0]
+    winning_trades = trade_rth[trade_rth['PnL'] > 0]
+    losing_trades = trade_rth[trade_rth['PnL'] <= 0]
 
     # Data for pie chart
     return winning_trades, losing_trades
@@ -140,20 +145,20 @@ def get_trade_stats(trades, parameters_report):
     if len(trades) == 0:
         return {'AveragePnL': 0, 'MaxPnL': 0, 'MinPnL': 0, 'TotalPnL': 0, 'Count': 0}
     return {
-        'AveragePnL': round(trades['pnl'].mean(), 2),
-        'MaxPnL': round(trades['pnl'].max(), 2),
-        'MinPnL': round(trades['pnl'].min(), 2),
-        'PnL(Gross)': round(trades['pnl'].sum(), 2),
-        'PnL(Net)': round(trades['pnl'].sum(), 2) - round(len(trades) * float(parameters_report['fee_rate']), 2),
+        'AveragePnL': round(trades['PnL'].mean(), 2),
+        'MaxPnL': round(trades['PnL'].max(), 2),
+        'MinPnL': round(trades['PnL'].min(), 2),
+        'PnL(Gross)': round(trades['PnL'].sum(), 2),
+        'PnL(Net)': round(trades['PnL'].sum(), 2) - round(trades['Fees'].sum(), 2),
         'Count': len(trades), 
-        'Duration(s)': round(trades['duration'].mean().total_seconds(), 2),
+        'AverageSize': round(trades['Size'].mean(), 2),
     }
 
 
-def get_statistical_data(logger, parameters_global ,parameters_report, df): 
+def get_statistical_data(logger, parameters_global ,parameters_report, df, ticker): 
 
     # Define the file path
-    file_path = f"{parameters_global['future_aggdata_path']}{parameters_report['ticker']}_statistics.csv"
+    file_path = f"{parameters_global['future_aggdata_path']}{ticker}_statistics.csv"
 
     # Check if the file exists
     if os.path.exists(file_path):

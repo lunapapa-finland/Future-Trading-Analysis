@@ -35,7 +35,7 @@ def move_static_files(template_path, html_src_path):
             shutil.copy(src_file, dest_file)
 
 
-def generate_html(fig_statistic, html_summary, parameters_report, fig_assemble=None):
+def generate_html(ticker, fig_statistic, html_summary, parameters_report, fig_assemble=None):
     env = Environment(loader=FileSystemLoader(parameters_report['template_path']))
     template = env.get_template('template.html')
     if fig_assemble is not None:
@@ -49,7 +49,7 @@ def generate_html(fig_statistic, html_summary, parameters_report, fig_assemble=N
     html_content = template.render(fig_assemble_json=fig_assemble_json, fig_statistic_json=fig_statistic_json,
                                 html_summary=html_summary)
     if fig_assemble is not None:    
-        file_name = f"{parameters_report['html_path']}{parameters_report['ticker']}_Candlestick_Chart_{parameters_report['date']}.html"
+        file_name = f"{parameters_report['html_path']}{ticker}_Candlestick_Chart_{parameters_report['date']}.html"
         with open(file_name, "w") as f:
             f.write(html_content)
     else:
@@ -64,7 +64,19 @@ def generate_index(parameters_report):
     template = env.get_template('index_template.html')
 
     # List HTML files excluding index.html
-    files = sorted([f for f in os.listdir(parameters_report['html_path']) if f.endswith('.html') and f != 'index.html'], key=lambda filename: filename.split('_')[-1].split('.')[0])
+    # Function to extract and concatenate parts of the filename
+    def extract_and_concat(filename):
+        first_part = filename.split('_')[0].split('.')[0]
+        last_part = filename.split('_')[-1].split('.')[0]
+        return first_part + last_part
+
+    # List and sort the files
+    files = sorted(
+        [f for f in os.listdir(parameters_report['html_path']) if f.endswith('.html') and f != 'index.html'],
+        key=lambda filename: extract_and_concat(filename)
+    )
+
+    # files = sorted([f for f in os.listdir(parameters_report['html_path']) if f.endswith('.html') and f != 'index.html'], key=lambda filename: filename.split('_')[-1].split('.')[0])
 
     index_html = template.render(files=files)
 
