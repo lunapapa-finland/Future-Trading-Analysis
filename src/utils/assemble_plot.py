@@ -64,10 +64,10 @@ def create_candlestick_traces(df):
         x_value = idx.strftime('%Y-%m-%d %H:%M')
         single_candle = go.Candlestick(
             x=[x_value],
-            open=[row['Open']],
-            high=[row['High']],
-            low=[row['Low']],
-            close=[row['Close']],
+            open=[round(row['Open'],4)],
+            high=[round(row['High'],4)],
+            low=[round(row['Low'],4)],
+            close=[round(row['Close'],4)],
             name=f"Candle {index}",  # Enumerating candlesticks
             visible=True  # Initially visible
         )
