@@ -14,6 +14,8 @@ import configparser
 from src.utils.configparser import remove_comments_and_convert
 from src.utils.logger import get_logger
 import shutil
+from flask import Flask, url_for
+
 
 def move_static_files(template_path, html_src_path):
     # Create the destination directory if it doesn't exist
@@ -59,28 +61,41 @@ def generate_html(ticker, fig_statistic, html_summary, parameters_report, fig_as
 
 
 def generate_index(parameters_report):
-
     env = Environment(loader=FileSystemLoader(parameters_report['template_path']))
-    template = env.get_template('index_template.html')
+
+    # Function to extract date from the filename or identify the 'Overall' tab
+    def extract_date(filename):
+        if "Overall_performance" in filename:
+            return "Overall"
+        else:
+            # Extracting the date from the filename assuming format 'XXXX24.XXX_Candlestick_Chart_YYYY-MM-DD.html'
+            return filename.rsplit('_', 1)[1].rsplit('.', 1)[0]
 
     # List HTML files excluding index.html
-    # Function to extract and concatenate parts of the filename
-    def extract_and_concat(filename):
-        first_part = filename.split('_')[0].split('.')[0]
-        last_part = filename.split('_')[-1].split('.')[0]
-        return first_part + last_part
+    files = [f for f in os.listdir(parameters_report['html_path']) if f.endswith('.html') and f != 'index.html']
 
-    # List and sort the files
-    files = sorted(
-        [f for f in os.listdir(parameters_report['html_path']) if f.endswith('.html') and f != 'index.html'],
-        key=lambda filename: extract_and_concat(filename)
-    )
+    # Create a dictionary grouping files by their dates or the 'Overall' tag
+    file_dict = {}
+    for file in files:
+        date = extract_date(file)
+        if date not in file_dict:
+            file_dict[date] = []
+        file_dict[date].append(file)
 
-    # files = sorted([f for f in os.listdir(parameters_report['html_path']) if f.endswith('.html') and f != 'index.html'], key=lambda filename: filename.split('_')[-1].split('.')[0])
+    # Sorting dates in descending order, ensure 'Overall' is treated specially if needed
+    sorted_dates = sorted((d for d in file_dict if d != "Overall"), reverse=True)
+    if "Overall" in file_dict:
+        sorted_dates.insert(0, "Overall")  # Put 'Overall' at the top
 
-    index_html = template.render(files=files)
+    sorted_file_dict = {date: sorted(file_dict[date], key=lambda f: f.lower()) for date in sorted_dates}
+
+    # Get the template and render it
+    template = env.get_template('index_template.html')
+    index_html = template.render(file_dict=sorted_file_dict)
 
     # Write the rendered HTML to index.html
     index_file_path = os.path.join(parameters_report['html_path'], "index.html")
     with open(index_file_path, "w") as f:
         f.write(index_html)
+
+
