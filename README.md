@@ -5,7 +5,7 @@ This project offers a robust suite of tools for financial data acquisition, cand
 
 - **EMA 20, Pre-high, Pre-low, Pre-open, and Pre-close** support for Regular Trading Hours (RTH).
 - **Replay functionality** from the first to the nth bar, enhancing analysis flexibility.
-- **Compatibility with Tradovate** for downloading and visualizing intraday trading performance directly on the graph, including entry/exit points and P&L metrics.
+- **Compatibility with Tradovate and TopStepX** for downloading and visualizing intraday trading performance directly on the graph, including entry/exit points and P&L metrics.
 - **Alternative to paid versions** of platforms like [TradingView](https://tradingview.com/), offering cost-effective solutions with similar functionalities.
 
 Results are efficiently organized and saved in the `./html` directory for easy access.
