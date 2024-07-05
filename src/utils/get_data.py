@@ -154,6 +154,48 @@ def get_trade_stats(trades, parameters_report):
         'AverageSize': round(trades['Size'].mean(), 2),
     }
 
+def save_trade_stats(trades, parameters_report, parameters_global, date, ticker, logger):
+    if len(trades) == 0:
+        pass
+    date = pd.to_datetime(date).strftime('%Y-%m-%d')
+    stats = {
+        'Date': [date],
+        'Ticker': [ticker],
+        'AveragePnL': [round(trades['PnL'].mean(), 2)],
+        'MaxPnL': [round(trades['PnL'].max(), 2)],
+        'MinPnL': [round(trades['PnL'].min(), 2)],
+        'PnL(Gross)': [round(trades['PnL'].sum(), 2)],
+        'PnL(Net)': [round(trades['PnL'].sum(), 2) - round(trades['Fees'].sum(), 2)],
+        'Count': [len(trades)],
+        'AverageSize': [round(trades['Size'].mean(), 2)],
+    }
+    stats_df = pd.DataFrame(stats)
+    file_path = os.path.join(parameters_global['future_aggdata_path'], "DailyStats.csv")
+
+    if os.path.exists(file_path):
+        existing_df = pd.read_csv(file_path)
+
+        # Remove existing duplicates
+        existing_df.drop_duplicates(inplace=True)
+
+        # Check for existing records with the same Date and Ticker
+        match_condition = (
+            (existing_df['Date'] == date) & 
+            (existing_df['Ticker'] == ticker)
+        )
+
+        if match_condition.any():
+            logger.info(f"Record for Date: {date} and Ticker: {ticker} already exists.")
+        else:
+            existing_df = pd.concat([existing_df, stats_df], ignore_index=True)
+            existing_df.to_csv(file_path, index=False)
+            logger.info(f"Appending new record for Date: {date} and Ticker: {ticker}.")
+    else:
+        stats_df.to_csv(file_path, index=False)
+        logger.info(f"Creating new file and saving record for Date: {date} and Ticker: {ticker}.")
+
+
+        
 
 def get_statistical_data(logger, parameters_global ,parameters_report, df, ticker): 
 
