@@ -15,53 +15,45 @@ from src.utils.configparser import remove_comments_and_convert
 from src.utils.logger import get_logger
 
 def create_summary(summary_file, date, summary):
-    
-    
-    if summary: 
-        section_found = False
-        content = []
-        
+    """
+    Create an HTML summary from a markdown file based on the specified date or summary section.
+
+    Args:
+        summary_file (str): The path to the markdown summary file.
+        date (str): The target date for the summary.
+        summary (bool): Flag to indicate if the summary section should be captured.
+
+    Returns:
+        str: The HTML content of the summary.
+    """
+    content = []
+
+    if summary:
+        capture = False
         with open(summary_file, 'r', encoding='utf-8') as file:
-            capture = False
-            content = []
-            
             for line in file:
-                # Check if we're at the start of any '##' header
                 if line.startswith('##'):
                     if 'Summary' in line:
-                        # Start capturing if it's the '## Summary' section
                         capture = True
                     elif capture:
-                        # Stop capturing if another '##' section starts
                         break
                 elif capture:
-                    # Add the current line to content if we are in the capture mode
                     content.append(line)
-                    
-            # Convert the captured markdown content to HTML
-        html_content = markdown2.markdown(''.join(content))
-    else:   
-        # Convert the provided date string to a datetime object for easier comparison
+    else:
         target_date = datetime.strptime(date, '%Y-%m-%d').date()
         section_found = False
-        content = []
         
         with open(summary_file, 'r', encoding='utf-8') as file:
             for line in file:
-                # Check for section headers
                 if line.startswith('## ') and not line.startswith('## Summary'):
-                    # Extract the date from the section header
                     section_date = datetime.strptime(line.strip()[3:], '%Y-%m-%d').date()
                     if section_date == target_date:
                         section_found = True
                         continue
                     elif section_found:
-                        # If another section starts, stop reading
                         break
-                
                 if section_found:
-                    # Collect all lines after the target date section until another section starts
                     content.append(line)
-        html_content = markdown2.markdown(''.join(content))
 
+    html_content = markdown2.markdown(''.join(content))
     return html_content
