@@ -46,7 +46,7 @@ def get_future_data(logger, parameters_global, parameters_future):
                         # Extract the date from the first index
                         date_str = str(df.index[0].date())
                         # Define the folder path
-                        ticker_path = re.sub(r'\d+', '', ticker.split('.')[0])
+                        ticker_path = re.sub(r'\d+$', '', ticker.split('.')[0])
                         folder_path = os.path.join(parameters_global['future_data_path'], ticker_path)
                         # Create the folder if it doesn't exist
                         os.makedirs(folder_path, exist_ok=True)

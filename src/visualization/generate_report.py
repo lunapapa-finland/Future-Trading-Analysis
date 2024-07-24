@@ -15,7 +15,7 @@ from src.utils.generate_html import *
 def get_daily_data(logger, parameters_global, parameters_report, ticker):
     """Gather daily trading data and perform analysis."""
     date = datetime.strptime(parameters_report['date'], '%Y-%m-%d')
-    ticker = re.sub(r'\d+', '', ticker.split('.')[0])
+    ticker = re.sub(r'\d+$', '', ticker.split('.')[0])
     date_previous = get_previous_date(date)
 
     trade, df, df_previous = load_data(logger, date, ticker, date_previous, parameters_global)
@@ -65,7 +65,7 @@ def get_statistical_future_data(ticker, logger, parameters_global, parameters_re
     """Get statistical future data."""
     report_date = datetime.strptime(parameters_report['date'], '%Y-%m-%d').date()
     concatenated_df = pd.DataFrame()
-    ticker = re.sub(r'\d+', '', ticker.split('.')[0])
+    ticker = re.sub(r'\d+$', '', ticker.split('.')[0])
     future_data_path = os.path.join(parameters_global['future_data_path'], ticker)
 
     for filename in os.listdir(future_data_path):
