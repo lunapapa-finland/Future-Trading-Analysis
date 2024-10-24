@@ -53,9 +53,12 @@ def get_trade_rth(trade, parameters_report):
     Preprocess trade data to get regular trading hours (RTH) trades.
     """
     trade = trade.drop(columns=['Id', 'TradeDay'])
-    trade['EnteredAt'] = pd.to_datetime(trade['EnteredAt']) - pd.Timedelta(hours=4)
-    trade['ExitedAt'] = pd.to_datetime(trade['ExitedAt']) - pd.Timedelta(hours=4)
     
+    # Parse the datetime fields, ensuring uniform timezone conversion to UTC
+    trade['EnteredAt'] = pd.to_datetime(trade['EnteredAt'], utc=True) - pd.Timedelta(hours=4)
+    trade['ExitedAt'] = pd.to_datetime(trade['ExitedAt'], utc=True) - pd.Timedelta(hours=4)
+    
+    # Filter trades during regular trading hours (RTH)
     trade_rth = trade[((trade['EnteredAt'].dt.time >= pd.Timestamp('09:30').time()) & (trade['EnteredAt'].dt.time <= pd.Timestamp('16:10').time())) |
                       ((trade['ExitedAt'].dt.time >= pd.Timestamp('09:30').time()) & (trade['ExitedAt'].dt.time <= pd.Timestamp('16:10').time()))].copy()
     
@@ -64,6 +67,7 @@ def get_trade_rth(trade, parameters_report):
     trade_rth.reset_index(drop=True, inplace=True)
     
     return trade_rth
+
 
 
 def get_aggregated_rth(df, parameters_report):
