@@ -16,5 +16,3 @@ dependencies:
       - opencv-python
       - cookiecutter
       - matplotlib
-      - psycopg2
-      - sqlalchemy
