@@ -26,13 +26,13 @@ def get_previous_date(date):
         return date - timedelta(days=1)
 
 
-def load_data(logger, date, ticker, date_previous, parameters_global):
+def load_data(logger, date, paired_ticker, date_previous, parameters_global):
     """
     Load trade and market data.
     """
     trade_file = os.path.join(parameters_global['performace_data_path'], f"Performance_{date.strftime('%Y-%m-%d')}.csv")
-    ticker_name = ticker[:3]
-    ticker_contract = ticker[3]
+    ticker_name = paired_ticker[1]
+    ticker_contract = paired_ticker[2]
     future_data_path = os.path.join(parameters_global['future_data_path'], ticker_name)
     
     trade = pd.read_csv(trade_file)
@@ -149,7 +149,7 @@ def get_trade_stats(trades, parameters_report):
     }
 
 
-def save_trade_stats(trades, parameters_report, parameters_global, date, ticker, logger):
+def save_trade_stats(trades, parameters_report, parameters_global, date, paired_ticker, logger):
     """
     Save trade statistics to a CSV file.
     """
@@ -159,7 +159,7 @@ def save_trade_stats(trades, parameters_report, parameters_global, date, ticker,
     date_str = pd.to_datetime(date).strftime('%Y-%m-%d')
     stats = {
         'Date': [date_str],
-        'Ticker': [ticker],
+        'Ticker': [paired_ticker[1]],
         'AveragePnL': [round(trades['PnL'].mean(), 2)],
         'MaxPnL': [round(trades['PnL'].max(), 2)],
         'MinPnL': [round(trades['PnL'].min(), 2)],
@@ -174,17 +174,17 @@ def save_trade_stats(trades, parameters_report, parameters_global, date, ticker,
     if os.path.exists(file_path):
         existing_df = pd.read_csv(file_path)
         existing_df.drop_duplicates(inplace=True)
-        match_condition = (existing_df['Date'] == date_str) & (existing_df['Ticker'] == ticker)
+        match_condition = (existing_df['Date'] == date_str) & (existing_df['Ticker'] == paired_ticker[1])
         
         if match_condition.any():
-            logger.info(f"Record for Date: {date_str} and Ticker: {ticker} already exists.")
+            logger.info(f"Record for Date: {date_str} and Ticker: {paired_ticker[1]} already exists.")
         else:
             existing_df = pd.concat([existing_df, stats_df], ignore_index=True)
             existing_df.to_csv(file_path, index=False)
-            logger.info(f"Appending new record for Date: {date_str} and Ticker: {ticker}.")
+            logger.info(f"Appending new record for Date: {date_str} and Ticker: {paired_ticker[1]}.")
     else:
         stats_df.to_csv(file_path, index=False)
-        logger.info(f"Creating new file and saving record for Date: {date_str} and Ticker: {ticker}.")
+        logger.info(f"Creating new file and saving record for Date: {date_str} and Ticker: {paired_ticker[1]}.")
 
 
 def get_statistical_data(logger, parameters_global, parameters_report, df, ticker):
