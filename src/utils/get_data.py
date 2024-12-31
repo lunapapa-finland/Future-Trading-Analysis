@@ -31,13 +31,15 @@ def load_data(logger, date, ticker, date_previous, parameters_global):
     Load trade and market data.
     """
     trade_file = os.path.join(parameters_global['performace_data_path'], f"Performance_{date.strftime('%Y-%m-%d')}.csv")
-    future_data_path = os.path.join(parameters_global['future_data_path'], ticker)
+    ticker_name = ticker[:3]
+    ticker_contract = ticker[3]
+    future_data_path = os.path.join(parameters_global['future_data_path'], ticker_name)
     
     trade = pd.read_csv(trade_file)
-    trade = trade[trade['ContractName'].str.startswith(ticker)]
+    trade = trade[trade['ContractName'].str.startswith(ticker_name)]
     
-    df = pd.read_csv(os.path.join(future_data_path, f"{ticker}_1min_data_{date.strftime('%Y-%m-%d')}.csv"))
-    df_previous_path = os.path.join(future_data_path, f"{ticker}_1min_data_{date_previous.strftime('%Y-%m-%d')}.csv")
+    df = pd.read_csv(os.path.join(future_data_path, f"{ticker_name}_1min_data_{date.strftime('%Y-%m-%d')}_{ticker_contract}.csv"))
+    df_previous_path = os.path.join(future_data_path, f"{ticker_name}_1min_data_{date_previous.strftime('%Y-%m-%d')}_{ticker_contract}.csv")
     
     try:
         df_previous = pd.read_csv(df_previous_path)

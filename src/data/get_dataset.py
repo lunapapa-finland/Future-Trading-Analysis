@@ -8,7 +8,6 @@ import os
 import sys
 from io import StringIO
 import re
-from src.db.db import save_to_db
 
 
 def get_future_data(logger, parameters_global, parameters_future):
@@ -46,21 +45,18 @@ def get_future_data(logger, parameters_global, parameters_future):
                         # Extract the date from the first index
                         date_str = str(df.index[0].date())
                         # Define the folder path
-                        ticker_path = re.sub(r'\d+$', '', ticker.split('.')[0])
+                        ticker_path = ticker[:3]
                         folder_path = os.path.join(parameters_global['future_data_path'], ticker_path)
                         # Create the folder if it doesn't exist
                         os.makedirs(folder_path, exist_ok=True)
                         # Save the data to a CSV file
-                        file_name = f"{ticker_path}_{interval}min_data_{date_str}.csv"
+                        file_name = f"{ticker_path}_{interval}min_data_{date_str}_{ticker[3]}.csv"
                         file_path = os.path.join(folder_path, file_name)
                         df.to_csv(file_path)
                         logger.info(f'{file_name} saved to {file_path}')
                 except Exception as e:
                     logger.error(f"Failed to download data for {ticker} at interval {interval} minutes on {start_date}: {str(e)}")
-                # if interval == '1' and 'ES' in ticker:
-                #     save_to_db(logger, df, 'es')
-                # elif interval == '1' and 'NQ' in ticker:
-                #     save_to_db(logger, df, 'nq')
+
     finally:
         # Restore stdout and stderr
         sys.stdout = old_stdout
