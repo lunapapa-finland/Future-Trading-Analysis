@@ -28,6 +28,11 @@ Ensure proper tool functionality by setting up the correct environment using Con
 conda create -f finance_env.yml
 ```
 
+## TODO
+1. Code needs to be heavily refactored.
+2. use lib pandas_market_calendars to better check trading dates(get_calendar('CME'))
+3. UI Enhancement
+
 ## Contributing
 Contributions are highly appreciated. Feel free to submit pull requests or open issues on GitHub to suggest improvements or new features. Your insights are invaluable in enhancing this tool for all users.
 
