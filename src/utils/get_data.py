@@ -169,6 +169,9 @@ def save_trade_stats(trades, parameters_report, parameters_global, date, paired_
         'AverageSize': [round(trades['Size'].mean(), 2)],
     }
     stats_df = pd.DataFrame(stats)
+    if not os.path.exists(parameters_global['future_aggdata_path']):
+        os.makedirs(parameters_global['future_aggdata_path'])
+        
     file_path = os.path.join(parameters_global['future_aggdata_path'], "DailyStats.csv")
     
     if os.path.exists(file_path):

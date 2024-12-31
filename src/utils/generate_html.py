@@ -43,7 +43,7 @@ def move_static_files(template_path, html_src_path):
         print(f"Error moving static files: {e}")
 
 
-def generate_html(ticker, fig_statistic, html_summary, parameters_report, fig_assemble=None):
+def generate_html(ticker, fig_statistic, parameters_report, fig_assemble=None):
     """
     Generate an HTML report with the given plots and summary.
 
@@ -63,7 +63,7 @@ def generate_html(ticker, fig_statistic, html_summary, parameters_report, fig_as
     # Move static files
     move_static_files(parameters_report['template_path'], parameters_report['html_src_path'])
 
-    html_content = template.render(fig_assemble_json=fig_assemble_json, fig_statistic_json=fig_statistic_json, html_summary=html_summary)
+    html_content = template.render(fig_assemble_json=fig_assemble_json, fig_statistic_json=fig_statistic_json)
     
     file_name = f"{ticker}_Candlestick_Chart_{parameters_report['date']}.html" if fig_assemble else "Overall_performance.html"
     file_path = os.path.join(parameters_report['html_path'], file_name)

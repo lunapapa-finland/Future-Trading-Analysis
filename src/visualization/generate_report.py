@@ -104,20 +104,20 @@ def main():
         
         fig_assemble = get_assemble_plot(paired_ticker[1], df_rth, trade_rth, pre_market, parameters_report, ['orange', 'purple', 'green', 'red'])
         fig_statistic = create_pie_chart(win_loss_counts, all_trades_stats, winning_trades_stats, losing_trades_stats)
-        html_summary = create_summary(parameters_report['summary_md_file'], parameters_report['date'], False)
+        # html_summary = create_summary(parameters_report['summary_md_file'], parameters_report['date'], False)
         logger.info('Daily plotly is done')
         
-        generate_html(ticker=paired_ticker[1], fig_assemble=fig_assemble, fig_statistic=fig_statistic, html_summary=html_summary, parameters_report=parameters_report)
+        generate_html(ticker=paired_ticker[1], fig_assemble=fig_assemble, fig_statistic=fig_statistic, parameters_report=parameters_report)
         logger.info('Daily chart is done')
 
         df_overall_rth, overall_winning_trades, overall_losing_trades, overall_win_loss_counts, overall_trades_stats, overall_winning_trades_stats, overall_losing_trades_stats = get_overall_data(logger, parameters_global, parameters_report)
         logger.info('Aggregated data preprocessing is done')
         
-        overall_html_summary = create_summary(parameters_report['summary_md_file'], parameters_report['date'], True)
+        # overall_html_summary = create_summary(parameters_report['summary_md_file'], parameters_report['date'], True)
         overall_fig_statistic = create_pie_chart(overall_win_loss_counts, overall_trades_stats, overall_winning_trades_stats, overall_losing_trades_stats)
         logger.info('Overall plotly is done')
         
-        generate_html(ticker=paired_ticker[1], fig_statistic=overall_fig_statistic, html_summary=overall_html_summary, parameters_report=parameters_report)
+        generate_html(ticker=paired_ticker[1], fig_statistic=overall_fig_statistic, parameters_report=parameters_report)
         logger.info('Overall Performance is done')
         
         generate_index(parameters_report)
