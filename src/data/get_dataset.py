@@ -8,6 +8,7 @@ import os
 import sys
 from io import StringIO
 import re
+import pandas_market_calendars as mcal
 
 def get_paired_tickers(tickers, base_tickers):
     """
@@ -88,6 +89,13 @@ def get_future_data(logger, parameters_global, parameters_future):
     """
 
     start_date = datetime.strptime(parameters_future['start_date'], '%Y-%m-%d')
+    cme_calendar = mcal.get_calendar('CME_Equity')
+
+    # Check if the input date is a trading day
+    schedule = cme_calendar.schedule(start_date=start_date, end_date=start_date)
+    if schedule.empty:
+        raise ValueError(f"{start_date.date()} is not a CME trading day.")
+    
     end_date = start_date + pd.Timedelta(days=1)
     intervals = [interval.strip() for interval in parameters_future['interval'].split(',')]
     tickers = [ticker.strip() for ticker in parameters_future['tickers'].split(',')]
