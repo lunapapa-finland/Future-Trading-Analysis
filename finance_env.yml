@@ -16,3 +16,4 @@ dependencies:
       - opencv-python
       - cookiecutter
       - matplotlib
+      - pandas_market_calendars

@@ -14,16 +14,34 @@ import configparser
 from src.utils.configparser import remove_comments_and_convert
 from src.utils.logger import get_logger
 import re
+import pandas_market_calendars as mcal
 
 
 def get_previous_date(date):
     """
-    Get the previous working date.
+    Get the previous trading date.
     """
-    if date.weekday() == 0:  # Monday is represented by 0
-        return date - timedelta(days=3)
-    else:
-        return date - timedelta(days=1)
+    cme_calendar = mcal.get_calendar('CME_Equity')
+
+    # Check if the input date is a trading day
+    schedule = cme_calendar.schedule(start_date=date, end_date=date)
+    if schedule.empty:
+        raise ValueError(f"{date.date()} is not a CME trading day.")
+    
+    month_shift_date = date - timedelta(days=30)
+    # Check if the input date is a trading day
+    schedule = cme_calendar.schedule(start_date=month_shift_date, end_date=date)
+    trading_days = schedule.index
+
+    current_index = trading_days.get_loc(date)
+    if current_index == 0:
+        raise ValueError("There is no previous trading day in the calendar.")
+    
+    previous_trading_date = trading_days[current_index - 1]
+    print(previous_trading_date)
+
+    return previous_trading_date
+
 
 
 def load_data(logger, date, paired_ticker, date_previous, parameters_global):
