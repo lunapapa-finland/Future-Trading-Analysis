@@ -38,7 +38,6 @@ def get_previous_date(date):
         raise ValueError("There is no previous trading day in the calendar.")
     
     previous_trading_date = trading_days[current_index - 1]
-    print(previous_trading_date)
 
     return previous_trading_date
 
@@ -167,24 +166,23 @@ def get_trade_stats(trades, parameters_report):
     }
 
 
-def save_trade_stats(trades, parameters_report, parameters_global, date, paired_ticker, logger):
+def save_trade_stats(parameters_report, parameters_global, date, paired_ticker, logger,  all_trades_stats, winning_ratio):
     """
     Save trade statistics to a CSV file.
-    """
-    if len(trades) == 0:
-        return
-    
+    """    
     date_str = pd.to_datetime(date).strftime('%Y-%m-%d')
+
     stats = {
         'Date': [date_str],
         'Ticker': [paired_ticker[1]],
-        'AveragePnL': [round(trades['PnL'].mean(), 2)],
-        'MaxPnL': [round(trades['PnL'].max(), 2)],
-        'MinPnL': [round(trades['PnL'].min(), 2)],
-        'PnL(Gross)': [round(trades['PnL'].sum(), 2)],
-        'PnL(Net)': [round(trades['PnL'].sum(), 2) - round(trades['Fees'].sum(), 2)],
-        'Count': [len(trades)],
-        'AverageSize': [round(trades['Size'].mean(), 2)],
+        'AveragePnL': [all_trades_stats['AveragePnL']],
+        'MaxPnL': [all_trades_stats['MaxPnL']],
+        'MinPnL': [all_trades_stats['MinPnL']],
+        'PnL(Gross)': [all_trades_stats['PnL(Gross)']],
+        'PnL(Net)': [all_trades_stats['PnL(Net)']],
+        'Count': [all_trades_stats['Count']],
+        'AverageSize': [all_trades_stats['AverageSize']],
+        'WinningRatio': [winning_ratio]
     }
     stats_df = pd.DataFrame(stats)
     if not os.path.exists(parameters_global['future_aggdata_path']):
