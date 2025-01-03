@@ -63,8 +63,8 @@ def get_overall_data(logger, parameters_global, parameters_report):
     )
 
 
-def get_statistical_future_data(ticker, logger, parameters_global, parameters_report):
-    """Get statistical future data."""
+def save_all_rth(ticker, logger, parameters_global, parameters_report):
+    """Save All RTH data to individual CSV file."""
     report_date = datetime.strptime(parameters_report['date'], '%Y-%m-%d').date()
     concatenated_df = pd.DataFrame()
     ticker = re.sub(r'\d+$', '', ticker.split('.')[0])
@@ -81,7 +81,7 @@ def get_statistical_future_data(ticker, logger, parameters_global, parameters_re
 
     aggregated_rth_data = concatenated_df.sort_index()
     aggregated_rth_data.to_csv(f"{parameters_global['future_aggdata_path']}{ticker}.csv")
-    get_statistical_data(logger, parameters_global, parameters_report, aggregated_rth_data, ticker)
+    save_rth_statistical_data(logger, parameters_global, parameters_report, aggregated_rth_data, ticker)
 
 
 def main():
@@ -106,26 +106,15 @@ def main():
         
         fig_assemble = get_assemble_plot(paired_ticker[1], df_rth, trade_rth, pre_market, parameters_report, ['orange', 'purple', 'green', 'red'])
         fig_statistic = create_pie_chart(win_loss_counts, all_trades_stats, winning_trades_stats, losing_trades_stats)
-        # html_summary = create_summary(parameters_report['summary_md_file'], parameters_report['date'], False)
         logger.info('Daily plotly is done')
         
         generate_html(ticker=paired_ticker[1], fig_assemble=fig_assemble, fig_statistic=fig_statistic, parameters_report=parameters_report)
         logger.info('Daily chart is done')
-
-        df_overall_rth, overall_winning_trades, overall_losing_trades, overall_win_loss_counts, overall_trades_stats, overall_winning_trades_stats, overall_losing_trades_stats = get_overall_data(logger, parameters_global, parameters_report)
-        logger.info('Aggregated data preprocessing is done')
-        
-        # overall_html_summary = create_summary(parameters_report['summary_md_file'], parameters_report['date'], True)
-        overall_fig_statistic = create_pie_chart(overall_win_loss_counts, overall_trades_stats, overall_winning_trades_stats, overall_losing_trades_stats)
-        logger.info('Overall plotly is done')
-        
-        generate_html(ticker=paired_ticker[1], fig_statistic=overall_fig_statistic, parameters_report=parameters_report)
-        logger.info('Overall Performance is done')
         
         generate_index(parameters_report)
         logger.info('Index Generation is done')
 
-        get_statistical_future_data(paired_ticker[1], logger, parameters_global, parameters_report)
+        save_all_rth(paired_ticker[1], logger, parameters_global, parameters_report)
         logger.info('Statistical Future Data Generation is done')
 
 

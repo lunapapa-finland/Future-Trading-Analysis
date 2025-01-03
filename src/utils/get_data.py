@@ -206,7 +206,7 @@ def save_trade_stats(parameters_report, parameters_global, date, paired_ticker, 
         logger.info(f"Creating new file and saving record for Date: {date_str} and Ticker: {paired_ticker[1]}.")
 
 
-def get_statistical_data(logger, parameters_global, parameters_report, df, ticker):
+def save_rth_statistical_data(logger, parameters_global, parameters_report, df, ticker):
     """
     Generate and save statistical data.
     """
@@ -241,4 +241,5 @@ def get_statistical_data(logger, parameters_global, parameters_report, df, ticke
         result_df = pd.concat([result_df, new_row])
     
     result_df.sort_index(inplace=True)
+    result_df.index.name = 'DateTime'
     result_df.to_csv(file_path)
