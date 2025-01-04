@@ -43,28 +43,52 @@ def get_previous_date(date):
 
 
 
+import os
+import sys
+import pandas as pd
+
 def load_data(logger, date, paired_ticker, date_previous, parameters_global):
     """
     Load trade and market data.
     """
-    trade_file = os.path.join(parameters_global['performace_data_path'], f"Performance_{date.strftime('%Y-%m-%d')}.csv")
+    try:
+        trade_file = os.path.join(parameters_global['performace_data_path'], f"Performance_{date.strftime('%Y-%m-%d')}.csv")
+        trade = pd.read_csv(trade_file)
+        trade = trade[trade['ContractName'].str.startswith(paired_ticker[1])]
+    except FileNotFoundError as e:
+        logger.error(f"Trade file not found: {e.filename}")
+        sys.exit(1)  # Exit the program
+    except Exception as e:
+        logger.error(f"Error reading trade file: {str(e)}")
+        sys.exit(1)  # Exit the program
+
     ticker_name = paired_ticker[1]
     ticker_contract = paired_ticker[2]
     future_data_path = os.path.join(parameters_global['future_data_path'], ticker_name)
-    
-    trade = pd.read_csv(trade_file)
-    trade = trade[trade['ContractName'].str.startswith(ticker_name)]
-    
-    df = pd.read_csv(os.path.join(future_data_path, f"{ticker_name}_1min_data_{date.strftime('%Y-%m-%d')}_{ticker_contract}.csv"))
-    df_previous_path = os.path.join(future_data_path, f"{ticker_name}_1min_data_{date_previous.strftime('%Y-%m-%d')}_{ticker_contract}.csv")
-    
+
     try:
+        df_path = os.path.join(future_data_path, f"{ticker_name}_1min_data_{date.strftime('%Y-%m-%d')}_{ticker_contract}.csv")
+        df = pd.read_csv(df_path)
+    except FileNotFoundError as e:
+        logger.error(f"Future data file not found: {e.filename}")
+        sys.exit(1)  # Exit the program
+    except Exception as e:
+        logger.error(f"Error reading future data file: {str(e)}")
+        sys.exit(1)  # Exit the program
+
+    try:
+        df_previous_path = os.path.join(future_data_path, f"{ticker_name}_1min_data_{date_previous.strftime('%Y-%m-%d')}_{ticker_contract}.csv")
         df_previous = pd.read_csv(df_previous_path)
     except FileNotFoundError as e:
+        logger.info(f"Previous future data file not found: {e.filename}. Using a copy of current data.")
         df_previous = df.copy()
-        logger.info(f"Cannot find file '{e.filename}'")
-    
+    except Exception as e:
+        logger.error(f"Error reading previous future data file: {str(e)}. Using a copy of current data.")
+        df_previous = df.copy()
+
     return trade, df, df_previous
+
+
 
 
 def get_trade_rth(trade, parameters_report):
