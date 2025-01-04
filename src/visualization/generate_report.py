@@ -31,7 +31,7 @@ def get_daily_data(logger, parameters_global, parameters_report, paired_ticker):
     losing_trades_stats = get_trade_stats(losing_trades, parameters_report)
     if all_trades_stats['Count'] != 0:
         winning_ratio = round(win_loss_counts['Winning Trades'] / (win_loss_counts['Winning Trades'] + win_loss_counts['Losing Trades']),2)
-        save_trade_stats(parameters_report, parameters_global, date, paired_ticker, logger, all_trades_stats, winning_ratio)
+        save_trade_stats(parameters_report, parameters_global, date, paired_ticker, logger, all_trades_stats, winning_ratio, winning_trades_stats, losing_trades_stats)
 
     return (
         trade_rth, df_rth, df_previous_rth, pre_market,

@@ -163,26 +163,43 @@ def get_trade_stats(trades, parameters_report):
         'PnL(Net)': round(trades['PnL'].sum(), 2) - round(trades['Fees'].sum(), 2),
         'Count': len(trades),
         'AverageSize': round(trades['Size'].mean(), 2),
+        'LongCount': len(trades[trades['Type'] == 'Long']),
+        'ShortCount': len(trades[trades['Type'] == 'Short']),
     }
 
 
-def save_trade_stats(parameters_report, parameters_global, date, paired_ticker, logger,  all_trades_stats, winning_ratio):
+def save_trade_stats(parameters_report, parameters_global, date, paired_ticker, logger,  all_trades_stats, winning_ratio, winning_trades_stats, losing_trades_stats):
     """
     Save trade statistics to a CSV file.
     """    
     date_str = pd.to_datetime(date).strftime('%Y-%m-%d')
+
+    if all_trades_stats['LongCount'] > all_trades_stats['ShortCount']:
+        sentiment = 'Bullish'
+    elif all_trades_stats['LongCount'] < all_trades_stats['ShortCount']:
+        sentiment = 'Bearish'
+    else:
+        sentiment = 'Neutral'
+
 
     stats = {
         'Date': [date_str],
         'Ticker': [paired_ticker[1]],
         'AveragePnL': [all_trades_stats['AveragePnL']],
         'MaxPnL': [all_trades_stats['MaxPnL']],
-        'MinPnL': [all_trades_stats['MinPnL']],
+        'MinPnL(Neg)': [all_trades_stats['MinPnL']],
         'PnL(Gross)': [all_trades_stats['PnL(Gross)']],
         'PnL(Net)': [all_trades_stats['PnL(Net)']],
-        'Count': [all_trades_stats['Count']],
         'AverageSize': [all_trades_stats['AverageSize']],
-        'WinningRatio': [winning_ratio]
+        'Total Trade Count': [all_trades_stats['Count']],
+        'WinningTradesCount': [winning_trades_stats['Count']],
+        'LosingTradesCount': [losing_trades_stats['Count']],
+        'Sentiment': [sentiment],
+        'LongCount': [all_trades_stats['LongCount']],
+        'ShortCount': [all_trades_stats['ShortCount']],
+        'WinningRatio': [winning_ratio],
+        'ProfitFactor': [round(winning_trades_stats['PnL(Net)'] / abs(losing_trades_stats['PnL(Net)']), 2)],
+        'Avg Win / Avg Loss': [round(winning_trades_stats['AveragePnL'] / abs(losing_trades_stats['AveragePnL']), 2)],
     }
     stats_df = pd.DataFrame(stats)
     if not os.path.exists(parameters_global['future_aggdata_path']):

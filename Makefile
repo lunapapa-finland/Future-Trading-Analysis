@@ -20,7 +20,7 @@ data: setup
 	@$(MAKE) clean >/dev/null 2>&1
 
 ## Generate Analysis
-report: setup
+report: setup data
 	@$(PYTHON_INTERPRETER) src/visualization/generate_report.py
 	@$(MAKE) clean >/dev/null 2>&1
 
