@@ -16,7 +16,8 @@ from src.data.get_dataset import get_paired_tickers
 def get_daily_data(logger, parameters_global, parameters_report, paired_ticker):
     """Gather daily trading data and perform analysis."""
     date = datetime.strptime(parameters_report['date'], '%Y-%m-%d')
-    date_previous = get_previous_date(date)
+    date_previous = datetime.strptime(parameters_report['date_previous'], '%Y-%m-%d')
+    # date_previous = get_previous_date(date)
 
     trade, df, df_previous = load_data(logger, date, paired_ticker, date_previous, parameters_global)
     trade_rth = get_trade_rth(trade, parameters_report)
