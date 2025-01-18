@@ -260,18 +260,26 @@ def save_rth_statistical_data(logger, parameters_global, parameters_report, df, 
             result_df = pd.DataFrame()
     else:
         result_df = pd.DataFrame()
+
+    # Calculate row-wise differences
+    df['high_low_diff'] = df['High'] - df['Low']
+    df['open_close_diff'] = abs(df['Open'] - df['Close'])
+
+    # Compute aggregate statistics
+    high_low_stats = df['high_low_diff'].agg(['mean', 'max', 'min', 'std']).round(2)
+    open_close_stats = df['open_close_diff'].agg(['mean', 'max', 'min', 'std']).round(2)
     
-    high_low_diff = df['High'] - df['Low']
-    open_close_diff = abs(df['Open'] - df['Close'])
+    
+    # Prepare data for saving
     data = {
-        'high_low_mean': round(high_low_diff.mean(), 2),
-        'high_low_max': round(high_low_diff.max(), 2),
-        'high_low_min': round(high_low_diff.min(), 2),
-        'high_low_std': round(high_low_diff.std(), 2),
-        'open_close_mean': round(open_close_diff.mean(), 2),
-        'open_close_max': round(open_close_diff.max(), 2),
-        'open_close_min': round(open_close_diff.min(), 2),
-        'open_close_std': round(open_close_diff.std(), 2)
+        'high_low_mean': high_low_stats['mean'],
+        'high_low_max': high_low_stats['max'],
+        'high_low_min': high_low_stats['min'],
+        'high_low_std': high_low_stats['std'],
+        'open_close_mean': open_close_stats['mean'],
+        'open_close_max': open_close_stats['max'],
+        'open_close_min': open_close_stats['min'],
+        'open_close_std': open_close_stats['std']
     }
     
     new_row = pd.DataFrame(data, index=[parameters_report['date']])

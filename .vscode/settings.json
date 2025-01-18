@@ -1,2 +1,10 @@
 {
+    "terminal.integrated.profiles.linux": {
+      "Conda (your-env-name)": {
+        "path": "/bin/bash",
+        "args": ["-c", "conda activate finance_env && exec bash"]
+      }
+    },
+    "terminal.integrated.defaultProfile.linux": "Conda (your-env-name)"
 }
+  

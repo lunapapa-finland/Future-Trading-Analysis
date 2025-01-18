@@ -79,10 +79,14 @@ def save_all_rth(ticker, logger, parameters_global, parameters_report):
                 df = pd.read_csv(filepath)
                 df = get_future_rth(df, parameters_report)
                 concatenated_df = pd.concat([concatenated_df, df], axis=0)
+            if file_date == report_date:
+                filepath = os.path.join(future_data_path, filename)
+                df_report_date = pd.read_csv(filepath)
+                df_report_date_rth = get_future_rth(df_report_date, parameters_report)
 
     aggregated_rth_data = concatenated_df.sort_index()
     aggregated_rth_data.to_csv(f"{parameters_global['future_aggdata_path']}{ticker}.csv")
-    save_rth_statistical_data(logger, parameters_global, parameters_report, aggregated_rth_data, ticker)
+    save_rth_statistical_data(logger, parameters_global, parameters_report, df_report_date_rth, ticker)
 
 
 def main():
