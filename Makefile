@@ -24,6 +24,11 @@ report: setup data
 	@$(PYTHON_INTERPRETER) src/visualization/generate_report.py
 	@$(MAKE) clean >/dev/null 2>&1
 
+## Calculate system stability
+score: setup
+	@$(PYTHON_INTERPRETER) src/visualization/calculate_z_score.py
+	@$(MAKE) clean >/dev/null 2>&1
+
 ## Delete all compiled Python files
 clean:
 	@find . -type f -name "*.py[co]" -delete
