@@ -25,8 +25,8 @@ report: setup data
 	@$(MAKE) clean >/dev/null 2>&1
 
 ## Calculate system stability
-score: setup
-	@$(PYTHON_INTERPRETER) src/visualization/calculate_z_score.py
+analysis: setup
+	@$(PYTHON_INTERPRETER) src/visualization/trade_analysis.py
 	@$(MAKE) clean >/dev/null 2>&1
 
 ## Delete all compiled Python files
