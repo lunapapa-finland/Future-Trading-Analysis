@@ -7,6 +7,7 @@ from src.utils.configparser import remove_comments_and_convert
 from src.utils.logger import get_logger
 from itertools import groupby
 import matplotlib.pyplot as plt
+import numpy as np
 
 
 def calculate_z_score(df):
@@ -58,7 +59,7 @@ def calculate_streaks(df):
 
 def plot_drawdown(df, base_path):
     """
-    Plots the maximum drawdown and cumulative PnL.
+    Plots the maximum drawdown and normalized cumulative PnL.
 
     Args:
         df (DataFrame): The combined dataframe with trading data.
@@ -66,15 +67,19 @@ def plot_drawdown(df, base_path):
     """
     full_path = os.path.join(base_path, 'drawdown_analysis.png')
 
-    df['CumulativePnL'] = df['PnL'].cumsum()
+    # Normalize PnL by the number of trades
+    df['NormalizedPnL'] = df['PnL'] / df['PnL'].mean()
+
+    # Calculate cumulative PnL and drawdown using normalized PnL
+    df['CumulativePnL'] = df['NormalizedPnL'].cumsum()
     df['Drawdown'] = df['CumulativePnL'] - df['CumulativePnL'].cummax()
 
     plt.figure(figsize=(10, 6))
-    plt.plot(df.index, df['CumulativePnL'], label='Cumulative PnL')
+    plt.plot(df.index, df['CumulativePnL'], label='Cumulative Normalized PnL')
     plt.fill_between(df.index, df['Drawdown'], 0, color='red', alpha=0.3, label='Drawdown')
-    plt.title('Cumulative PnL and Drawdown Analysis')
+    plt.title('Normalized Cumulative PnL and Drawdown Analysis')
     plt.xlabel('Trade Index')
-    plt.ylabel('PnL')
+    plt.ylabel('Normalized PnL')
     plt.legend()
     plt.grid()
     plt.savefig(full_path)
@@ -82,7 +87,7 @@ def plot_drawdown(df, base_path):
 
 def plot_profit_factor(df, base_path):
     """
-    Plots the profit factor over time.
+    Plots the profit factor using normalized cumulative PnL.
 
     Args:
         df (DataFrame): The combined dataframe with trading data.
@@ -90,19 +95,24 @@ def plot_profit_factor(df, base_path):
     """
     full_path = os.path.join(base_path, 'profit_factor_analysis.png')
 
-    df['CumulativeWins'] = df['PnL'].apply(lambda x: x if x > 0 else 0).cumsum()
-    df['CumulativeLosses'] = df['PnL'].apply(lambda x: abs(x) if x < 0 else 0).cumsum()
+    # Normalize PnL
+    df['NormalizedPnL'] = df['PnL'] / df['PnL'].mean()
+
+    # Calculate normalized cumulative wins and losses
+    df['CumulativeWins'] = df['NormalizedPnL'].apply(lambda x: x if x > 0 else 0).cumsum()
+    df['CumulativeLosses'] = df['NormalizedPnL'].apply(lambda x: abs(x) if x < 0 else 0).cumsum()
     df['ProfitFactor'] = df['CumulativeWins'] / df['CumulativeLosses']
 
     plt.figure(figsize=(10, 6))
-    plt.plot(df.index, df['ProfitFactor'], label='Profit Factor')
-    plt.title('Profit Factor Over Time')
+    plt.plot(df.index, df['ProfitFactor'], label='Normalized Profit Factor')
+    plt.title('Normalized Profit Factor Over Time')
     plt.xlabel('Trade Index')
     plt.ylabel('Profit Factor')
     plt.legend()
     plt.grid()
     plt.savefig(full_path)
     plt.close()
+
 
 def plot_streaks(df, base_path):
     """
@@ -127,7 +137,7 @@ def plot_streaks(df, base_path):
 
 def hourly_performance_trends(df, base_path):
     """
-    Plots hourly performance trends showing Total PnL and Winning Rate, saving to appropriate directories.
+    Plots hourly performance trends normalized by trade frequency.
 
     Args:
         df (DataFrame): The combined dataframe with trading data, including 'EnteredAt' and 'PnL'.
@@ -138,14 +148,18 @@ def hourly_performance_trends(df, base_path):
     df['HourOfDay'] = df['EnteredAt'].dt.hour
     hourly_performance = df.groupby('HourOfDay').agg(
         TotalPnL=('PnL', 'sum'),
+        TradeFrequency=('PnL', 'count'),
         WinningRate=('WinOrLoss', lambda x: (x > 0).mean()),
     )
 
+    # Normalize Total PnL
+    hourly_performance['NormalizedPnL'] = hourly_performance['TotalPnL'] / hourly_performance['TradeFrequency']
+
     plt.figure(figsize=(10, 6))
-    plt.plot(hourly_performance.index, hourly_performance['TotalPnL'], marker='o', label='Total PnL')
+    plt.plot(hourly_performance.index, hourly_performance['NormalizedPnL'], marker='o', label='Normalized Total PnL')
     plt.bar(hourly_performance.index, hourly_performance['WinningRate'], alpha=0.4, label='Winning Rate', color='orange')
     plt.axhline(0, color='red', linestyle='--', linewidth=1, label='Break-Even Line')
-    plt.title('Hourly Performance Trends (GMT+2)')
+    plt.title('Normalized Hourly Performance Trends (GMT+2)')
     plt.xlabel('Hour of Day')
     plt.ylabel('Performance Metrics')
     plt.xticks(hourly_performance.index)
@@ -153,6 +167,7 @@ def hourly_performance_trends(df, base_path):
     plt.grid()
     plt.savefig(full_path)
     plt.close()
+
 
 def cumulative_pnl_over_trades(df, base_path):
     """
@@ -178,6 +193,34 @@ def cumulative_pnl_over_trades(df, base_path):
     plt.savefig(full_path)
     plt.close()
 
+def plot_sharpe_ratio(df, base_path):
+    """
+    Plots the Sharpe Ratio over time and saves to appropriate directories.
+
+    Args:
+        df (DataFrame): The combined dataframe with trading data.
+        base_path (str): Base path to save images.
+    """
+    full_path = os.path.join(base_path, 'sharpe_ratio.png')
+
+    # Calculate rolling Sharpe Ratio
+    risk_free_rate = 0.0  # Assume risk-free rate is 0 for simplicity
+    df['RollingMeanPnL'] = df['PnL'].rolling(window=30).mean()
+    df['RollingStdPnL'] = df['PnL'].rolling(window=30).std()
+    df['SharpeRatio'] = (df['RollingMeanPnL'] - risk_free_rate) / df['RollingStdPnL']
+
+    plt.figure(figsize=(12, 6))
+    plt.plot(df.index, df['SharpeRatio'], label='Sharpe Ratio', marker='o', linestyle='-')
+    plt.axhline(0, color='red', linestyle='--', linewidth=1, label='Zero Line')
+    plt.title('Rolling Sharpe Ratio Over Trades')
+    plt.xlabel('Trade Index')
+    plt.ylabel('Sharpe Ratio')
+    plt.legend()
+    plt.grid()
+    plt.savefig(full_path)
+    plt.close()
+
+
 def trade_size_impact_on_performance(df, base_path):
     """
     Plots the impact of trade size on Total PnL and Winning Rate, saving to appropriate directories.
@@ -189,21 +232,249 @@ def trade_size_impact_on_performance(df, base_path):
 
     full_path = os.path.join(base_path, 'trade_size_impact_on_performance.png')
 
+    # Aggregate performance metrics by trade size
     trade_size_performance = df.groupby('Size').agg(
         TotalPnL=('PnL', 'sum'),
         WinningRate=('WinOrLoss', lambda x: (x > 0).mean()),
+        TradeFrequency=('PnL', 'count')
     )
 
-    plt.figure(figsize=(10, 6))
-    plt.bar(trade_size_performance.index, trade_size_performance['TotalPnL'], alpha=0.6, label='Total PnL')
-    plt.plot(trade_size_performance.index, trade_size_performance['WinningRate'], marker='o', color='orange', label='Winning Rate')
-    plt.title('Trade Size Impact on Performance')
-    plt.xlabel('Trade Size')
-    plt.ylabel('Performance Metrics')
+    # Normalize Total PnL by the frequency of trades
+    trade_size_performance['NormalizedPnL'] = (
+        trade_size_performance['TotalPnL'] / trade_size_performance['TradeFrequency']
+    )
+
+    # Create the plot with a secondary y-axis
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+
+    # Plot Total PnL (normalized) as a bar chart
+    ax1.bar(trade_size_performance.index, trade_size_performance['NormalizedPnL'], alpha=0.6, label='Normalized Total PnL', color='skyblue')
+    ax1.set_xlabel('Trade Size')
+    ax1.set_ylabel('Normalized Total PnL')
+    ax1.set_title('Trade Size Impact on Performance (Normalized)')
+    ax1.legend(loc='upper left')
+    ax1.grid()
+
+    # Create a secondary y-axis for the winning rate
+    ax2 = ax1.twinx()
+    ax2.plot(trade_size_performance.index, trade_size_performance['WinningRate'], marker='o', color='orange', label='Winning Rate')
+    ax2.set_ylabel('Winning Rate')
+    ax2.legend(loc='upper right')
+
+    plt.savefig(full_path)
+    plt.close()
+def plot_day_of_week_performance(df, base_path):
+    """
+    Plots performance metrics by day of the week using two axes to handle scaling issues and saves to appropriate directories.
+
+    Args:
+        df (DataFrame): The combined dataframe with trading data.
+        base_path (str): Base path to save images.
+    """
+    full_path = os.path.join(base_path, 'day_of_week_performance.png')
+
+    # Extract day of the week and aggregate performance metrics
+    df['DayOfWeek'] = df['EnteredAt'].dt.day_name()
+    day_of_week_performance = df.groupby('DayOfWeek').agg(
+        TotalPnL=('PnL', 'sum'),
+        WinningRate=('WinOrLoss', lambda x: (x > 0).mean())
+    ).reindex(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])  # Ensure correct order
+
+    # Create the plot with two y-axes
+    fig, ax1 = plt.subplots(figsize=(12, 6))
+
+    # Bar chart for Total PnL
+    ax1.bar(day_of_week_performance.index, day_of_week_performance['TotalPnL'], alpha=0.6, label='Total PnL', color='skyblue')
+    ax1.set_xlabel('Day of the Week')
+    ax1.set_ylabel('Total PnL')
+    ax1.grid()
+    ax1.legend(loc='upper left')
+
+    # Line chart for Winning Rate
+    ax2 = ax1.twinx()
+    ax2.plot(day_of_week_performance.index, day_of_week_performance['WinningRate'], marker='o', color='orange', label='Winning Rate')
+    ax2.set_ylabel('Winning Rate')
+    ax2.legend(loc='upper right')
+
+    # Add a title
+    plt.title('Performance by Day of the Week')
+
+    # Save the plot
+    plt.savefig(full_path)
+    plt.close()
+
+
+def plot_pnl_distribution(df, base_path):
+    """
+    Plots the distribution of PnL and saves to appropriate directories.
+
+    Args:
+        df (DataFrame): The combined dataframe with trading data.
+        base_path (str): Base path to save images.
+    """
+    full_path = os.path.join(base_path, 'pnl_distribution.png')
+
+    plt.figure(figsize=(12, 6))
+    plt.hist(df['PnL'], bins=50, alpha=0.7, color='skyblue', edgecolor='black')
+    plt.axvline(df['PnL'].mean(), color='red', linestyle='--', linewidth=1, label='Mean PnL')
+    plt.axvline(0, color='black', linestyle='-', linewidth=1, label='Break-Even Line')
+    plt.title('PnL Distribution')
+    plt.xlabel('PnL')
+    plt.ylabel('Frequency')
     plt.legend()
     plt.grid()
     plt.savefig(full_path)
     plt.close()
+
+def plot_performance_heatmap(df, base_path):
+    """
+    Plots a heatmap of Total PnL by Hour and Trade Size and saves to appropriate directories.
+
+    Args:
+        df (DataFrame): The combined dataframe with trading data.
+        base_path (str): Base path to save images.
+    """
+    full_path = os.path.join(base_path, 'performance_heatmap.png')
+
+    df['HourOfDay'] = df['EnteredAt'].dt.hour
+    heatmap_data = df.pivot_table(index='HourOfDay', columns='Size', values='PnL', aggfunc='sum').fillna(0)
+
+    plt.figure(figsize=(12, 6))
+    plt.imshow(heatmap_data, cmap='coolwarm', aspect='auto', origin='lower')
+    plt.colorbar(label='Total PnL')
+    plt.title('Heatmap of Performance by Hour and Trade Size')
+    plt.xlabel('Trade Size')
+    plt.ylabel('Hour of Day')
+    plt.xticks(range(len(heatmap_data.columns)), heatmap_data.columns, rotation=45)
+    plt.yticks(range(len(heatmap_data.index)), heatmap_data.index)
+    plt.grid(False)
+    plt.savefig(full_path)
+    plt.close()
+
+def plot_rolling_winning_rate(df, base_path):
+    """
+    Plots the rolling winning rate over trades and saves to appropriate directories.
+
+    Args:
+        df (DataFrame): The combined dataframe with trading data.
+        base_path (str): Base path to save images.
+    """
+    full_path = os.path.join(base_path, 'rolling_winning_rate.png')
+
+    df['RollingWinningRate'] = df['WinOrLoss'].rolling(window=50).mean()
+
+    plt.figure(figsize=(12, 6))
+    plt.plot(df.index, df['RollingWinningRate'], marker='o', linestyle='-', label='Rolling Winning Rate')
+    plt.axhline(0.5, color='red', linestyle='--', linewidth=1, label='50% Line')
+    plt.title('Rolling Winning Rate Over Trades')
+    plt.xlabel('Trade Index')
+    plt.ylabel('Winning Rate')
+    plt.legend()
+    plt.grid()
+    plt.savefig(full_path)
+    plt.close()
+
+def trade_size_and_risk_analysis(df, base_path):
+    """
+    Analyzes the relationship between trade size and risk metrics (PnL standard deviation and drawdown).
+
+    Args:
+        df (DataFrame): The combined dataframe with trading data.
+        base_path (str): Base path to save images.
+    """
+    full_path = os.path.join(base_path, 'trade_size_risk_analysis.png')
+
+    # Group by trade size
+    trade_size_stats = df.groupby('Size').agg(
+        AveragePnL=('PnL', 'mean'),
+        StdPnL=('PnL', 'std'),
+        MaxDrawdown=('PnL', lambda x: x.cumsum().min() - x.cumsum().max())
+    )
+
+    # Plot the results
+    fig, ax1 = plt.subplots(figsize=(12, 6))
+
+    ax1.bar(trade_size_stats.index, trade_size_stats['StdPnL'], alpha=0.6, label='Standard Deviation of PnL', color='skyblue')
+    ax1.set_xlabel('Trade Size')
+    ax1.set_ylabel('Standard Deviation of PnL')
+    ax1.set_title('Trade Size and Risk Analysis')
+    ax1.legend(loc='upper left')
+    ax1.grid()
+
+    ax2 = ax1.twinx()
+    ax2.plot(trade_size_stats.index, trade_size_stats['MaxDrawdown'], marker='o', color='orange', label='Maximum Drawdown')
+    ax2.set_ylabel('Maximum Drawdown')
+    ax2.legend(loc='upper right')
+
+    plt.savefig(full_path)
+    plt.close()
+
+def correlation_analysis(df, base_path):
+    """
+    Performs correlation analysis between trade size, PnL, winning rate, and time of day.
+
+    Args:
+        df (DataFrame): The combined dataframe with trading data.
+        base_path (str): Base path to save images.
+    """
+    full_path = os.path.join(base_path, 'correlation_analysis.png')
+
+    # Add hour of day and winning rate
+    df['HourOfDay'] = df['EnteredAt'].dt.hour
+    df['WinningRate'] = (df['WinOrLoss'] > 0).astype(int)
+
+    # Select relevant columns for correlation
+    correlation_data = df[['Size', 'PnL', 'HourOfDay', 'WinningRate']]
+
+    # Compute correlation matrix
+    correlation_matrix = correlation_data.corr()
+
+    # Plot the heatmap
+    plt.figure(figsize=(10, 8))
+    plt.imshow(correlation_matrix, cmap='coolwarm', aspect='auto', origin='lower')
+    plt.colorbar(label='Correlation Coefficient')
+    plt.xticks(range(len(correlation_matrix.columns)), correlation_matrix.columns, rotation=45)
+    plt.yticks(range(len(correlation_matrix.index)), correlation_matrix.index)
+    plt.title('Correlation Analysis')
+    plt.savefig(full_path)
+    plt.close()
+
+
+def monte_carlo_simulation(df, base_path, num_simulations=1000, num_trades=200):
+    """
+    Performs Monte Carlo simulation to assess the robustness of the strategy.
+
+    Args:
+        df (DataFrame): The combined dataframe with trading data.
+        base_path (str): Base path to save images.
+        num_simulations (int): Number of simulations to run.
+        num_trades (int): Number of trades per simulation.
+    """
+    full_path = os.path.join(base_path, 'monte_carlo_simulation.png')
+
+    # Extract PnL values for simulation
+    pnl_values = df['PnL'].values
+
+    # Run Monte Carlo simulations
+    results = []
+    for _ in range(num_simulations):
+        simulated_trades = np.random.choice(pnl_values, size=num_trades, replace=True)
+        cumulative_pnl = np.cumsum(simulated_trades)
+        results.append(cumulative_pnl)
+
+    # Plot results
+    plt.figure(figsize=(12, 6))
+    for simulation in results:
+        plt.plot(simulation, alpha=0.2, color='gray')
+    plt.axhline(0, color='red', linestyle='--', label='Break-Even Line')
+    plt.title(f'Monte Carlo Simulation ({num_simulations} Simulations, {num_trades} Trades)')
+    plt.xlabel('Trade Index')
+    plt.ylabel('Cumulative PnL')
+    plt.legend()
+    plt.grid()
+    plt.savefig(full_path)
+    plt.close()
+
 
 def plot_all(df, base_path):
     """
@@ -223,6 +494,14 @@ def plot_all(df, base_path):
     plot_streaks(df, overall_base_path)
     plot_drawdown(df, overall_base_path)
     plot_profit_factor(df, overall_base_path)
+    plot_sharpe_ratio(df, overall_base_path)
+    plot_day_of_week_performance(df, overall_base_path)
+    plot_pnl_distribution(df, overall_base_path)
+    plot_performance_heatmap(df, overall_base_path)
+    plot_rolling_winning_rate(df, overall_base_path)
+    trade_size_and_risk_analysis(df, overall_base_path)
+    correlation_analysis(df, overall_base_path)
+    monte_carlo_simulation(df, overall_base_path)
 
     # Plot monthly performance
     df['YearMonth'] = df['EnteredAt'].dt.tz_localize(None).dt.to_period('M')
@@ -235,7 +514,14 @@ def plot_all(df, base_path):
         plot_streaks(group, monthly_base_path)
         plot_drawdown(group, monthly_base_path)
         plot_profit_factor(group, monthly_base_path)
-
+        plot_sharpe_ratio(group, monthly_base_path)
+        plot_day_of_week_performance(group, monthly_base_path)
+        plot_pnl_distribution(group, monthly_base_path)
+        plot_performance_heatmap(group, monthly_base_path)
+        plot_rolling_winning_rate(group, monthly_base_path)
+        trade_size_and_risk_analysis(df, overall_base_path)
+        correlation_analysis(df, overall_base_path)
+        monte_carlo_simulation(df, overall_base_path)
 
 
 

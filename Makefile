@@ -29,6 +29,11 @@ analysis: setup
 	@$(PYTHON_INTERPRETER) src/visualization/trade_analysis.py
 	@$(MAKE) clean >/dev/null 2>&1
 
+## simualtion
+simulation: setup
+	@$(PYTHON_INTERPRETER) src/visualization/trade_simulation.py
+	@$(MAKE) clean >/dev/null 2>&1
+
 ## Delete all compiled Python files
 clean:
 	@find . -type f -name "*.py[co]" -delete
