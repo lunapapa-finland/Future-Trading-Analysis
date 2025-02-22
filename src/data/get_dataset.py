@@ -43,7 +43,7 @@ def get_paired_tickers(tickers, base_tickers):
     return paired_tickers
 
 
-def download_and_save_data(paired_ticker, interval, start_date, end_date, parameters_global, logger):
+def download_and_save_data(paired_ticker, interval, start_date, end_date, parameters_global, logger, parameters_report):
     """
     Downloads historical trading data for a given ticker and saves it as a CSV file.
     Parameters:
@@ -60,8 +60,13 @@ def download_and_save_data(paired_ticker, interval, start_date, end_date, parame
     """
 
     try:
-        df = yf.download(tickers=paired_ticker[0], start=start_date, end=end_date, interval=f"{interval}m")
+        df = yf.download(tickers=paired_ticker[0], start=start_date, end=end_date, auto_adjust = False, interval=f"{interval}m", ignore_tz = False, prepost = True, multi_level_index = False)
         if not df.empty:
+            # adjust this if they change the api again
+            df.index = df.index.tz_convert(f"Etc/GMT+{parameters_report['time_difference']}")
+            expected_order = ["Open", "High", "Low", "Close", "Adj Close", "Volume"]
+            df = df[expected_order]
+            ###
             date_str = str(df.index[0].date())
             folder_path = os.path.join(parameters_global['future_data_path'], paired_ticker[1])
             os.makedirs(folder_path, exist_ok=True)
@@ -73,7 +78,7 @@ def download_and_save_data(paired_ticker, interval, start_date, end_date, parame
         logger.error(f"Failed to download data for {paired_ticker[0]} at interval {interval} minutes on {start_date}: {str(e)}")
 
 
-def get_future_data(logger, parameters_global, parameters_future):
+def get_future_data(logger, parameters_global, parameters_future, parameters_report):
     """
     Fetches and processes future trading data based on provided parameters.
     Args:
@@ -108,7 +113,7 @@ def get_future_data(logger, parameters_global, parameters_future):
     try:
         for paired_ticker in paired_tickers:
             for interval in intervals:
-                download_and_save_data(paired_ticker, interval, start_date, end_date, parameters_global, logger)
+                download_and_save_data(paired_ticker, interval, start_date, end_date, parameters_global, logger, parameters_report)
                 captured_output = mystdout.getvalue()
                 cleaned_output = re.sub(r'\s+', ' ', captured_output).strip()
                 logger.info(cleaned_output)
@@ -123,7 +128,8 @@ if __name__ == "__main__":
     config.read('config.ini')
     parameters_global = remove_comments_and_convert(config, 'global')
     parameters_future = remove_comments_and_convert(config, 'future')
+    parameters_report = remove_comments_and_convert(config, 'report')
     logger = get_logger('data.log', parameters_global['log_path'])
     logger.info(f"========== Starting Data Acquisition for {parameters_future['start_date']} ==========")
     print(f"Check log later in {parameters_global['log_path']} for details.")
-    get_future_data(logger, parameters_global, parameters_future)
+    get_future_data(logger, parameters_global, parameters_future, parameters_report)

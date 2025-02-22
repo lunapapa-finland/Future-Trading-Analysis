@@ -177,7 +177,7 @@ def get_trade_stats(trades, parameters_report):
     Generate trade statistics.
     """
     if len(trades) == 0:
-        return {'AveragePnL': 0, 'MaxPnL': 0, 'MinPnL': 0, 'TotalPnL': 0, 'Count': 0}
+        return {'AveragePnL': 0, 'MaxPnL': 0, 'MinPnL': 0, 'PnL(Gross)': 0, 'PnL(Net)': 0, 'Count': 0, 'AverageSize':0, 'LongCount':0, 'ShortCount':0}
     
     return {
         'AveragePnL': round(trades['PnL'].mean(), 2),
@@ -222,8 +222,17 @@ def save_trade_stats(parameters_report, parameters_global, date, paired_ticker, 
         'LongCount': [all_trades_stats['LongCount']],
         'ShortCount': [all_trades_stats['ShortCount']],
         'WinningRatio': [winning_ratio],
-        'ProfitFactor': [round(winning_trades_stats['PnL(Net)'] / abs(losing_trades_stats['PnL(Net)']), 2)],
-        'Avg Win / Avg Loss': [round(winning_trades_stats['AveragePnL'] / abs(losing_trades_stats['AveragePnL']), 2)],
+        'ProfitFactor': [
+                            lambda: float('inf') if abs(losing_trades_stats['PnL(Net)']) == 0 else round(
+                                winning_trades_stats['PnL(Net)'] / abs(losing_trades_stats['PnL(Net)']), 2
+                            )
+                        ],
+        'Avg Win / Avg Loss': [
+                            lambda: float('inf') if abs(losing_trades_stats['AveragePnL']) == 0 else round(
+                                winning_trades_stats['AveragePnL'] / abs(losing_trades_stats['AveragePnL']), 2
+                            )
+                        ]
+
     }
     stats_df = pd.DataFrame(stats)
     if not os.path.exists(parameters_global['future_aggdata_path']):
