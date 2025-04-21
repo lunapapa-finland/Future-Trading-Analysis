@@ -6,7 +6,7 @@
 
 PROJECT_DIR := $(shell dirname $(realpath $(lastword $(MAKEFILE_LIST))))
 PROJECT_NAME = Future_Trading_Analysis
-PYTHON_INTERPRETER = python3
+PYTHON_INTERPRETER = python
 
 
 #################################################################################

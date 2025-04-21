@@ -40,7 +40,7 @@ def create_ema_trace(df, parameters_report):
     """Create trace for EMA."""
     return go.Scatter(
         x=df.index.strftime('%Y-%m-%d %H:%M'),
-        y=df[f"EMA_{parameters_report['ema']}"],
+        y=df[f"EMA_{parameters_report['ema']}"].astype(float).tolist(),
         mode='lines',
         line=dict(color='blue', width=2),
         name=f"EMA {parameters_report['ema']}"
