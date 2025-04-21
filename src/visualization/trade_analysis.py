@@ -8,6 +8,32 @@ from src.utils.logger import get_logger
 from itertools import groupby
 import matplotlib.pyplot as plt
 import numpy as np
+import pytz
+
+def adjust_to_finnish_timezone(df):
+    """Convert mixed time zone data to Finnish time zone (Europe/Helsinki)."""
+    finland_tz = pytz.timezone('Europe/Helsinki')  # Finland uses Europe/Helsinki timezone
+    
+    def convert_to_finnish_timezone(col):
+        """Helper function to convert a datetime column to Finnish time zone."""
+        # Ensure the datetime column is parsed correctly with the timezone
+        col = pd.to_datetime(col, errors='coerce', utc=True)  # Force to datetime and handle mixed time zones
+        
+        # If the datetime is already tz-aware, we just convert it to Finnish time zone
+        if col.dt.tz is not None:
+            col = col.dt.tz_convert(finland_tz)
+        else:
+            # If the datetime is naive (no time zone), we assume it's in UTC and localize to Finnish time zone
+            col = col.dt.tz_localize('UTC').dt.tz_convert(finland_tz)
+        
+        return col
+
+    # Apply the conversion to all relevant columns
+    df['EnteredAt'] = convert_to_finnish_timezone(df['EnteredAt'])
+    df['ExitedAt'] = convert_to_finnish_timezone(df['ExitedAt'])
+    df['TradeDay'] = convert_to_finnish_timezone(df['TradeDay'])
+    
+    return df
 
 
 def calculate_z_score(df):
@@ -580,6 +606,7 @@ def main():
         winning_rate = calculate_winning_rate(combined_df)
         logger.info(f"Winning rate in total {winning_rate}")
 
+        combined_df = adjust_to_finnish_timezone(combined_df)
 
         plot_all(combined_df, performace_img_path)
         logger.info(f"Plots are done.")
