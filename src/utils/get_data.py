@@ -184,7 +184,7 @@ def get_trade_stats(trades, parameters_report):
         'MaxPnL': round(trades['PnL'].max(), 2),
         'MinPnL': round(trades['PnL'].min(), 2),
         'PnL(Gross)': round(trades['PnL'].sum(), 2),
-        'PnL(Net)': round(trades['PnL'].sum(), 2) - round(trades['Fees'].sum(), 2),
+        'PnL(Net)': round(trades['PnL'].sum(), 2) + round(trades['Fees'].sum(), 2),
         'Count': len(trades),
         'AverageSize': round(trades['Size'].mean(), 2),
         'LongCount': len(trades[trades['Type'] == 'Long']),
