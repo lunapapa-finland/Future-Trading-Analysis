@@ -9,56 +9,472 @@ from itertools import groupby
 import matplotlib.pyplot as plt
 import numpy as np
 import pytz
+import matplotlib
 
-def adjust_to_finnish_timezone(df):
-    """Convert mixed time zone data to Finnish time zone (Europe/Helsinki)."""
-    finland_tz = pytz.timezone('Europe/Helsinki')  # Finland uses Europe/Helsinki timezone
-    
-    def convert_to_finnish_timezone(col):
-        """Helper function to convert a datetime column to Finnish time zone."""
-        # Ensure the datetime column is parsed correctly with the timezone
-        col = pd.to_datetime(col, errors='coerce', utc=True)  # Force to datetime and handle mixed time zones
-        
-        # If the datetime is already tz-aware, we just convert it to Finnish time zone
-        if col.dt.tz is not None:
-            col = col.dt.tz_convert(finland_tz)
-        else:
-            # If the datetime is naive (no time zone), we assume it's in UTC and localize to Finnish time zone
-            col = col.dt.tz_localize('UTC').dt.tz_convert(finland_tz)
-        
-        return col
+import matplotlib.dates as mdates
+from scipy.stats import norm
+from jinja2 import Environment, FileSystemLoader
+import glob
 
-    # Apply the conversion to all relevant columns
-    df['EnteredAt'] = convert_to_finnish_timezone(df['EnteredAt'])
-    df['ExitedAt'] = convert_to_finnish_timezone(df['ExitedAt'])
-    df['TradeDay'] = convert_to_finnish_timezone(df['TradeDay'])
-    
+
+def preprocess_dataframe(df):
+    """
+    Preprocesses the DataFrame by ensuring correct data types and derived columns.
+
+    Args:
+        df (DataFrame): Input DataFrame with trading data.
+
+    Returns:
+        DataFrame: Preprocessed DataFrame.
+    """
+    df = df.copy()
+    df['EnteredAt'] = pd.to_datetime(df['EnteredAt'])
+    df['ExitedAt'] = pd.to_datetime(df['ExitedAt'])
+    df['YearMonth'] = df['EnteredAt'].dt.strftime('%Y-%m')
+    df['DayOfWeek'] = df['EnteredAt'].dt.day_name()
+    df['TradeDuration'] = (df['ExitedAt'] - df['EnteredAt']).dt.total_seconds() / 60  # Minutes
     return df
 
+def chop_data(df):
+    """
+    Chops the DataFrame by year, month, and week.
 
-def calculate_z_score(df):
-    """Calculate Z-Score for all data."""
-    # Count required values
-    N = len(df)  # Total number of trades
-    W = (df['WinOrLoss'] > 0).sum()  # Number of wins
-    L = N - W  # Number of losses
-    R = (df['WinOrLoss'] != df['WinOrLoss'].shift()).sum() + 1  # Number of streaks, including first streak
-    X = 2 * W * L  # Intermediate value
-    # Calculate Z-Score
-    if N <= 1 or X <= 0:
-        return None  # Not enough data or invalid configuration
+    Args:
+        df (DataFrame): Input DataFrame.
 
-    denominator = (X * (X - N) / (N - 1))
-    if denominator <= 0:
-        return None  # Prevent invalid square root
+    Returns:
+        dict: Dictionary with keys as folder names and values as DataFrames.
+    """
+    df = preprocess_dataframe(df)
+    chopped = {}
 
-    z_score = (N * (R - 0.5) - X) / (denominator ** 0.5)
-    return z_score
+    # By Year
+    for year in df['EnteredAt'].dt.year.unique():
+        year_df = df[df['EnteredAt'].dt.year == year]
+        chopped[f'year_{year}'] = year_df
 
-def calculate_winning_rate(df):
-    """Calculate the winning rate of the trades."""
-    winning_rate = (df['WinOrLoss'] > 0).sum() / len(df)
-    return winning_rate
+    # By Month
+    for year_month in df['YearMonth'].unique():
+        month_df = df[df['YearMonth'] == year_month]
+        chopped[f'month_{year_month}'] = month_df
+
+    # By Week
+    df['Week'] = df['EnteredAt'].dt.isocalendar().week
+    df['Year'] = df['EnteredAt'].dt.year
+    for (year, week), group in df.groupby(['Year', 'Week']):
+        chopped[f'week_{year}-{week:02d}'] = group
+
+    return chopped
+
+def ensure_directory(path):
+    """Creates directory if it doesn't exist."""
+    os.makedirs(path, exist_ok=True)
+
+def plot_hourly_performance(df, base_path):
+    """Plots average PnL and win rate by hour of day."""
+    if df.empty:
+        print("No data for hourly performance.")
+        return
+    full_path = os.path.join(base_path, 'hourly_performance.png')
+    hourly_stats = df.groupby('HourOfDay').agg({
+        'PnL(Net)': 'mean',
+        'WinOrLoss': lambda x: (x == 1).mean()  # Win rate
+    }).rename(columns={'PnL(Net)': 'AvgPnL', 'WinOrLoss': 'WinRate'})
+
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+    ax1.bar(hourly_stats.index, hourly_stats['AvgPnL'], color='blue', alpha=0.6, label='Average PnL')
+    ax1.set_xlabel('Hour of Day')
+    ax1.set_ylabel('Average PnL(USD)', color='blue')
+    ax1.tick_params(axis='y', labelcolor='blue')
+
+    ax2 = ax1.twinx()
+    ax2.plot(hourly_stats.index, hourly_stats['WinRate'], color='red', marker='o', label='Win Rate')
+    ax2.set_ylabel('Win Rate', color='red')
+    ax2.tick_params(axis='y', labelcolor='red')
+
+    plt.title(f'Hourly Performance Analysis')
+    fig.legend(loc='upper right', bbox_to_anchor=(0.9, 0.9))
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(full_path, bbox_inches='tight')
+    plt.close()
+
+def plot_streaks(df, base_path):
+    """Plots streak patterns."""
+    if df.empty:
+        print("No data for streaks.")
+        return
+    full_path = os.path.join(base_path, 'streak_pattern.png')
+    x = np.arange(1, len(df) + 1)
+    unique_dates = df['TradeDay'].unique()
+    n_dates = len(unique_dates)
+    cmap = plt.colormaps['tab20']
+    date_to_color = {date: cmap(i % 20) for i, date in enumerate(unique_dates)}
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.plot(x, df['Streak'], linestyle='-', color='gray', alpha=0.3, label='Streak Pattern')
+    for date in unique_dates:
+        mask = df['TradeDay'] == date
+        label = f'TradeDay {date}' if n_dates <= 5 else None
+        ax.scatter(x[mask], df['Streak'][mask], color=date_to_color[date], marker='o', label=label)
+    ax.axhline(0, color='red', linestyle='--', linewidth=1, label='Zero Line')
+    ax.set_xlabel('Trade Number')
+    ax.set_ylabel('Streak Value')
+    start_date = df['EnteredAt'].dt.date.min()
+    end_date = df['EnteredAt'].dt.date.max()
+    ax.set_title(f'Streak Pattern Over Trades ({start_date} to {end_date})')
+    if len(df) > 20:
+        step = len(df) // 10 or 1
+        ax.set_xticks(x[::step])
+    else:
+        ax.set_xticks(x)
+    if n_dates > 5:
+        ax.legend(['Streak Pattern', 'Zero Line'])
+    elif n_dates > 0:
+        ax.legend()
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(full_path, bbox_inches='tight')
+    plt.close()
+
+def plot_drawdown(df, base_path, use_gross_pnl=False, normalized=False):
+    """
+    Plots cumulative PnL and drawdown, either normalized or in raw USD.
+
+    Args:
+        df (DataFrame): Input DataFrame with trading data.
+        base_path (str): Directory to save the plot.
+        use_gross_pnl (bool): If True, use gross PnL (PnL + Fees); else, use net PnL.
+        normalized (bool): If True, normalize PnL by mean absolute PnL; else, use raw USD.
+    """
+    if df.empty:
+        print("No data for drawdown.")
+        return
+    # Adjust file name based on PnL type and normalization
+    pnl_type = 'gross' if use_gross_pnl else 'net'
+    norm_suffix = '_normalized' if normalized else ''
+    full_path = os.path.join(base_path, f'drawdown_analysis_{pnl_type}{norm_suffix}.png')
+    
+    # Select PnL type
+    if use_gross_pnl:
+        df['AnalysisPnL'] = df['PnL(Net)'] + df['Fees']
+        pnl_label = 'Gross PnL'
+    else:
+        df['AnalysisPnL'] = df['PnL(Net)']
+        pnl_label = 'Net PnL'
+
+    # Normalize or use raw PnL
+    if normalized:
+        mean_pnl = abs(df['AnalysisPnL']).mean()
+        df['PlotPnL'] = df['AnalysisPnL'] / mean_pnl if mean_pnl != 0 else df['AnalysisPnL']
+        unit_label = f'Normalized {pnl_label}'
+    else:
+        df['PlotPnL'] = df['AnalysisPnL']
+        unit_label = f'{pnl_label} (USD)'
+
+    # Compute cumulative PnL and drawdown
+    df['CumulativePnL'] = df['PlotPnL'].cumsum()
+    df['PeakPnL'] = df['CumulativePnL'].cummax()
+    df['Drawdown'] = df['CumulativePnL'] - df['PeakPnL']
+    df['DrawdownPct'] = df['Drawdown'] / df['PeakPnL'].replace(0, np.nan) * 100
+
+    # Compute max and average drawdown
+    max_drawdown = df['Drawdown'].min()
+    max_drawdown_idx = df['Drawdown'].idxmin()
+    avg_drawdown = df['Drawdown'][df['Drawdown'] < 0].mean() if df['Drawdown'].lt(0).any() else 0
+    unit_suffix = '' if normalized else ' USD'
+    print(f"Maximum Drawdown ({pnl_label}, {'Normalized' if normalized else 'Raw'}): {max_drawdown:.2f}{unit_suffix} at index {max_drawdown_idx}")
+    print(f"Average Drawdown ({pnl_label}, {'Normalized' if normalized else 'Raw'}): {avg_drawdown:.2f}{unit_suffix}")
+
+    # Plotting
+    plt.figure(figsize=(12, 6))
+    plt.plot(df['EnteredAt'], df['CumulativePnL'], label=f'Cumulative {unit_label}', color='blue')
+    plt.fill_between(df['EnteredAt'], df['Drawdown'], 0, color='red', alpha=0.3, label='Drawdown')
+    plt.axhline(0, color='black', linestyle='--', linewidth=1, label='Zero Line')
+    losing_trades = df['WinOrLoss'] == -1
+    plt.scatter(df['EnteredAt'][losing_trades], df['CumulativePnL'][losing_trades], 
+                color='black', marker='x', label='Losing Trades')
+    plt.annotate(f'Max Drawdown: {max_drawdown:.2f}{unit_suffix}', 
+                 xy=(df['EnteredAt'][max_drawdown_idx], max_drawdown), 
+                 xytext=(10, 10), textcoords='offset points', 
+                 arrowprops=dict(arrowstyle='->'), color='red')
+    # Annotate the last point's y-value
+    last_pnl = df['CumulativePnL'].iloc[-1]
+    last_date = df['EnteredAt'].iloc[-1]
+    plt.annotate(f'{last_pnl:.2f}{unit_suffix}', 
+                 xy=(last_date, last_pnl), 
+                 xytext=(10, 10), textcoords='offset points', 
+                 arrowprops=dict(arrowstyle='->'), color='blue')
+    plt.title(f'Cumulative {unit_label} and Drawdown ({df["EnteredAt"].dt.date.min()} to {df["EnteredAt"].dt.date.max()})')
+    plt.xlabel('Trade Date')
+    plt.ylabel(unit_label)
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+    plt.gca().xaxis.set_major_locator(mdates.AutoDateLocator())
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.savefig(full_path, bbox_inches='tight')
+    plt.close()
+
+def plot_profit_factor(df, base_path):
+    """Plots profit factor over time."""
+    if df.empty or len(df) < 2:
+        print("Insufficient data for profit factor.")
+        return
+    full_path = os.path.join(base_path, 'profit_factor.png')
+    df['GrossProfit'] = df['PnL(Net)'].where(df['PnL(Net)'] > 0, 0)
+    df['GrossLoss'] = -df['PnL(Net)'].where(df['PnL(Net)'] < 0, 0)
+    df['CumGrossProfit'] = df['GrossProfit'].cumsum()
+    df['CumGrossLoss'] = df['GrossLoss'].cumsum()
+    df['ProfitFactor'] = df['CumGrossProfit'] / df['CumGrossLoss'].replace(0, np.nan)
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(df['EnteredAt'], df['ProfitFactor'], label='Profit Factor', color='green')
+    plt.axhline(1, color='red', linestyle='--', label='Break-even (1)')
+    plt.title(f'Profit Factor Over Time')
+    plt.xlabel('Trade Date and Time')
+    plt.ylabel('Profit Factor')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    # Use timestamps for weekly chops, dates for others
+    if 'week' in base_path.lower():
+        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d %H:%M'))
+        plt.gca().xaxis.set_major_locator(mdates.HourLocator(interval=4))  # Show every 4 hours
+    else:
+        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+        plt.gca().xaxis.set_major_locator(mdates.AutoDateLocator())
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.savefig(full_path, bbox_inches='tight')
+    plt.close()
+
+def plot_sharpe_ratio(df, base_path):
+    """Plots rolling Sharpe ratio."""
+    if df.empty or len(df) < 10:
+        print("Insufficient data for Sharpe ratio.")
+        return
+    full_path = os.path.join(base_path, 'sharpe_ratio.png')
+    window = min(20, len(df))
+    df['Returns'] = df['PnL(Net)'] / abs(df['PnL(Net)']).mean()  # Normalized returns
+    df['RollingMean'] = df['Returns'].rolling(window=window, min_periods=1).mean()
+    df['RollingStd'] = df['Returns'].rolling(window=window, min_periods=1).std()
+    df['SharpeRatio'] = (df['RollingMean'] / df['RollingStd'] * np.sqrt(252)).replace([np.inf, -np.inf], np.nan)
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(df['EnteredAt'], df['SharpeRatio'], label='Rolling Sharpe Ratio', color='purple')
+    plt.axhline(0, color='black', linestyle='--', label='Zero')
+    plt.title(f'Rolling Sharpe Ratio (Window={window} Trades)')
+    plt.xlabel('Trade Date and Time')
+    plt.ylabel('Sharpe Ratio')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    # Use timestamps for weekly chops, dates for others
+    if 'week' in base_path.lower():
+        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d %H:%M'))
+        plt.gca().xaxis.set_major_locator(mdates.HourLocator(interval=4))  # Show every 4 hours
+    else:
+        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+        plt.gca().xaxis.set_major_locator(mdates.AutoDateLocator())
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.savefig(full_path, bbox_inches='tight')
+    plt.close()
+
+def plot_day_of_week_performance(df, base_path):
+    """Plots PnL and win rate by day of week."""
+    if df.empty:
+        print("No data for day of week performance.")
+        return
+    full_path = os.path.join(base_path, 'day_of_week_performance.png')
+    day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    day_stats = df.groupby('DayOfWeek').agg({
+        'PnL(Net)': 'mean',
+        'WinOrLoss': lambda x: (x == 1).mean()
+    }).reindex(day_order).rename(columns={'PnL(Net)': 'AvgPnL', 'WinOrLoss': 'WinRate'})
+
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+    ax1.bar(day_stats.index, day_stats['AvgPnL'], color='blue', alpha=0.6, label='Average PnL')
+    ax1.set_xlabel('Day of Week')
+    ax1.set_ylabel('Average PnL', color='blue')
+    ax1.tick_params(axis='y', labelcolor='blue')
+    ax1.set_xticks(range(len(day_stats.index)))  # Set ticks explicitly
+    ax1.set_xticklabels(day_stats.index, rotation=45)
+
+    ax2 = ax1.twinx()
+    ax2.plot(day_stats.index, day_stats['WinRate'], color='red', marker='o', label='Win Rate')
+    ax2.set_ylabel('Win Rate', color='red')
+    ax2.tick_params(axis='y', labelcolor='red')
+
+    plt.title(f'Day of Week Performance')
+    fig.legend(loc='upper right', bbox_to_anchor=(0.9, 0.9))
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(full_path, bbox_inches='tight')
+    plt.close()
+
+def plot_pnl_distribution(df, base_path):
+    """Plots histogram of PnL distribution with fitted normal curve."""
+    if df.empty:
+        print("No data for PnL distribution.")
+        return
+    full_path = os.path.join(base_path, 'pnl_distribution.png')
+    plt.figure(figsize=(10, 6))
+    plt.hist(df['PnL(Net)'], bins=30, density=True, alpha=0.6, color='blue', label='PnL Distribution')
+    mu, sigma = df['PnL(Net)'].mean(), df['PnL(Net)'].std()
+    x = np.linspace(df['PnL(Net)'].min(), df['PnL(Net)'].max(), 100)
+    plt.plot(x, norm.pdf(x, mu, sigma), 'r-', lw=2, label=f'Normal Fit (μ={mu:.2f}, σ={sigma:.2f})')
+    plt.title(f'PnL Distribution')
+    plt.xlabel('PnL (Net)')
+    plt.ylabel('Density')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(full_path, bbox_inches='tight')
+    plt.close()
+
+def plot_rolling_winning_rate(df, base_path):
+    """Plots rolling winning rate."""
+    if df.empty or len(df) < 10:
+        print("Insufficient data for rolling winning rate.")
+        return
+    full_path = os.path.join(base_path, 'rolling_winning_rate.png')
+    window = min(20, len(df))
+    df['RollingWinRate'] = df['WinOrLoss'].rolling(window=window, min_periods=1).apply(lambda x: (x == 1).mean())
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(df['EnteredAt'], df['RollingWinRate'], label=f'Rolling Win Rate (Window={window})', color='orange')
+    plt.axhline(0.5, color='red', linestyle='--', label='50% Win Rate')
+    plt.title(f'Rolling Winning Rate')
+    plt.xlabel('Trade Date and Time')
+    plt.ylabel('Win Rate')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    # Use timestamps for weekly chops, dates for others
+    if 'week' in base_path.lower():
+        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d %H:%M'))
+        plt.gca().xaxis.set_major_locator(mdates.HourLocator(interval=4))  # Show every 4 hours
+    else:
+        plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+        plt.gca().xaxis.set_major_locator(mdates.AutoDateLocator())
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.savefig(full_path, bbox_inches='tight')
+    plt.close()
+
+def plot_size_and_risk_analysis(df, base_path):
+    """Plots PnL by trade size and risk metrics."""
+    if df.empty:
+        print("No data for size and risk analysis.")
+        return
+    full_path = os.path.join(base_path, 'size_and_risk.png')
+    size_stats = df.groupby('Size').agg({
+        'PnL(Net)': 'mean',
+        'WinOrLoss': lambda x: (x == 1).mean()
+    }).rename(columns={'PnL(Net)': 'AvgPnL', 'WinOrLoss': 'WinRate'})
+
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+    ax1.bar(size_stats.index, size_stats['AvgPnL'], color='blue', alpha=0.6, label='Average PnL')
+    ax1.set_xlabel('Trade Size')
+    ax1.set_ylabel('Average PnL(USD)', color='blue')
+    ax1.tick_params(axis='y', labelcolor='blue')
+
+    ax2 = ax1.twinx()
+    ax2.plot(size_stats.index, size_stats['WinRate'], color='red', marker='o', label='Win Rate')
+    ax2.set_ylabel('Win Rate', color='red')
+    ax2.tick_params(axis='y', labelcolor='red')
+
+    plt.title(f'PnL and Win Rate by Trade Size')
+    fig.legend(loc='upper right', bbox_to_anchor=(0.9, 0.9))
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(full_path, bbox_inches='tight')
+    plt.close()
+
+def plot_trade_duration_analysis(df, base_path):
+    """Plots trade duration distribution by win/loss."""
+    if df.empty:
+        print("No data for trade duration analysis.")
+        return
+    full_path = os.path.join(base_path, 'trade_duration.png')
+    wins = df[df['WinOrLoss'] == 1]['TradeDuration']
+    losses = df[df['WinOrLoss'] == -1]['TradeDuration']
+
+    plt.figure(figsize=(10, 6))
+    plt.hist(wins, bins=30, alpha=0.5, color='green', label='Winning Trades', density=True)
+    plt.hist(losses, bins=30, alpha=0.5, color='red', label='Losing Trades', density=True)
+    plt.title(f'Trade Duration Distribution')
+    plt.xlabel('Trade Duration (Minutes)')
+    plt.ylabel('Density')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(full_path, bbox_inches='tight')
+    plt.close()
+
+def plot_win_loss_ratio_by_hour(df, base_path):
+    """Plots win/loss ratio by hour of day."""
+    if df.empty:
+        print("No data for win/loss ratio by hour.")
+        return
+    full_path = os.path.join(base_path, 'win_loss_ratio_by_hour.png')
+    hourly_counts = df.groupby('HourOfDay')['WinOrLoss'].value_counts().unstack(fill_value=0)
+    hourly_counts['WinLossRatio'] = hourly_counts.get(1, 0) / hourly_counts.get(-1, 0).replace(0, np.nan)
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(hourly_counts.index, hourly_counts['WinLossRatio'], marker='o', color='teal', label='Win/Loss Ratio')
+    plt.axhline(1, color='red', linestyle='--', label='Equal Win/Loss')
+    plt.title(f'Win/Loss Ratio by Hour of Day')
+    plt.xlabel('Hour of Day')
+    plt.ylabel('Win/Loss Ratio')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(full_path, bbox_inches='tight')
+    plt.close()
+
+def plot_all(combined_df, performance_img_path):
+    """
+    Chops data by year, month, and week, then generates all performance analyses.
+
+    Args:
+        combined_df (DataFrame): Input DataFrame with trading data.
+        performance_img_path (str): Base path to save performance images.
+    """
+    # Chop data
+    chopped_data = chop_data(combined_df)
+
+    # Analysis functions
+    analyses = [
+        plot_hourly_performance,
+        plot_streaks,
+        plot_drawdown,
+        plot_profit_factor,
+        plot_sharpe_ratio,
+        plot_day_of_week_performance,
+        plot_pnl_distribution,
+        plot_rolling_winning_rate,
+        plot_size_and_risk_analysis,
+        plot_trade_duration_analysis,
+        plot_win_loss_ratio_by_hour
+    ]
+
+    # Process each chopped dataset
+    for folder_name, df in chopped_data.items():
+        folder_path = os.path.join(performance_img_path, folder_name)
+        ensure_directory(folder_path)
+        print(f"Generating plots for {folder_name}...")
+
+        for analysis_func in analyses:
+            if analysis_func == plot_drawdown:
+                # Run drawdown with net PnL (both normalized and raw)
+                analysis_func(df, folder_path, use_gross_pnl=False, normalized=False)
+                analysis_func(df, folder_path, use_gross_pnl=False, normalized=True)
+                # Run drawdown with gross PnL (both normalized and raw)
+                analysis_func(df, folder_path, use_gross_pnl=True, normalized=False)
+                analysis_func(df, folder_path, use_gross_pnl=True, normalized=True)
+            else:
+                analysis_func(df, folder_path)
 
 def calculate_streaks(df):
     """
@@ -83,473 +499,134 @@ def calculate_streaks(df):
 
     return df
 
-def plot_drawdown(df, base_path):
+def generate_aggregated_data(valid_dataframes, logger, parameters_global):
+    combined_df = pd.concat(valid_dataframes, ignore_index=True)
+    logger.info("All valid files have been successfully concatenated.")
+    # Sort the DataFrame by EnteredAt
+    # Replace adjust_to_finnish_timezone function
+    combined_df['EnteredAt'] = pd.to_datetime(combined_df['EnteredAt'], utc=True).dt.tz_convert('Europe/Helsinki')
+    combined_df['ExitedAt'] = pd.to_datetime(combined_df['ExitedAt'], utc=True).dt.tz_convert('Europe/Helsinki')
+    combined_df['TradeDay'] = pd.to_datetime(combined_df['EnteredAt'], utc=True).dt.tz_convert('Europe/Helsinki').dt.strftime('%Y-%m-%d')
+    combined_df.sort_values(by='EnteredAt', inplace=True)
+    combined_df.reset_index(drop=True, inplace=True)
+    combined_df = calculate_streaks(combined_df)
+    combined_df['DayOfWeek'] = combined_df['EnteredAt'].dt.day_name()
+    combined_df['YearMonth'] = combined_df['EnteredAt'].dt.tz_localize(None).dt.to_period('M')
+    combined_df['HourOfDay'] = combined_df['EnteredAt'].dt.hour
+    combined_df = combined_df.rename(columns={'Id': 'IntradayIndex'})
+    combined_df = combined_df.rename(columns={'PnL': 'PnL(Net)'})
+    desired_columns = [
+            'YearMonth', 'TradeDay', 'DayOfWeek', 'HourOfDay', 'ContractName', 'IntradayIndex',
+            'EnteredAt', 'ExitedAt', 'EntryPrice', 'ExitPrice', 'Fees', 'PnL(Net)',
+            'Size', 'Type', 'TradeDuration', 'WinOrLoss', 'Streak'
+        ]
+    available_columns = [col for col in desired_columns if col in combined_df.columns]
+    combined_df = combined_df[available_columns]
+
+    # Save the final DataFrame
+    output_path = os.path.join(parameters_global['performace_data_path'], 'Combined_Performance_with_Streaks.csv')
+    combined_df.to_csv(output_path, index=False)
+    logger.info(f"Processed data saved to {output_path}")
+    return combined_df
+
+def generate_html_index(performace_img_path, chopped_data):
     """
-    Plots the maximum drawdown and normalized cumulative PnL.
+    Generates static HTML index pages for each folder in performace_img_path using Jinja2.
 
     Args:
-        df (DataFrame): The combined dataframe with trading data.
-        base_path (str): Base path to save images.
+        performace_img_path (str): Path to the performance images directory.
+        chopped_data (dict): Dictionary from chop_data with folder names and DataFrames.
     """
-    full_path = os.path.join(base_path, 'drawdown_analysis.png')
+    # Initialize Jinja2 environment
+    env = Environment(loader=FileSystemLoader('./src/jinja2'))
+    template = env.get_template('analysis.html.j2')
 
-    # Normalize PnL by the number of trades
-    df['NormalizedPnL'] = df['PnL'] / df['PnL'].mean()
+    # Define analysis categories and image mappings
+    analysis_categories = {
+        'Performance Over Time': [
+            'profit_factor.png',
+            'rolling_winning_rate.png',
+            'sharpe_ratio.png'
+        ],
+        'Drawdown Analysis': [
+            'drawdown_analysis_net.png',
+            'drawdown_analysis_net_normalized.png',
+            'drawdown_analysis_gross.png',
+            'drawdown_analysis_gross_normalized.png'
+        ],
+        'Time-Based Performance': [
+            'hourly_performance.png',
+            'day_of_week_performance.png',
+            'win_loss_ratio_by_hour.png'
+        ],
+        'Trade Characteristics': [
+            'pnl_distribution.png',
+            'size_and_risk.png',
+            'trade_duration.png'
+        ],
+        'Streaks': [
+            'streak_pattern.png'
+        ]
+    }
 
-    # Calculate cumulative PnL and drawdown using normalized PnL
-    df['CumulativePnL'] = df['NormalizedPnL'].cumsum()
-    df['Drawdown'] = df['CumulativePnL'] - df['CumulativePnL'].cummax()
+    # List of folders (from chopped_data)
+    folders = list(chopped_data.keys())  # e.g., ['year_2025', 'month_2025-04', 'week_2025-16']
 
-    plt.figure(figsize=(10, 6))
-    plt.plot(df.index, df['CumulativePnL'], label='Cumulative Normalized PnL')
-    plt.fill_between(df.index, df['Drawdown'], 0, color='red', alpha=0.3, label='Drawdown')
-    plt.title('Normalized Cumulative PnL and Drawdown Analysis')
-    plt.xlabel('Trade Index')
-    plt.ylabel('Normalized PnL')
-    plt.legend()
-    plt.grid()
-    plt.savefig(full_path)
-    plt.close()
+    # Generate index.html for root performace_img_path
+    root_categorized_images = {}
+    for category, image_names in analysis_categories.items():
+        root_categorized_images[category] = []
+        for folder in folders:
+            folder_path = os.path.join(performace_img_path, folder)
+            for image_name in image_names:
+                image_path = os.path.join(folder_path, image_name)
+                if os.path.exists(image_path):
+                    relative_path = os.path.join(folder, image_name)
+                    root_categorized_images[category].append({
+                        'path': relative_path,
+                        'name': image_name,
+                        'folder': folder
+                    })
 
-def plot_profit_factor(df, base_path):
-    """
-    Plots the profit factor using normalized cumulative PnL.
-
-    Args:
-        df (DataFrame): The combined dataframe with trading data.
-        base_path (str): Base path to save images.
-    """
-    full_path = os.path.join(base_path, 'profit_factor_analysis.png')
-
-    # Normalize PnL
-    df['NormalizedPnL'] = df['PnL'] / df['PnL'].mean()
-
-    # Calculate normalized cumulative wins and losses
-    df['CumulativeWins'] = df['NormalizedPnL'].apply(lambda x: x if x > 0 else 0).cumsum()
-    df['CumulativeLosses'] = df['NormalizedPnL'].apply(lambda x: abs(x) if x < 0 else 0).cumsum()
-    df['ProfitFactor'] = df['CumulativeWins'] / df['CumulativeLosses']
-
-    plt.figure(figsize=(10, 6))
-    plt.plot(df.index, df['ProfitFactor'], label='Normalized Profit Factor')
-    plt.title('Normalized Profit Factor Over Time')
-    plt.xlabel('Trade Index')
-    plt.ylabel('Profit Factor')
-    plt.legend()
-    plt.grid()
-    plt.savefig(full_path)
-    plt.close()
-
-
-def plot_streaks(df, base_path):
-    """
-    Plots streak patterns and saves to appropriate directories.
-
-    Args:
-        df (DataFrame): The combined dataframe with streak data.
-        base_path (str): Base path to save images.
-    """
-    full_path = os.path.join(base_path, 'streak_pattern.png')
-
-    plt.figure(figsize=(12, 6))
-    plt.plot(df.index, df['Streak'], marker='o', linestyle='-', label='Streak Pattern')
-    plt.axhline(0, color='red', linestyle='--', linewidth=1, label='Zero Line')
-    plt.title('Streak Pattern Over Trades')
-    plt.xlabel('Trade Index')
-    plt.ylabel('Streak Value')
-    plt.legend()
-    plt.grid()
-    plt.savefig(full_path)
-    plt.close()
-
-def hourly_performance_trends(df, base_path):
-    """
-    Plots hourly performance trends normalized by trade frequency.
-
-    Args:
-        df (DataFrame): The combined dataframe with trading data, including 'EnteredAt' and 'PnL'.
-        base_path (str): Base path to save images.
-    """
-    full_path = os.path.join(base_path, 'hourly_performance_trends.png')
-
-    df['HourOfDay'] = df['EnteredAt'].dt.hour
-    hourly_performance = df.groupby('HourOfDay').agg(
-        TotalPnL=('PnL', 'sum'),
-        TradeFrequency=('PnL', 'count'),
-        WinningRate=('WinOrLoss', lambda x: (x > 0).mean()),
+    # Render root index.html
+    root_html = template.render(
+        title='Performance Analysis - All Periods',
+        folders=folders,
+        current_folder=None,
+        is_root=True,
+        categorized_images=root_categorized_images
     )
-
-    # Normalize Total PnL
-    hourly_performance['NormalizedPnL'] = hourly_performance['TotalPnL'] / hourly_performance['TradeFrequency']
-
-    plt.figure(figsize=(10, 6))
-    plt.plot(hourly_performance.index, hourly_performance['NormalizedPnL'], marker='o', label='Normalized Total PnL')
-    plt.bar(hourly_performance.index, hourly_performance['WinningRate'], alpha=0.4, label='Winning Rate', color='orange')
-    plt.axhline(0, color='red', linestyle='--', linewidth=1, label='Break-Even Line')
-    plt.title('Normalized Hourly Performance Trends (GMT+2)')
-    plt.xlabel('Hour of Day')
-    plt.ylabel('Performance Metrics')
-    plt.xticks(hourly_performance.index)
-    plt.legend()
-    plt.grid()
-    plt.savefig(full_path)
-    plt.close()
-
-
-def cumulative_pnl_over_trades(df, base_path):
-    """
-    Plots the cumulative PnL over trades, saving to appropriate directories.
-
-    Args:
-        df (DataFrame): The combined dataframe with trading data, including 'PnL'.
-        base_path (str): Base path to save images.
-    """
-
-    full_path = os.path.join(base_path, 'cumulative_pnl_over_trades.png')
-
-    df['CumulativePnL'] = df['PnL'].cumsum()
-
-    plt.figure(figsize=(10, 6))
-    plt.plot(df.index, df['CumulativePnL'], marker='o', label='Cumulative PnL')
-    plt.axhline(0, color='red', linestyle='--', linewidth=1, label='Break-Even Line')
-    plt.title('Cumulative PnL Over Trades')
-    plt.xlabel('Trade Index')
-    plt.ylabel('Cumulative PnL')
-    plt.legend()
-    plt.grid()
-    plt.savefig(full_path)
-    plt.close()
-
-def plot_sharpe_ratio(df, base_path):
-    """
-    Plots the Sharpe Ratio over time and saves to appropriate directories.
-
-    Args:
-        df (DataFrame): The combined dataframe with trading data.
-        base_path (str): Base path to save images.
-    """
-    full_path = os.path.join(base_path, 'sharpe_ratio.png')
-
-    # Calculate rolling Sharpe Ratio
-    risk_free_rate = 0.0  # Assume risk-free rate is 0 for simplicity
-    df['RollingMeanPnL'] = df['PnL'].rolling(window=30).mean()
-    df['RollingStdPnL'] = df['PnL'].rolling(window=30).std()
-    df['SharpeRatio'] = (df['RollingMeanPnL'] - risk_free_rate) / df['RollingStdPnL']
-
-    plt.figure(figsize=(12, 6))
-    plt.plot(df.index, df['SharpeRatio'], label='Sharpe Ratio', marker='o', linestyle='-')
-    plt.axhline(0, color='red', linestyle='--', linewidth=1, label='Zero Line')
-    plt.title('Rolling Sharpe Ratio Over Trades')
-    plt.xlabel('Trade Index')
-    plt.ylabel('Sharpe Ratio')
-    plt.legend()
-    plt.grid()
-    plt.savefig(full_path)
-    plt.close()
-
-
-def trade_size_impact_on_performance(df, base_path):
-    """
-    Plots the impact of trade size on Total PnL and Winning Rate, saving to appropriate directories.
-
-    Args:
-        df (DataFrame): The combined dataframe with trading data, including 'Size' and 'PnL'.
-        base_path (str): Base path to save images.
-    """
-
-    full_path = os.path.join(base_path, 'trade_size_impact_on_performance.png')
-
-    # Aggregate performance metrics by trade size
-    trade_size_performance = df.groupby('Size').agg(
-        TotalPnL=('PnL', 'sum'),
-        WinningRate=('WinOrLoss', lambda x: (x > 0).mean()),
-        TradeFrequency=('PnL', 'count')
-    )
-
-    # Normalize Total PnL by the frequency of trades
-    trade_size_performance['NormalizedPnL'] = (
-        trade_size_performance['TotalPnL'] / trade_size_performance['TradeFrequency']
-    )
-
-    # Create the plot with a secondary y-axis
-    fig, ax1 = plt.subplots(figsize=(10, 6))
-
-    # Plot Total PnL (normalized) as a bar chart
-    ax1.bar(trade_size_performance.index, trade_size_performance['NormalizedPnL'], alpha=0.6, label='Normalized Total PnL', color='skyblue')
-    ax1.set_xlabel('Trade Size')
-    ax1.set_ylabel('Normalized Total PnL')
-    ax1.set_title('Trade Size Impact on Performance (Normalized)')
-    ax1.legend(loc='upper left')
-    ax1.grid()
-
-    # Create a secondary y-axis for the winning rate
-    ax2 = ax1.twinx()
-    ax2.plot(trade_size_performance.index, trade_size_performance['WinningRate'], marker='o', color='orange', label='Winning Rate')
-    ax2.set_ylabel('Winning Rate')
-    ax2.legend(loc='upper right')
-
-    plt.savefig(full_path)
-    plt.close()
-def plot_day_of_week_performance(df, base_path):
-    """
-    Plots performance metrics by day of the week using two axes to handle scaling issues and saves to appropriate directories.
-
-    Args:
-        df (DataFrame): The combined dataframe with trading data.
-        base_path (str): Base path to save images.
-    """
-    full_path = os.path.join(base_path, 'day_of_week_performance.png')
-
-    # Extract day of the week and aggregate performance metrics
-    df['DayOfWeek'] = df['EnteredAt'].dt.day_name()
-    day_of_week_performance = df.groupby('DayOfWeek').agg(
-        TotalPnL=('PnL', 'sum'),
-        WinningRate=('WinOrLoss', lambda x: (x > 0).mean())
-    ).reindex(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'])  # Ensure correct order
-
-    # Create the plot with two y-axes
-    fig, ax1 = plt.subplots(figsize=(12, 6))
-
-    # Bar chart for Total PnL
-    ax1.bar(day_of_week_performance.index, day_of_week_performance['TotalPnL'], alpha=0.6, label='Total PnL', color='skyblue')
-    ax1.set_xlabel('Day of the Week')
-    ax1.set_ylabel('Total PnL')
-    ax1.grid()
-    ax1.legend(loc='upper left')
-
-    # Line chart for Winning Rate
-    ax2 = ax1.twinx()
-    ax2.plot(day_of_week_performance.index, day_of_week_performance['WinningRate'], marker='o', color='orange', label='Winning Rate')
-    ax2.set_ylabel('Winning Rate')
-    ax2.legend(loc='upper right')
-
-    # Add a title
-    plt.title('Performance by Day of the Week')
-
-    # Save the plot
-    plt.savefig(full_path)
-    plt.close()
-
-
-def plot_pnl_distribution(df, base_path):
-    """
-    Plots the distribution of PnL and saves to appropriate directories.
-
-    Args:
-        df (DataFrame): The combined dataframe with trading data.
-        base_path (str): Base path to save images.
-    """
-    full_path = os.path.join(base_path, 'pnl_distribution.png')
-
-    plt.figure(figsize=(12, 6))
-    plt.hist(df['PnL'], bins=50, alpha=0.7, color='skyblue', edgecolor='black')
-    plt.axvline(df['PnL'].mean(), color='red', linestyle='--', linewidth=1, label='Mean PnL')
-    plt.axvline(0, color='black', linestyle='-', linewidth=1, label='Break-Even Line')
-    plt.title('PnL Distribution')
-    plt.xlabel('PnL')
-    plt.ylabel('Frequency')
-    plt.legend()
-    plt.grid()
-    plt.savefig(full_path)
-    plt.close()
-
-def plot_performance_heatmap(df, base_path):
-    """
-    Plots a heatmap of Total PnL by Hour and Trade Size and saves to appropriate directories.
-
-    Args:
-        df (DataFrame): The combined dataframe with trading data.
-        base_path (str): Base path to save images.
-    """
-    full_path = os.path.join(base_path, 'performance_heatmap.png')
-
-    df['HourOfDay'] = df['EnteredAt'].dt.hour
-    heatmap_data = df.pivot_table(index='HourOfDay', columns='Size', values='PnL', aggfunc='sum').fillna(0)
-
-    plt.figure(figsize=(12, 6))
-    plt.imshow(heatmap_data, cmap='coolwarm', aspect='auto', origin='lower')
-    plt.colorbar(label='Total PnL')
-    plt.title('Heatmap of Performance by Hour and Trade Size')
-    plt.xlabel('Trade Size')
-    plt.ylabel('Hour of Day')
-    plt.xticks(range(len(heatmap_data.columns)), heatmap_data.columns, rotation=45)
-    plt.yticks(range(len(heatmap_data.index)), heatmap_data.index)
-    plt.grid(False)
-    plt.savefig(full_path)
-    plt.close()
-
-def plot_rolling_winning_rate(df, base_path):
-    """
-    Plots the rolling winning rate over trades and saves to appropriate directories.
-
-    Args:
-        df (DataFrame): The combined dataframe with trading data.
-        base_path (str): Base path to save images.
-    """
-    full_path = os.path.join(base_path, 'rolling_winning_rate.png')
-
-    df['RollingWinningRate'] = df['WinOrLoss'].rolling(window=50).mean()
-
-    plt.figure(figsize=(12, 6))
-    plt.plot(df.index, df['RollingWinningRate'], marker='o', linestyle='-', label='Rolling Winning Rate')
-    plt.axhline(0.5, color='red', linestyle='--', linewidth=1, label='50% Line')
-    plt.title('Rolling Winning Rate Over Trades')
-    plt.xlabel('Trade Index')
-    plt.ylabel('Winning Rate')
-    plt.legend()
-    plt.grid()
-    plt.savefig(full_path)
-    plt.close()
-
-def trade_size_and_risk_analysis(df, base_path):
-    """
-    Analyzes the relationship between trade size and risk metrics (PnL standard deviation and drawdown).
-
-    Args:
-        df (DataFrame): The combined dataframe with trading data.
-        base_path (str): Base path to save images.
-    """
-    full_path = os.path.join(base_path, 'trade_size_risk_analysis.png')
-
-    # Group by trade size
-    trade_size_stats = df.groupby('Size').agg(
-        AveragePnL=('PnL', 'mean'),
-        StdPnL=('PnL', 'std'),
-        MaxDrawdown=('PnL', lambda x: x.cumsum().min() - x.cumsum().max())
-    )
-
-    # Plot the results
-    fig, ax1 = plt.subplots(figsize=(12, 6))
-
-    ax1.bar(trade_size_stats.index, trade_size_stats['StdPnL'], alpha=0.6, label='Standard Deviation of PnL', color='skyblue')
-    ax1.set_xlabel('Trade Size')
-    ax1.set_ylabel('Standard Deviation of PnL')
-    ax1.set_title('Trade Size and Risk Analysis')
-    ax1.legend(loc='upper left')
-    ax1.grid()
-
-    ax2 = ax1.twinx()
-    ax2.plot(trade_size_stats.index, trade_size_stats['MaxDrawdown'], marker='o', color='orange', label='Maximum Drawdown')
-    ax2.set_ylabel('Maximum Drawdown')
-    ax2.legend(loc='upper right')
-
-    plt.savefig(full_path)
-    plt.close()
-
-def correlation_analysis(df, base_path):
-    """
-    Performs correlation analysis between trade size, PnL, winning rate, and time of day.
-
-    Args:
-        df (DataFrame): The combined dataframe with trading data.
-        base_path (str): Base path to save images.
-    """
-    full_path = os.path.join(base_path, 'correlation_analysis.png')
-
-    # Add hour of day and winning rate
-    df['HourOfDay'] = df['EnteredAt'].dt.hour
-    df['WinningRate'] = (df['WinOrLoss'] > 0).astype(int)
-
-    # Select relevant columns for correlation
-    correlation_data = df[['Size', 'PnL', 'HourOfDay', 'WinningRate']]
-
-    # Compute correlation matrix
-    correlation_matrix = correlation_data.corr()
-
-    # Plot the heatmap
-    plt.figure(figsize=(10, 8))
-    plt.imshow(correlation_matrix, cmap='coolwarm', aspect='auto', origin='lower')
-    plt.colorbar(label='Correlation Coefficient')
-    plt.xticks(range(len(correlation_matrix.columns)), correlation_matrix.columns, rotation=45)
-    plt.yticks(range(len(correlation_matrix.index)), correlation_matrix.index)
-    plt.title('Correlation Analysis')
-    plt.savefig(full_path)
-    plt.close()
-
-
-def monte_carlo_simulation(df, base_path, num_simulations=1000, num_trades=200):
-    """
-    Performs Monte Carlo simulation to assess the robustness of the strategy.
-
-    Args:
-        df (DataFrame): The combined dataframe with trading data.
-        base_path (str): Base path to save images.
-        num_simulations (int): Number of simulations to run.
-        num_trades (int): Number of trades per simulation.
-    """
-    full_path = os.path.join(base_path, 'monte_carlo_simulation.png')
-
-    # Extract PnL values for simulation
-    pnl_values = df['PnL'].values
-
-    # Run Monte Carlo simulations
-    results = []
-    for _ in range(num_simulations):
-        simulated_trades = np.random.choice(pnl_values, size=num_trades, replace=True)
-        cumulative_pnl = np.cumsum(simulated_trades)
-        results.append(cumulative_pnl)
-
-    # Plot results
-    plt.figure(figsize=(12, 6))
-    for simulation in results:
-        plt.plot(simulation, alpha=0.2, color='gray')
-    plt.axhline(0, color='red', linestyle='--', label='Break-Even Line')
-    plt.title(f'Monte Carlo Simulation ({num_simulations} Simulations, {num_trades} Trades)')
-    plt.xlabel('Trade Index')
-    plt.ylabel('Cumulative PnL')
-    plt.legend()
-    plt.grid()
-    plt.savefig(full_path)
-    plt.close()
-
-
-def plot_all(df, base_path):
-    """
-    Generate plots for both overall and monthly performance.
-
-    Args:
-        df (DataFrame): The combined dataframe with trading data.
-        base_path (str): Base path to save images.
-    """
-    # Plot overall performance
-    overall_base_path = os.path.join(base_path, 'overall')
-    os.makedirs(overall_base_path, exist_ok=True)
-
-    hourly_performance_trends(df, overall_base_path)
-    # cumulative_pnl_over_trades(df, overall_base_path)
-    trade_size_impact_on_performance(df, overall_base_path)
-    plot_streaks(df, overall_base_path)
-    plot_drawdown(df, overall_base_path)
-    plot_profit_factor(df, overall_base_path)
-    plot_sharpe_ratio(df, overall_base_path)
-    plot_day_of_week_performance(df, overall_base_path)
-    plot_pnl_distribution(df, overall_base_path)
-    plot_performance_heatmap(df, overall_base_path)
-    plot_rolling_winning_rate(df, overall_base_path)
-    trade_size_and_risk_analysis(df, overall_base_path)
-    correlation_analysis(df, overall_base_path)
-    monte_carlo_simulation(df, overall_base_path)
-
-    # Plot monthly performance
-    df['YearMonth'] = df['EnteredAt'].dt.tz_localize(None).dt.to_period('M')
-    for period, group in df.groupby('YearMonth'):
-        monthly_base_path = os.path.join(base_path, str(period))
-        os.makedirs(monthly_base_path, exist_ok=True)
-        hourly_performance_trends(group, monthly_base_path)
-        # cumulative_pnl_over_trades(group, monthly_base_path)
-        trade_size_impact_on_performance(group, monthly_base_path)
-        plot_streaks(group, monthly_base_path)
-        plot_drawdown(group, monthly_base_path)
-        plot_profit_factor(group, monthly_base_path)
-        plot_sharpe_ratio(group, monthly_base_path)
-        plot_day_of_week_performance(group, monthly_base_path)
-        plot_pnl_distribution(group, monthly_base_path)
-        plot_performance_heatmap(group, monthly_base_path)
-        plot_rolling_winning_rate(group, monthly_base_path)
-        trade_size_and_risk_analysis(df, overall_base_path)
-        correlation_analysis(df, overall_base_path)
-        monte_carlo_simulation(df, overall_base_path)
-
-
+    root_html_path = os.path.join(performace_img_path, 'index.html')
+    with open(root_html_path, 'w') as f:
+        f.write(root_html)
+
+    # Generate index.html for each subfolder
+    for folder in folders:
+        folder_path = os.path.join(performace_img_path, folder)
+        categorized_images = {}
+        for category, image_names in analysis_categories.items():
+            categorized_images[category] = []
+            for image_name in image_names:
+                image_path = os.path.join(folder_path, image_name)
+                if os.path.exists(image_path):
+                    relative_path = image_name  # Relative to the folder
+                    categorized_images[category].append({
+                        'path': relative_path,
+                        'name': image_name,
+                        'folder': folder
+                    })
+
+        # Render folder index.html
+        folder_html = template.render(
+            title=f'Performance Analysis - {folder}',
+            folders=folders,
+            current_folder=folder,
+            is_root=False,
+            categorized_images=categorized_images
+        )
+        folder_html_path = os.path.join(folder_path, 'index.html')
+        with open(folder_html_path, 'w') as f:
+            f.write(folder_html)
 
 def main():
     # Load configuration
@@ -569,7 +646,6 @@ def main():
     if not os.path.exists(performace_img_path):
         os.makedirs(performace_img_path)
 
-
     # List to store dataframes
     all_dataframes = []
 
@@ -586,39 +662,17 @@ def main():
     # Concatenate all dataframes
     valid_dataframes = [df for df in all_dataframes if not df.empty]
     if valid_dataframes:
-        combined_df = pd.concat(valid_dataframes, ignore_index=True)
-        logger.info("All valid files have been successfully concatenated.")
-        
-        # Sort the DataFrame by EnteredAt
-        combined_df['EnteredAt'] = pd.to_datetime(combined_df['EnteredAt'])
-        combined_df.sort_values(by='EnteredAt', inplace=True)
-
-        # Reset the index after sorting
-        combined_df.reset_index(drop=True, inplace=True)
-
-        # Calculate streaks
-        combined_df = calculate_streaks(combined_df)
-        # Calculate Z-Score for all data
-
-        z_score_all = calculate_z_score(combined_df)
-        logger.info(f"Z-Score for all data: {z_score_all}")
-
-        winning_rate = calculate_winning_rate(combined_df)
-        logger.info(f"Winning rate in total {winning_rate}")
-
-        combined_df = adjust_to_finnish_timezone(combined_df)
-
-        plot_all(combined_df, performace_img_path)
-        logger.info(f"Plots are done.")
-
-
-        # Save the final DataFrame
-        output_path = os.path.join(parameters_global['performace_data_path'], 'Combined_Performance_with_Streaks.csv')
-        combined_df.to_csv(output_path, index=False)
-        logger.info(f"Processed data saved to {output_path}")
+        combined_df = generate_aggregated_data(valid_dataframes, logger, parameters_global)
     else:
         logger.warning("No valid data was found to concatenate.")
 
+   # Chop data for folder structure
+    chopped_data = chop_data(combined_df)
+
+    plot_all(combined_df, performace_img_path)
+
+    # Generate HTML index pages
+    generate_html_index(performace_img_path, chopped_data)
 
 if __name__ == "__main__":
 

@@ -17,3 +17,4 @@ dependencies:
       - cookiecutter
       - matplotlib
       - pandas_market_calendars
+      - scipy

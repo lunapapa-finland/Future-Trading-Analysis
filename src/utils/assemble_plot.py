@@ -30,7 +30,7 @@ def create_trade_lines(trade_df):
             marker=dict(color=color, size=8),
             name=f"Trade {index}",
             hoverinfo='text',
-            hovertext=f"Entry: {entry_time}, Price: {entry_price} | Exit: {exit_time}, Price: {exit_price}, PnL: {row['PnL']}"
+            hovertext=f"Entry: {entry_time.strftime('%H:%M:%S')}, Price: {entry_price} | Exit: {exit_time.strftime('%H:%M:%S')}, Price: {exit_price}| PnL: {row['PnL']}, Size: {row['Size']}, Type: {row['Type']}",
         )
         trade_lines.append(trade_line)
     return trade_lines
