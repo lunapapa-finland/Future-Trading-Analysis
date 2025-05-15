@@ -18,3 +18,5 @@ dependencies:
       - matplotlib
       - pandas_market_calendars
       - scipy
+      - dash
+      - papaparse
