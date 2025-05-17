@@ -1,192 +1,214 @@
 # components/layout.py
-from dash import dcc, html, dash_table
-from dash.dependencies import Input, Output
-from analysis.compute import filter_data, compute_analysis, get_interesting_fact
-import plotly.express as px
+from dash import dcc, html, Input, Output, State, dash_table
+from data.load_data import load_performance, load_future
+from config.settings import PERFORMANCE_CSV, MES_CSV, MNQ_CSV, MGC_CSV
 import pandas as pd
+import plotly.graph_objects as go
 
-def create_layout(app, data):
+
+def create_layout(app):
     layout = html.Div([
-        # Header
-        html.H1('Futures Trading Dashboard', className='text-3xl font-bold text-center text-gray-800 mb-6'),
-        
-        # Controls Section
-        html.Div([
+        # NAV Section
+        html.Nav([
+            html.H1('Futures Trading Dashboard', className='text-2xl font-bold text-gray-800'),
             html.Div([
-                html.Label('Primary Date Range', className='text-sm font-medium text-gray-700'),
-                dcc.DatePickerRange(
-                    id='primary-date-picker',
-                    min_date_allowed=data['TradeDay'].min(),
-                    max_date_allowed=data['TradeDay'].max(),
-                    start_date=data['TradeDay'].min(),
-                    end_date=data['TradeDay'].max(),
-                    className='mt-1'
-                ),
-            ], className='w-full md:w-1/3 px-2 mb-4'),
-            
-            html.Div([
-                html.Label('Comparison Date Range', className='text-sm font-medium text-gray-700'),
-                dcc.DatePickerRange(
-                    id='compare-date-picker',
-                    min_date_allowed=data['TradeDay'].min(),
-                    max_date_allowed=data['TradeDay'].max(),
-                    className='mt-1'
-                ),
-            ], className='w-full md:w-1/3 px-2 mb-4'),
-            
-            html.Div([
-                html.Label('Analysis Type', className='text-sm font-medium text-gray-700'),
+                # Data Source Dropdown
+                html.Label('Data Source', className='text-sm font-medium text-gray-700 mr-2'),
                 dcc.Dropdown(
-                    id='analysis-type',
+                    id='ticket-selector',
                     options=[
-                        {'label': 'Hourly PnL', 'value': 'hourly_pnl'},
-                        {'label': 'Cumulative PnL', 'value': 'cumulative_pnl'},
-                        {'label': 'Streaks', 'value': 'streaks'},
-                        {'label': 'Trade Type', 'value': 'trade_type'}
+                        {'label': 'MES', 'value': 'MES'},
+                        {'label': 'MNQ', 'value': 'MNQ'},
+                        {'label': 'MGC', 'value': 'MGC'},
                     ],
-                    value='hourly_pnl',
-                    className='mt-1'
+                    placeholder='Select a ticket',
+                    className='w-32'
                 ),
-            ], className='w-full md:w-1/3 px-2 mb-4'),
-        ], className='flex flex-wrap -mx-2 mb-6 bg-gray-100 p-4 rounded-lg'),
+                # Start Date Picker
+                html.Label('Start Date', className='text-sm font-medium text-gray-700 ml-4 mr-2'),
+                dcc.DatePickerSingle(
+                    id='start-date-picker',
+                    placeholder='Start Date',
+                    className='w-32'
+                ),
+                # End Date Picker
+                html.Label('End Date', className='text-sm font-medium text-gray-700 ml-4 mr-2'),
+                html.P(id='end-date-picker-error', className='text-red-600 mt-2 hidden'),
+                dcc.DatePickerSingle(
+                    id='end-date-picker',
+                    placeholder='End Date',
+                    className='w-32'
+                ),
+                # Confirm Button
+                html.Button(
+                    'Confirm',
+                    id='confirm-button',
+                    n_clicks=0,
+                    className='ml-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700'
+                ),
+            ], className='flex items-center space-x-2 mt-2'),
+            # Error Message
+            html.P(id='error-message', className='text-red-600 mt-2 hidden'),
+        ], className='bg-gray-100 p-4 shadow mb-6'),
         
-        # Charts Section
-        html.Div([
-            html.Div([
-                dcc.Graph(id='primary-chart', className='w-full')
-            ], className='w-full md:w-1/2 p-4 bg-white rounded-lg shadow'),
-            html.Div([
-                dcc.Graph(id='compare-chart', className='w-full')
-            ], className='w-full md:w-1/2 p-4 bg-white rounded-lg shadow'),
-        ], className='flex flex-wrap -mx-4 mb-6'),
+        # Section 1 (Blank)
+        html.Div(
+            id='section-1',
+            className='bg-white p-4 shadow mb-6 min-h-[200px]'
+        ),
         
-        # Table and Fact Section
-        html.Div([
-            html.H2('Summary Statistics', className='text-xl font-semibold text-gray-800 mb-4'),
-            html.Div([
-                dash_table.DataTable(
-                    id='stats-table',
-                    columns=[
-                        {'name': 'Metric', 'id': 'metric'},
-                        {'name': 'Value', 'id': 'value'}
-                    ],
-                    style_table={'overflowX': 'auto'},
-                    style_cell={'textAlign': 'left', 'padding': '8px'},
-                    style_header={'backgroundColor': '#f3f4f6', 'fontWeight': 'bold'}
-                )
-            ], className='mb-6'),
-            html.H2('Interesting Fact', className='text-xl font-semibold text-gray-800 mb-4'),
-            html.P(id='interesting-fact', className='text-gray-600')
-        ], className='p-4 bg-white rounded-lg shadow')
-    ], className='container mx-auto p-6 bg-gray-50 min-h-screen')
+        # Section 2 (Data Display)
+        html.Div(
+            id='section-2',
+            className='bg-white p-4 shadow min-h-[200px]'
+        ),
+        
+        # Hidden Store for Data
+        dcc.Store(id='data-store'),
+    ], className='container mx-auto p-4 bg-gray-50 min-h-screen')
 
-    # Register callback
     @app.callback(
         [
-            Output('primary-chart', 'figure'),
-            Output('compare-chart', 'figure'),
-            Output('stats-table', 'data'),
-            Output('interesting-fact', 'children')
+            Output('data-store', 'data'),
+            Output('error-message', 'children'),
+            Output('error-message', 'className'),
         ],
+        Input('confirm-button', 'n_clicks'),
         [
-            Input('primary-date-picker', 'start_date'),
-            Input('primary-date-picker', 'end_date'),
-            Input('compare-date-picker', 'start_date'),
-            Input('compare-date-picker', 'end_date'),
-            Input('analysis-type', 'value')
+            State('ticket-selector', 'value'),
+            State('start-date-picker', 'date'),
+            State('end-date-picker', 'date'),
         ]
     )
-    def update_dashboard(start_date, end_date, compare_start_date, compare_end_date, analysis_type):
-        # Filter data
-        filtered_data = filter_data(data, start_date, end_date)
-        compare_data = filter_data(data, compare_start_date, compare_end_date)
+    def load_data(n_clicks, ticket, start_date, end_date):
+        if n_clicks == 0:
+            return None, '', 'text-red-600 mt-2 hidden'
         
-        # Compute analysis
-        chart_data = compute_analysis(filtered_data, analysis_type)
-        compare_chart_data = compute_analysis(compare_data, analysis_type)
+        # Validate inputs
+        if not ticket or not start_date or not end_date:
+            return None, 'Please select a ticket and both dates.', 'text-red-600 mt-2'
         
-        # Create figures
-        if analysis_type == 'hourly_pnl':
-            primary_fig = px.bar(
-                chart_data, x='hour', y='avgPnL', title='Primary: Average PnL by Hour',
-                labels={'hour': 'Hour of Day', 'avgPnL': 'Average PnL ($)'},
-                color_discrete_sequence=['#3b82f6']
-            )
-            compare_fig = px.bar(
-                compare_chart_data, x='hour', y='avgPnL', title='Comparison: Average PnL by Hour',
-                labels={'hour': 'Hour of Day', 'avgPnL': 'Average PnL ($)'},
-                color_discrete_sequence=['#10b981']
-            )
-        elif analysis_type == 'cumulative_pnl':
-            primary_fig = px.line(
-                chart_data, x='date', y='cumulativePnL', title='Primary: Cumulative PnL',
-                labels={'date': 'Date', 'cumulativePnL': 'Cumulative PnL ($)'},
-                color_discrete_sequence=['#3b82f6']
-            )
-            compare_fig = px.line(
-                compare_chart_data, x='date', y='cumulativePnL', title='Comparison: Cumulative PnL',
-                labels={'date': 'Date', 'cumulativePnL': 'Cumulative PnL ($)'},
-                color_discrete_sequence=['#10b981']
-            )
-        elif analysis_type == 'streaks':
-            primary_fig = px.bar(
-                chart_data, x='date', y='streak', title='Primary: Trade Streaks',
-                labels={'date': 'Date', 'streak': 'Streak Length'},
-                color_discrete_sequence=['#3b82f6']
-            )
-            compare_fig = px.bar(
-                compare_chart_data, x='date', y='streak', title='Comparison: Trade Streaks',
-                labels={'date': 'Date', 'streak': 'Streak Length'},
-                color_discrete_sequence=['#10b981']
-            )
-        else:  # trade_type
-            primary_fig = px.bar(
-                chart_data, x='type', y='totalPnL', title='Primary: PnL by Trade Type',
-                labels={'type': 'Trade Type', 'totalPnL': 'Total PnL ($)'},
-                color='type', color_discrete_sequence=['#3b82f6', '#10b981']
-            )
-            compare_fig = px.bar(
-                compare_chart_data, x='type', y='totalPnL', title='Comparison: PnL by Trade Type',
-                labels={'type': 'Trade Type', 'totalPnL': 'Total PnL ($)'},
-                color='type', color_discrete_sequence=['#3b82f6', '#10b981']
+        if ticket not in ['MES', 'MNQ', 'MGC']:
+            return None, "Invalid ticket selected. Choose 'MES', 'MNQ', or 'MGC'.", 'text-red-600 mt-2'
+        
+        try:
+            # Select CSV based on ticket
+            csv_map = {'MES': MES_CSV, 'MNQ': MNQ_CSV, 'MGC': MGC_CSV}
+            future_csv = csv_map[ticket]
+            
+            # Load data
+            performance_df = load_performance(start_date, end_date, PERFORMANCE_CSV)
+            future_df = load_future(start_date, end_date, future_csv)
+            
+            # Combine data
+            data = {
+                'performance': performance_df.to_dict('records'),
+                'future': future_df.to_dict('records'),
+                'ticket': ticket,
+            }
+            
+            return data, '', 'text-red-600 mt-2 hidden'
+        
+        except Exception as e:
+            return None, f"Error loading data: {str(e)}", 'text-red-600 mt-2'
+
+    @app.callback(
+        Output('section-2', 'children'),
+        Input('data-store', 'data')
+    )
+    def display_data(data):
+        if not data:
+            return html.P('No data loaded', className='text-gray-500')
+        
+        ticket = data.get('ticket', 'Unknown')
+        
+        # Performance table
+        performance_df = pd.DataFrame(data['performance'])
+        if performance_df.empty:
+            performance_table = html.P(f'No performance data for {ticket}', className='text-gray-500')
+        else:
+            performance_table = dash_table.DataTable(
+                data=performance_df.to_dict('records'),
+                columns=[{'name': col, 'id': col} for col in performance_df.columns],
+                style_table={'overflowX': 'auto'},
+                style_cell={'textAlign': 'left', 'padding': '5px'},
+                style_header={'fontWeight': 'bold'},
+                page_size=5
             )
         
-        # Update layout for better visuals
-        for fig in [primary_fig, compare_fig]:
+        # Futures candlestick plot
+        future_df = pd.DataFrame(data['future'])
+        if future_df.empty:
+            future_plot = html.P(f'No futures data for {ticket}', className='text-gray-500')
+        else:
+            # Convert Datetime to datetime64
+            future_df['Datetime'] = pd.to_datetime(future_df['Datetime'])
+            # Create continuous x-axis index
+            future_df['x_index'] = range(1, len(future_df)+1)
+            # Format Datetime for hover text
+            future_df['hover_text'] = future_df['Datetime'].dt.strftime('%Y-%m-%d %H:%M:%S')
+            # Create formatted hover text
+            future_df['formatted_hover'] = (
+                'Index: ' + future_df['x_index'].astype(str) + '<br>' +
+                'Open: ' + future_df['Open'].astype(str) + '<br>' +
+                'High: ' + future_df['High'].astype(str) + '<br>' +
+                'Low: ' + future_df['Low'].astype(str) + '<br>' +
+                'Close: ' + future_df['Close'].astype(str)
+            )
+            
+            fig = go.Figure(data=[
+                go.Candlestick(
+                    x=future_df['x_index'],
+                    open=future_df['Open'],
+                    high=future_df['High'],
+                    low=future_df['Low'],
+                    close=future_df['Close'],
+                    name='OHLC',
+                    text=future_df['formatted_hover'],
+                    hoverinfo='text',
+                    hoverlabel=dict(
+                        bgcolor='white',
+                        font_size=12,
+                        font_family='Arial'
+                    )
+                )
+            ])
+            
+            # Set x-axis ticks at every 6th candlestick time
+            step = 6
+            tickvals = future_df['x_index'][::step]  # Every 6th index
+            ticktext = future_df['Datetime'].dt.strftime('%H:%M')[::step]  # Every 6th time
+            
             fig.update_layout(
-                margin=dict(l=40, r=40, t=40, b=40),
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(0,0,0,0)',
-                font=dict(size=12),
-                showlegend=True
+                title=f'{ticket} Futures Candlestick (Helsinki Time)',
+                xaxis_title='Trading Session',
+                yaxis_title='Price',
+                xaxis=dict(
+                    tickvals=tickvals,
+                    ticktext=ticktext,
+                    tickangle=45,
+                    rangeslider_visible=False
+                ),
+                yaxis=dict(
+                    autorange=True
+                ),
+                width=1280,
+                height=720,
+                autosize=False
             )
-        
-        # Compute summary stats
-        avg_duration = 'N/A'
-        if not filtered_data.empty and 'TradeDuration' in filtered_data.columns:
-            try:
-                # Convert TradeDuration (HH:MM:SS) to seconds for mean calculation
-                durations = pd.to_timedelta(filtered_data['TradeDuration'].dropna())
-                if not durations.empty:
-                    mean_seconds = durations.mean().total_seconds()
-                    # Format as HH:MM:SS
-                    hours = int(mean_seconds // 3600)
-                    minutes = int((mean_seconds % 3600) // 60)
-                    seconds = int(mean_seconds % 60)
-                    avg_duration = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-            except Exception as e:
-                print(f"Error calculating avg trade duration: {e}")
-        
-        stats = [
-            {'metric': 'Total PnL', 'value': f"${filtered_data['PnL(Net)'].sum():.2f}"},
-            {'metric': 'Number of Trades', 'value': len(filtered_data)},
-            {'metric': 'Win Rate', 'value': f"{(filtered_data['WinOrLoss'] == 1).mean() * 100:.2f}%"},
-            {'metric': 'Avg Trade Duration', 'value': avg_duration}
-        ]
-        
-        # Get interesting fact
-        fact = get_interesting_fact(filtered_data)
-        
-        return primary_fig, compare_fig, stats, fact
+            future_plot = dcc.Graph(
+                figure=fig,
+                responsive=True,
+                style={'width': '100%'},
+                config={'scrollZoom': True}
+            )
+
+        # Return layout with performance table and futures plot
+        return html.Div([
+            html.H2(f'{ticket} Performance Data', className='text-xl font-semibold mb-4'),
+            performance_table,
+            html.H2(f'{ticket} Futures Data', className='text-xl font-semibold mt-6 mb-4'),
+            future_plot
+        ], className='mt-4 max-w-full overflow-x-auto')
 
     return layout

@@ -1,40 +1,45 @@
 # data/load_data.py
 import pandas as pd
+from config.settings import TIMEZONE
+import pytz
 
-def load_data(file_path):
+
+def load_performance(start_date, end_date, csv_path):
     try:
-        # Load CSV with pandas
-        df = pd.read_csv(file_path)
+        df = pd.read_csv(csv_path)
+
+        # Convert TradeDay to datetime with MM/DD/YY format, localize to Helsinki
+        tz = pytz.timezone(TIMEZONE)
+        df['TradeDay'] = pd.to_datetime(df['TradeDay'], format='%Y-%m-%d').dt.tz_localize(tz)
         
-        # Verify required columns exist
-        required_columns = ['EnteredAt', 'ExitedAt', 'PnL(Net)', 'WinOrLoss', 'Streak', 'HourOfDay', 'Type']
-        missing_columns = [col for col in required_columns if col not in df.columns]
-        if missing_columns:
-            raise ValueError(f"Missing required columns: {missing_columns}. Available columns: {df.columns.tolist()}")
+        # Convert input dates to datetime, localize to Helsinki
+        start_date = pd.to_datetime(start_date).tz_localize(tz)
+        end_date = pd.to_datetime(end_date).tz_localize(tz)
         
-        # Convert and clean data
-        df['EnteredAt'] = pd.to_datetime(df['EnteredAt'], errors='coerce')
-        df['ExitedAt'] = pd.to_datetime(df['ExitedAt'], errors='coerce')
-        df['PnL(Net)'] = pd.to_numeric(df['PnL(Net)'], errors='coerce').fillna(0)
-        df['WinOrLoss'] = pd.to_numeric(df['WinOrLoss'], errors='coerce').fillna(0)
-        df['Streak'] = pd.to_numeric(df['Streak'], errors='coerce').fillna(0)
-        df['HourOfDay'] = pd.to_numeric(df['HourOfDay'], errors='coerce').fillna(0)
-        df['Type'] = df['Type'].astype(str).fillna('')
-        
-        # Filter invalid dates
-        df = df[df['EnteredAt'].notna() & df['ExitedAt'].notna()]
-        
-        # Ensure timezone consistency (UTC+03:00 as per CSV)
-        df['EnteredAt'] = df['EnteredAt'].dt.tz_convert('UTC+03:00')
-        df['ExitedAt'] = df['ExitedAt'].dt.tz_convert('UTC+03:00')
-        
-        return df
+        # Filter by date range
+        mask = (df['TradeDay'] >= start_date) & (df['TradeDay'] <= end_date)
+        return df[mask].reset_index(drop=True)
+    
     except Exception as e:
-        print(f"Error loading data: {e}")
-        # Print CSV columns for debugging
-        try:
-            temp_df = pd.read_csv(file_path)
-            print(f"Available CSV columns: {temp_df.columns.tolist()}")
-        except:
-            print("Could not read CSV for column inspection")
-        return pd.DataFrame()
+        raise Exception(f"Failed to load performance data: {str(e)}")
+
+def load_future(start_date, end_date, csv_path):
+    try:
+        # Read CSV
+        df = pd.read_csv(csv_path)
+
+        # Convert Datetime to UTC, then to Helsinki
+        df['Datetime'] = pd.to_datetime(df['Datetime'], utc=True)
+        tz = pytz.timezone(TIMEZONE)
+        df['Datetime'] = df['Datetime'].dt.tz_convert(tz)
+        
+        # Convert input dates to datetime, localize to Helsinki
+        start_date = pd.to_datetime(start_date).tz_localize(tz)
+        end_date = pd.to_datetime(end_date).tz_localize(tz) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+        
+        # Filter by date range
+        mask = (df['Datetime'] >= start_date) & (df['Datetime'] <= end_date)
+        return df[mask].reset_index(drop=True)
+    
+    except Exception as e:
+        raise Exception(f"Failed to load future data: {str(e)}")

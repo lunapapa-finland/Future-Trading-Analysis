@@ -1,4 +1,4 @@
-.PHONY: clean data report test_environment setup
+.PHONY: clean data report analysis simulation live test_environment setup
 
 #################################################################################
 # GLOBALS                                                                       #
@@ -32,6 +32,11 @@ analysis: setup
 ## simualtion
 simulation: setup
 	@$(PYTHON_INTERPRETER) src/visualization/trade_simulation.py
+	@$(MAKE) clean >/dev/null 2>&1
+
+## live
+live: setup
+	@$(PYTHON_INTERPRETER) src/dashboard/app.py
 	@$(MAKE) clean >/dev/null 2>&1
 
 ## Delete all compiled Python files
