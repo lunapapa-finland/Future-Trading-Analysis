@@ -98,7 +98,7 @@ def get_candlestick_plot(ticket, future_df, performance_df):
         ),
         yaxis=dict(autorange=True),
         width=1280,
-        height=720,
+        height=1280,
         autosize=False,
         dragmode='pan'  # Enable panning on click-and-drag
     )
@@ -323,7 +323,24 @@ def get_streak_pattern_fig(stats):
         width=600,
         height=600,
         margin=dict(l=20, r=20, t=40, b=20),
-        showlegend=False
+        showlegend=False,
+        shapes=[
+            # Horizontal line at y=0
+            dict(
+                type='line',
+                xref='paper',  # Use 'paper' to span the entire x-axis range
+                x0=0,  # Start at the left edge
+                x1=1,  # End at the right edge
+                yref='y',
+                y0=0,  # Position at y=0
+                y1=0,
+                line=dict(
+                    color='red',
+                    width=3,
+                    dash='dash'
+                )
+            )
+        ]
     )
 
     return streak_fig

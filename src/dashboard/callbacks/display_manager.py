@@ -42,7 +42,7 @@ def register_display_callbacks(app):
                     id='candlestick-plot',
                     figure=fig,
                     responsive=True,
-                    style={'width': '100%', 'height': '400px'},
+                    style={'width': '100%', 'height': '900px'},
                     config={'scrollZoom': True}
                 )
 
@@ -104,7 +104,7 @@ def register_display_callbacks(app):
 
             content_1 = html.Div([
                 html.H2(f'{ticket} Futures Data', className='text-xl font-semibold mb-4'),
-                html.Div(future_plot, style={'width': '100%', 'marginBottom': '20px'}),
+                html.Div(future_plot, style={'width': '100%'}),
                 html.Div(stats_content, style={'width': '100%'})
             ], style={'display': 'block', 'maxWidth': '100%', 'overflowX': 'auto'})
             return [content_1, content_2]

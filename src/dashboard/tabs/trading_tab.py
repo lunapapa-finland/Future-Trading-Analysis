@@ -1,5 +1,5 @@
 from dash import html, dcc
-from dashboard.config.settings import DATA_SOURCE_DROPDOWN
+from dashboard.config.settings import DATA_SOURCE_DROPDOWN, DEFAULT_DATA_SOURCE, CURRENT_DATE
 import dash_bootstrap_components as dbc
 from dashboard.tabs.base_tab import BaseTab
 from dashboard.styles.styles import CLASS_CARD, CLASS_FLEX, CLASS_LABEL, CLASS_DROPDOWN, CLASS_DATEPICKER, CLASS_BUTTON, CLASS_ERROR
@@ -18,14 +18,14 @@ class TradingTab(BaseTab):
                         options=[{'label': ticket, 'value': ticket} for ticket in DATA_SOURCE_DROPDOWN.keys()],
                         placeholder='Ticket Name',
                         className=CLASS_DROPDOWN,
-                        value=None
+                        value=DEFAULT_DATA_SOURCE
                     ),
                     html.Label('Start Date', className=CLASS_LABEL),
                     dcc.DatePickerSingle(
                         id='start-date-picker-1',
                         placeholder='Start Date',
                         className=CLASS_DATEPICKER,
-                        date=None
+                        date=CURRENT_DATE
                     ),
                     html.Label('End Date', className=CLASS_LABEL),
                     html.P(id='end-date-picker-error-1', className=CLASS_ERROR),
@@ -33,7 +33,7 @@ class TradingTab(BaseTab):
                         id='end-date-picker-1',
                         placeholder='End Date',
                         className=CLASS_DATEPICKER,
-                        date=None
+                        date=CURRENT_DATE
                     ),
                     html.Button(
                         'Confirm',
