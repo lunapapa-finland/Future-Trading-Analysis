@@ -1,6 +1,6 @@
 # data/load_data.py
 import pandas as pd
-from config.settings import TIMEZONE
+from dashboard.config.settings import TIMEZONE
 import pytz
 
 
