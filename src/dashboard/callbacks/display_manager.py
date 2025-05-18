@@ -1,6 +1,7 @@
 from dash import Input, Output, dash, callback_context, html, dcc, dash_table
 import pandas as pd
 import plotly.graph_objects as go
+from dashboard.analysis.plots import *
 
 def register_display_callbacks(app):
     @app.callback(
@@ -26,88 +27,86 @@ def register_display_callbacks(app):
         content_2 = default_content
 
         if trigger_id == 'tabs':
-            return [default_content, default_content]
+            return [default_content, content_2]
 
         elif trigger_id == 'data-store-1' and data_store_1:
             ticket = data_store_1.get('ticket', 'Unknown')
             performance_df = pd.DataFrame(data_store_1['performance'])
-            if performance_df.empty:
-                performance_table = html.P(f'No performance data for {ticket}', className='text-gray-500')
-            else:
-                performance_table = dash_table.DataTable(
-                    data=performance_df.to_dict('records'),
-                    columns=[{'name': col, 'id': col} for col in performance_df.columns],
-                    style_table={'overflowX': 'auto'},
-                    style_cell={'textAlign': 'left', 'padding': '5px'},
-                    style_header={'fontWeight': 'bold'},
-                    page_size=5
-                )
-            
             future_df = pd.DataFrame(data_store_1['future'])
+
             if future_df.empty:
                 future_plot = html.P(f'No futures data for {ticket}', className='text-gray-500')
             else:
-                future_df['Datetime'] = pd.to_datetime(future_df['Datetime'])
-                future_df['x_index'] = range(1, len(future_df)+1)
-                future_df['hover_text'] = future_df['Datetime'].dt.strftime('%Y-%m-%d %H:%M:%S')
-                future_df['formatted_hover'] = (
-                    'Index: ' + future_df['x_index'].astype(str) + '<br>' +
-                    'Open: ' + future_df['Open'].astype(str) + '<br>' +
-                    'High: ' + future_df['High'].astype(str) + '<br>' +
-                    'Low: ' + future_df['Low'].astype(str) + '<br>' +
-                    'Close: ' + future_df['Close'].astype(str)
-                )
-                
-                fig = go.Figure(data=[
-                    go.Candlestick(
-                        x=future_df['x_index'],
-                        open=future_df['Open'],
-                        high=future_df['High'],
-                        low=future_df['Low'],
-                        close=future_df['Close'],
-                        name='OHLC',
-                        text=future_df['formatted_hover'],
-                        hoverinfo='text',
-                        hoverlabel=dict(
-                            bgcolor='white',
-                            font_size=12,
-                            font_family='Arial'
-                        )
-                    )
-                ])
-                
-                step = 6
-                tickvals = future_df['x_index'][::step]
-                ticktext = future_df['Datetime'].dt.strftime('%H:%M')[::step]
-                
-                fig.update_layout(
-                    title=f'{ticket} Futures Candlestick (Helsinki Time)',
-                    xaxis_title='Trading Session',
-                    yaxis_title='Price',
-                    xaxis=dict(
-                        tickvals=tickvals,
-                        ticktext=ticktext,
-                        tickangle=45,
-                        rangeslider_visible=False
-                    ),
-                    yaxis=dict(autorange=True),
-                    width=1280,
-                    height=720,
-                    autosize=False
-                )
+                fig = get_candlestick_plot(ticket, future_df, performance_df)
                 future_plot = dcc.Graph(
+                    id='candlestick-plot',
                     figure=fig,
                     responsive=True,
-                    style={'width': '100%'},
+                    style={'width': '100%', 'height': '400px'},
                     config={'scrollZoom': True}
                 )
 
+            # Compute and display statistics
+            stats = get_statistics(performance_df)
+            if not stats['win_loss_data']:
+                stats_content = html.P('No performance data available.', className='text-gray-500')
+            else:
+                win_loss_fig = get_win_loss_pie_fig(stats)
+                win_loss_chart = dcc.Graph(
+                    id='win-loss-pie-chart',
+                    figure=win_loss_fig,
+                    style={'width': '48%', 'verticalAlign': 'top'}
+                )
+
+                financial_fig = get_financial_metrics_fig(stats)
+                financial_chart = dcc.Graph(
+                    id='financial-metrics-chart',
+                    figure=financial_fig,
+                    style={'width': '48%', 'verticalAlign': 'top'}
+                )
+
+                win_loss_type_fig = get_win_loss_by_type_fig(stats)
+                win_loss_type_chart = dcc.Graph(
+                    id='win-loss-by-type-chart',
+                    figure=win_loss_type_fig,
+                    style={'width': '48%', 'verticalAlign': 'top'}
+                )
+
+                streak_fig = get_streak_pattern_fig(stats)
+                streak_chart = dcc.Graph(
+                    id='streak-pattern-chart',
+                    figure=streak_fig,
+                    style={'width': '48%', 'verticalAlign': 'top'}
+                )
+
+                duration_fig = get_duration_distribution_plot(stats)
+                duration_chart = dcc.Graph(
+                    id='trading-duration-distribution-chart',
+                    figure=duration_fig,
+                    style={'width': '48%', 'verticalAlign': 'top'}
+                )
+
+                size_fig = get_size_count_fig(stats)
+                size_chart = dcc.Graph(
+                    id='trade-size-count-chart',
+                    figure=size_fig,
+                    style={'width': '48%', 'verticalAlign': 'top'}
+                )
+
+                stats_content = html.Div([
+                    html.H3('Trade Statistics', className='text-lg font-semibold mt-6 mb-4'),
+                    html.Div([
+                        html.Div([win_loss_chart, financial_chart], style={'display': 'flex', 'justifyContent': 'space-between', 'marginBottom': '20px'}),
+                        html.Div([win_loss_type_chart, streak_chart], style={'display': 'flex', 'justifyContent': 'space-between', 'marginBottom': '20px'}),
+                        html.Div([duration_chart, size_chart], style={'display': 'flex', 'justifyContent': 'space-between'})
+                    ], style={'width': '100%'})
+                ])
+
             content_1 = html.Div([
-                html.H2(f'{ticket} Performance Data', className='text-xl font-semibold mb-4'),
-                performance_table,
-                html.H2(f'{ticket} Futures Data', className='text-xl font-semibold mt-6 mb-4'),
-                future_plot
-            ], className='mt-4 max-w-full overflow-x-auto')
+                html.H2(f'{ticket} Futures Data', className='text-xl font-semibold mb-4'),
+                html.Div(future_plot, style={'width': '100%', 'marginBottom': '20px'}),
+                html.Div(stats_content, style={'width': '100%'})
+            ], style={'display': 'block', 'maxWidth': '100%', 'overflowX': 'auto'})
             return [content_1, content_2]
 
         elif trigger_id == 'data-store-2' and data_store_2:

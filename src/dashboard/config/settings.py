@@ -8,11 +8,10 @@ DEBUG_FLAG = True
 PORT = 8050
 TIMEZONE = 'Europe/Helsinki'
 
-# Data sources
+# Project root directory
 project_root = None
 for path in sys.path:
     candidate = Path(path).resolve()
-    print(candidate)
     if candidate.name == 'Future-Trading-Analysis' and (candidate / 'src').exists():
         project_root = candidate
         break
@@ -20,23 +19,21 @@ if project_root is None:
     raise RuntimeError("Could not find project root in sys.path. Please set BASE_DIR manually.")
 BASE_DIR = project_root
 
-# Define data directories relative to project root
+# Define data source paths
 PERFORMANCE_DIR = BASE_DIR / 'data' / 'performance'
 FUTURE_DIR = BASE_DIR / 'data' / 'future' / 'aggregated'
-
 PERFORMANCE_CSV = str(PERFORMANCE_DIR / 'Combined_Performance_with_Streaks.csv')
 MES_CSV = str(FUTURE_DIR / 'MES.csv')
 MNQ_CSV = str(FUTURE_DIR / 'MNQ.csv')
 MGC_CSV = str(FUTURE_DIR / 'MGC.csv')
 
 
-# Layout settings
+# Layout Dropdown options
 DATA_SOURCE_DROPDOWN = {
     'MES': MES_CSV,
     'MNQ': MNQ_CSV,
     'MGC': MGC_CSV
 }
-
 ANALYSIS_DROPDOWN = {
     'Rolling Winning Rate': {},
     'Sharpe Ratio': {
@@ -52,6 +49,9 @@ ANALYSIS_DROPDOWN = {
     'Size and Risk Analysis': {},
     'Trade Duration Analysis': {},
 }
+
+# X axis settings for candlestick plot
+TIMESTEP = 12  # 1 equals 5 minutes, 12 equals 1 hour
 
 # Debug print to verify path
 # if DEBUG_FLAG:

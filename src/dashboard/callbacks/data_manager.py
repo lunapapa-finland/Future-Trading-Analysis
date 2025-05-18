@@ -69,7 +69,7 @@ def register_data_callbacks(app):
             try:
                 csv_map = DATA_SOURCE_DROPDOWN
                 future_csv = csv_map[ticket_1]
-                performance_df = load_performance(start_date_1, end_date_1, PERFORMANCE_CSV)
+                performance_df = load_performance(ticket_1, start_date_1, end_date_1, PERFORMANCE_CSV)
                 future_df = load_future(start_date_1, end_date_1, future_csv)
                 data_store_1 = {
                     'performance': performance_df.to_dict('records'),
