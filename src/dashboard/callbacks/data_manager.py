@@ -86,7 +86,7 @@ def register_data_callbacks(app):
                     'ticket': ticket_1,
                 }
                 return [data_store_1, data_store_2, error_message_1, error_class_1,
-                        error_message_2, error_class_2] + selection_reset  # Reset after success
+                        error_message_2, error_class_2] + selection_no_update  # Reset after success
             except Exception as e:
                 return [data_store_1, data_store_2,
                         f"Error loading data: {str(e)}", 'text-red-600 mt-2',
@@ -109,7 +109,7 @@ def register_data_callbacks(app):
                     'analysis': analysis_2,
                 }
                 return [data_store_1, data_store_2, error_message_1, error_class_1,
-                        error_message_2, error_class_2] + selection_reset  # Reset after success
+                        error_message_2, error_class_2] + selection_no_update  # Reset after success
             except Exception as e:
                 return [data_store_1, data_store_2,
                         error_message_1, error_class_1,

@@ -16,7 +16,7 @@ from datetime import date
 # Section 1: General Application Settings
 # -----------------------------------
 # General configuration settings for the application runtime.
-DEBUG_FLAG = False  # Enable debug mode (e.g., for printing paths during development)
+DEBUG_FLAG = True  # Enable debug mode (e.g., for printing paths during development)
 PORT = 8050  # Port number for the Dash server
 TIMEZONE = 'Europe/Helsinki'  # Timezone for date/time handling (e.g., Helsinki time for candlestick plots)
 
