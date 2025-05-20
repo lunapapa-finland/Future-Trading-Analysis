@@ -5,15 +5,21 @@ from dashboard.callbacks.data_manager import register_data_callbacks
 from dashboard.callbacks.display_manager import register_display_callbacks
 from dashboard.config.settings import DEBUG_FLAG
 from dashboard.components.sidebar import get_sidebar, get_sidebar_toggle
+from dashboard.utils.data_acquisition import acquire_missing_data
+from dashboard.utils.performance_acquisition import acquire_missing_performance
 import dash_bootstrap_components as dbc
+
+# Run data acquisition before app initialization
+acquire_missing_data()
+acquire_missing_performance()
 
 # Initialize Dash app with routes and requests pathname prefixes
 app = Dash(
     __name__,
     external_stylesheets=[
         'https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css',
-        'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css',  # Add Font Awesome
-        dbc.themes.BOOTSTRAP,  # Add Bootstrap for better DBC compatibility
+        'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css',
+        dbc.themes.BOOTSTRAP,
     ],
     routes_pathname_prefix='/',
     requests_pathname_prefix='/'

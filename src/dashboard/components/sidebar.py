@@ -18,10 +18,20 @@ def get_sidebar():
     sidebar_content = dbc.Container(
         [
             dbc.Row([dbc.Col(logo)]),  # Logo centered at the top
-            dbc.Row([dbc.Col(html.H4('Future Trading Analysis', className='text-lg font-bold mt-4 text-center'))]),
+            dbc.Row([
+                dbc.Col(
+                    html.H4([
+                                'Start building your ',
+                                html.Br(),
+                                html.B('CONSISTENCY'),
+                                html.Br(),
+                                'from here!'
+                            ], className='text-lg font-bold mt-4 text-center')
+                        )
+                    ]),   
             dbc.Row([dbc.Col(html.P('Version 0.1', className='text-sm text-gray-600 text-center'))]),
             dbc.Row([dbc.Col(html.P('Track and analyze your trading performance with advanced metrics.', className='text-sm mt-2 text-center'))]),
-            dbc.Row([dbc.Col(dcc.Link('Learn More', href='#', className='text-blue-500 hover:text-blue-700 mt-4 block text-center'))]),
+            dbc.Row([dbc.Col(dcc.Link('Contact Me', href='https://lunapapa.eu/about', className='text-blue-500 hover:text-blue-700 mt-4 block text-center'))]),
         ],
         fluid=True
     )

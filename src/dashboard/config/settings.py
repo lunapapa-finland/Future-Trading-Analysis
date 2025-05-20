@@ -1,4 +1,3 @@
-# config/settings.py
 """
 Configuration settings for the Future Trading Analysis dashboard.
 
@@ -12,19 +11,34 @@ import sys
 from pathlib import Path
 from datetime import date
 
-# -----------------------------------
-# Section 1: General Application Settings
-# -----------------------------------
-# General configuration settings for the application runtime.
-DEBUG_FLAG = True  # Enable debug mode (e.g., for printing paths during development)
-PORT = 8050  # Port number for the Dash server
-TIMEZONE = 'Europe/Helsinki'  # Timezone for date/time handling (e.g., Helsinki time for candlestick plots)
+# Third-party imports
+import pandas as pd
+from pandas.tseries.holiday import AbstractHolidayCalendar, Holiday, USFederalHolidayCalendar
+from exchange_calendars import get_calendar
+
+# Define a custom CME holiday calendar
+class CMEHolidayCalendar(AbstractHolidayCalendar):
+    def _next_monday(self, d):
+        return pd.offsets.CustomBusinessDay(n=1, weekmask='Mon').rollforward(d)
+
+    def _next_thursday(self, d):
+        return pd.offsets.CustomBusinessDay(n=1, weekmask='Thu').rollforward(d)
+
+    rules = [
+        Holiday("New Year's Day", month=1, day=1, observance=lambda d: pd.offsets.CustomBusinessDay(n=1, weekmask='Mon').rollforward(d)),
+        Holiday("Martin Luther King Jr. Day", month=1, day=15, observance=lambda d: pd.offsets.CustomBusinessDay(n=1, weekmask='Mon').rollforward(d)),
+        Holiday("Presidents' Day", month=2, day=15, observance=lambda d: pd.offsets.CustomBusinessDay(n=1, weekmask='Mon').rollforward(d)),
+        Holiday("Good Friday", month=1, day=1, offset=[pd.offsets.Easter(), pd.offsets.Day(-2)]),  # 2 days before Easter
+        Holiday("Memorial Day", month=5, day=31, observance=lambda d: pd.offsets.CustomBusinessDay(n=1, weekmask='Mon').rollforward(d)),
+        Holiday("Independence Day", month=7, day=4, observance=lambda d: pd.offsets.CustomBusinessDay(n=1, weekmask='Mon').rollforward(d)),
+        Holiday("Labor Day", month=9, day=1, observance=lambda d: pd.offsets.CustomBusinessDay(n=1, weekmask='Mon').rollforward(d)),
+        Holiday("Thanksgiving Day", month=11, day=28, observance=lambda d: pd.offsets.CustomBusinessDay(n=1, weekmask='Thu').rollforward(d)),  # Nearest Thursday
+        Holiday("Christmas Day", month=12, day=25, observance=lambda d: pd.offsets.CustomBusinessDay(n=1, weekmask='Mon').rollforward(d)),
+    ]
 
 # -----------------------------------
-# Section 2: Project Directory Setup
+# Section 1: Project Directory Setup
 # -----------------------------------
-# Dynamically determine the project root directory (BASE_DIR) by searching sys.path.
-# The root is identified as the directory named 'Future-Trading-Analysis' containing a 'src' subdirectory.
 project_root = None
 for path in sys.path:
     candidate = Path(path).resolve()
@@ -32,113 +46,92 @@ for path in sys.path:
         project_root = candidate
         break
 if project_root is None:
-    raise RuntimeError("Could not find project root in sys.path. Please set BASE_DIR manually.")
-BASE_DIR = project_root  # Base directory of the project (e.g., /path/to/Future-Trading-Analysis)
+    raise RuntimeError("Could not find project root in sys.path.")
+BASE_DIR = project_root
+
+
+
+# -----------------------------------
+# Section 2: General Application Settings
+# -----------------------------------
+DEBUG_FLAG = True  # Enable debug mode
+PORT = 8050  # Port number for the Dash server
+TIMEZONE = 'Europe/Helsinki'  # Timezone for date/time handling
+LOGGING_PATH = BASE_DIR / 'log' / 'app.log'  # Path for logging
 
 # -----------------------------------
 # Section 3: Data File Paths
 # -----------------------------------
-# Define paths to data directories and files used for performance and future data.
-PERFORMANCE_DIR = BASE_DIR / 'data' / 'performance'  # Directory for performance data
-FUTURE_DIR = BASE_DIR / 'data' / 'future' / 'aggregated'  # Directory for aggregated future data
+PERFORMANCE_DIR = BASE_DIR / 'data' / 'performance'
+FUTURE_DIR = BASE_DIR / 'data' / 'future' / 'dash_project'
 
-# File paths for performance and future data CSVs
-PERFORMANCE_CSV = str(PERFORMANCE_DIR / 'Combined_Performance_with_Streaks.csv')  # Path to performance CSV
-MES_CSV = str(FUTURE_DIR / 'MES.csv')  # Path to MES future data
-MNQ_CSV = str(FUTURE_DIR / 'MNQ.csv')  # Path to MNQ future data
-MGC_CSV = str(FUTURE_DIR / 'MGC.csv')  # Path to MGC future data
+PERFORMANCE_CSV = str(PERFORMANCE_DIR / 'Combined_performance_for_dash_project.csv')
+MES_CSV = str(FUTURE_DIR / 'MES.csv')
+MNQ_CSV = str(FUTURE_DIR / 'MNQ.csv')
+MGC_CSV = str(FUTURE_DIR / 'MGC.csv')
 
 # -----------------------------------
 # Section 4: Dropdown Configurations
 # -----------------------------------
-# Configurations for dropdown menus used in the dashboard UI.
+DATA_SOURCE_DROPDOWN = {'MES': MES_CSV, 'MNQ': MNQ_CSV, 'MGC': MGC_CSV}
+DEFAULT_DATA_SOURCE = 'MES'
 
-# Data Source Dropdown: Maps ticket symbols to their corresponding CSV file paths.
-DATA_SOURCE_DROPDOWN = {
-    'MES': MES_CSV,
-    'MNQ': MNQ_CSV,
-    'MGC': MGC_CSV,
-}
-DEFAULT_DATA_SOURCE = 'MES'  # Default selection for the data source dropdown
+CURRENT_DATE = date.today().strftime('%Y-%m-%d')  # e.g., '2025-05-19'
 
-# Current Date: Used as the default for date pickers (computed at runtime).
-CURRENT_DATE = date.today().strftime('%Y-%m-%d')  # Format: 'YYYY-MM-DD', e.g., '2025-05-18'
-
-# Granularity Dropdown: Options for splitting data into discrete groups (Chopped Data analysis).
-# Each entry includes a timedelta for splitting and a display label.
 GRANULARITY_DROPDOWN = {
     'Daily': {'timedelta': '1D', 'label': 'Daily'},
     'Weekly': {'timedelta': '7D', 'label': 'Weekly'},
-    'Monthly': {'timedelta': '30D', 'label': 'Monthly'},  # Approximation (use pandas.Grouper for exact months)
+    'Monthly': {'timedelta': '30D', 'label': 'Monthly'},
     'Quarterly': {'timedelta': '90D', 'label': 'Quarterly'},
     'Yearly': {'timedelta': '365D', 'label': 'Yearly'},
 }
-DEFAULT_GRANULARITY = 'Monthly'  # Default granularity for chopped data analysis
+DEFAULT_GRANULARITY = 'Monthly'
 
-# Rolling Window Dropdown: Options for the rolling window size (Rolling Data analysis).
-# Each entry includes the number of days and a display label.
 ROLLING_WINDOW_DROPDOWN = {
     '7 Days': {'days': 7, 'label': '7 Days'},
     '30 Days': {'days': 30, 'label': '30 Days'},
     '60 Days': {'days': 60, 'label': '60 Days'},
     '90 Days': {'days': 90, 'label': '90 Days'},
 }
-DEFAULT_ROLLING_WINDOW = '30 Days'  # Default rolling window size
+DEFAULT_ROLLING_WINDOW = '30 Days'
 
 # -----------------------------------
 # Section 5: Analysis Configurations
 # -----------------------------------
-# Configurations for statistical analysis types, categorized into Chopped, Rolling, and Overall.
-# Each analysis type includes its category and relevant parameters.
 ANALYSIS_DROPDOWN = {
-    # Chopped Data: Metrics split into discrete time periods (requires granularity).
-    'Drawdown Analysis': {
-        'category': 'Chopped',
-        'granularity': DEFAULT_GRANULARITY,  # Default splitting interval
-    },
-    'Average Daily Return': {
-        'category': 'Chopped',
-        'granularity': DEFAULT_GRANULARITY,
-    },
-    # Rolling Data: Metrics computed over a rolling window (requires window size).
-    'Rolling Winning Rate': {
-        'category': 'Rolling',
-        'window': DEFAULT_ROLLING_WINDOW,  # Default window size
-    },
-    'Sharpe Ratio': {
-        'category': 'Rolling',
-        'window': DEFAULT_ROLLING_WINDOW,
-        'annualized': True,  # Annualize the Sharpe Ratio
-        'risk_free_rate': 0.02,  # Risk-free rate (e.g., 2%)
-    },
-    'Hourly Performance': {
-        'category': 'Rolling',
-        'window': '7 Days',  # Shorter window suitable for hourly data
-    },
-    'Size and Risk Analysis': {
-        'category': 'Rolling',
-        'window': DEFAULT_ROLLING_WINDOW,
-    },
-    # Overall Data: Metrics computed over the entire dataset (no time segmentation).
-    'PnL Distribution': {
-        'category': 'Overall',
-    },
-    'Trade Duration Analysis': {
-        'category': 'Overall',
-    },
+    'Drawdown Analysis': {'category': 'Chopped', 'granularity': DEFAULT_GRANULARITY},
+    'Average Daily Return': {'category': 'Chopped', 'granularity': DEFAULT_GRANULARITY},
+    'Rolling Winning Rate': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW},
+    'Sharpe Ratio': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW, 'annualized': True, 'risk_free_rate': 0.02},
+    'Hourly Performance': {'category': 'Rolling', 'window': '7 Days'},
+    'Size and Risk Analysis': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW},
+    'PnL Distribution': {'category': 'Overall'},
+    'Trade Duration Analysis': {'category': 'Overall'},
 }
-DEFAULT_ANALYSIS = 'Rolling Winning Rate'  # Default analysis type for the dropdown
+DEFAULT_ANALYSIS = 'Rolling Winning Rate'
 
 # -----------------------------------
 # Section 6: Plot Settings
 # -----------------------------------
-# Settings for plot configurations (e.g., candlestick plot).
-TIMESTEP = 12  # Time step for candlestick plot x-axis (1 = 5 minutes, 12 = 1 hour)
+TIMESTEP = 12  # 1 = 5 minutes, 12 = 1 hour
 
 # -----------------------------------
 # Section 7: Debug Output
 # -----------------------------------
-# Debug print statements to verify paths (enabled only if DEBUG_FLAG is True).
 if DEBUG_FLAG:
     print(f"BASE_DIR: {BASE_DIR}")
     print(f"PERFORMANCE_CSV: {PERFORMANCE_CSV}")
+
+# -----------------------------------
+# Section 8: Data Acquisition
+# -----------------------------------
+def get_last_business_day(current_date):
+    current = pd.to_datetime(current_date)
+    calendar = CMEHolidayCalendar()
+    holidays = calendar.holidays(start=current - pd.offsets.BDay(10), end=current)
+    last_business_day = current - pd.offsets.BDay(1)
+    while last_business_day in holidays:
+        last_business_day -= pd.offsets.BDay(1)
+    return last_business_day.strftime('%Y-%m-%d')
+
+ACQUISITION_LAST_BUSINESS_DATE = get_last_business_day(CURRENT_DATE)
