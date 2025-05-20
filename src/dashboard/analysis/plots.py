@@ -2,7 +2,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from dashboard.config.settings import TIMESTEP
 
-def get_candlestick_plot(ticket, future_df, performance_df):
+def get_candlestick_plot(ticket, future_df, performance_df, show_trades=False):
     future_df['Datetime'] = pd.to_datetime(future_df['Datetime'])
     future_df['x_index'] = range(1, len(future_df) + 1)
     future_df['hover_text'] = future_df['Datetime'].dt.strftime('%Y-%m-%d %H:%M:%S')
@@ -75,12 +75,14 @@ def get_candlestick_plot(ticket, future_df, performance_df):
                 name=f'Trade {idx + 1}',
                 text=hover_text,
                 hoverinfo='text',
-                hoverlabel=dict(bgcolor='white', font_size=12, font_family='Arial')
+                hoverlabel=dict(bgcolor='white', font_size=12, font_family='Arial'),
+                visible=show_trades  # Toggle visibility based on parameter
             )
             trade_traces.append(trace)
 
-        # Add trade traces to the same plot
-        fig.add_traces(trade_traces)
+        # Add trade traces to the same plot if show_trades is True
+        if show_trades:
+            fig.add_traces(trade_traces)
 
     step = TIMESTEP
     tickvals = future_df['x_index'][::step]

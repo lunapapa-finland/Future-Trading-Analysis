@@ -41,6 +41,12 @@ class TradingTab(BaseTab):
                         n_clicks=0,
                         className=CLASS_BUTTON
                     ),
+                    html.Button(
+                        'Display Trades',
+                        id='display-trades-button-1',
+                        n_clicks=0,
+                        className=CLASS_BUTTON
+                    ),
                 ], className=CLASS_FLEX),
                 html.P(id='error-message-1', className=CLASS_ERROR),
             ])
