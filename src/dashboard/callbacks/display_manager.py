@@ -1,4 +1,4 @@
-from dash import Input, Output, dash, callback_context, html, dcc, State
+from dash import Input, Output, dash, callback_context, html, dcc, State, dash_table
 import pandas as pd
 import plotly.graph_objects as go
 from dashboard.analysis.plots import *
@@ -12,7 +12,7 @@ def register_display_callbacks(app):
         [
             Output('tab-1-section-2-content', 'children'),
             Output('tab-2-section-2-content', 'children'),
-            Output('current-trace-index-1', 'data')
+            Output('current-trace-index-1', 'data'),
         ],
         [
             Input('data-store-1', 'data'),
@@ -55,9 +55,30 @@ def register_display_callbacks(app):
                     id='candlestick-plot',
                     figure=fig,
                     responsive=True,
-                    style={'width': '100%', 'height': '900px'},
+                    style={'width': '100%', 'height': '700'},
                     config={'scrollZoom': True}
                 )
+                if not performance_df.empty and new_trace_index > 0:
+                    visible_trades = performance_df.iloc[:new_trace_index][['EnteredAt', 'ExitedAt', 'Type', 'Size', 'PnL(Net)', 'EntryPrice', 'ExitPrice']]
+                    trade_table = dash_table.DataTable(
+                        id='trade-table-1',
+                        columns=[
+                            {'name': 'Entry Time', 'id': 'EnteredAt'},
+                            {'name': 'Exit Time', 'id': 'ExitedAt'},
+                            {'name': 'Type', 'id': 'Type'},
+                            {'name': 'Size', 'id': 'Size'},
+                            {'name': 'PnL(Net)', 'id': 'PnL(Net)'},
+                            {'name': 'Entry Price', 'id': 'EntryPrice'},
+                            {'name': 'Exit Price', 'id': 'ExitPrice'}
+                        ],
+                        data=visible_trades.to_dict('records'),
+                        style_table={'overflowX': 'auto'},
+                        style_cell={'textAlign': 'left', 'padding': '5px'},
+                        style_header={'fontWeight': 'bold'}
+                    )
+                else:
+                    trade_table = html.P("No trades visible.", className='text-gray-500')
+
                 stats = get_statistics(performance_df)
                 if not stats['win_loss_data']:
                     stats_content = html.P('No performance data available.', className='text-gray-500')
@@ -113,9 +134,11 @@ def register_display_callbacks(app):
                         ], style={'width': '100%'})
                     ])
 
+
                 content_1 = html.Div([
                     html.H2(f'{ticket} Futures Data', className='text-xl font-semibold mb-4'),
                     html.Div(future_plot, style={'width': '100%'}),
+                    html.Div(trade_table, style={'marginTop': '20px'}),
                     html.Div(stats_content, style={'width': '100%'})
                 ], style={'display': 'block', 'maxWidth': '100%', 'overflowX': 'auto'})
             return [content_1, content_2, new_trace_index]
@@ -138,7 +161,7 @@ def register_display_callbacks(app):
                     id='candlestick-plot',
                     figure=fig,
                     responsive=True,
-                    style={'width': '100%', 'height': '900px'},
+                    style={'width': '100%', 'height': '700px'},
                     config={'scrollZoom': True}
                 )
 

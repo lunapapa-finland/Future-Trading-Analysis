@@ -31,7 +31,15 @@ def get_sidebar():
                     ]),   
             dbc.Row([dbc.Col(html.P('Version 0.1', className='text-sm text-gray-600 text-center'))]),
             dbc.Row([dbc.Col(html.P('Track and analyze your trading performance with advanced metrics.', className='text-sm mt-2 text-center'))]),
-            dbc.Row([dbc.Col(dcc.Link('Contact Me', href='https://lunapapa.eu/about', className='text-blue-500 hover:text-blue-700 mt-4 block text-center'))]),
+            dbc.Row([dbc.Col(
+                            html.A(
+                                'Contact Me',
+                                href='https://lunapapa.eu/about',
+                                target='_blank',  # Opens link in a new tab
+                                className='text-blue-500 hover:text-blue-700 mt-4 block text-center'
+                            )
+                        )
+                    ]),
         ],
         fluid=True
     )
