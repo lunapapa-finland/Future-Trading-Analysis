@@ -1,6 +1,6 @@
 from dash import html, dcc
-from dashboard.config.settings import DATA_SOURCE_DROPDOWN, DEFAULT_DATA_SOURCE, CURRENT_DATE
 import dash_bootstrap_components as dbc
+from dashboard.config.settings import DATA_SOURCE_DROPDOWN, DEFAULT_DATA_SOURCE, CURRENT_DATE
 from dashboard.tabs.base_tab import BaseTab
 from dashboard.styles.styles import CLASS_CARD, CLASS_FLEX, CLASS_LABEL, CLASS_DROPDOWN, CLASS_DATEPICKER, CLASS_BUTTON, CLASS_ERROR
 
@@ -42,10 +42,20 @@ class TradingTab(BaseTab):
                         className=CLASS_BUTTON
                     ),
                     html.Button(
-                        'Display Trades',
-                        id='display-trades-button-1',
+                        'Previous',
+                        id='prev-button-1',
                         n_clicks=0,
                         className=CLASS_BUTTON
+                    ),
+                    html.Button(
+                        'Next',
+                        id='next-button-1',
+                        n_clicks=0,
+                        className=CLASS_BUTTON
+                    ),
+                    dcc.Store(
+                        id='current-trace-index-1',
+                        data=0
                     ),
                 ], className=CLASS_FLEX),
                 html.P(id='error-message-1', className=CLASS_ERROR),

@@ -2,7 +2,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from dashboard.config.settings import TIMESTEP
 
-def get_candlestick_plot(ticket, future_df, performance_df, show_trades=False):
+def get_candlestick_plot(ticket, future_df, performance_df, current_trace_index=0):
     future_df['Datetime'] = pd.to_datetime(future_df['Datetime'])
     future_df['x_index'] = range(1, len(future_df) + 1)
     future_df['hover_text'] = future_df['Datetime'].dt.strftime('%Y-%m-%d %H:%M:%S')
@@ -49,7 +49,7 @@ def get_candlestick_plot(ticket, future_df, performance_df, show_trades=False):
         performance_df['x_entry'] = performance_df['EnteredAt_5min'].apply(map_to_x_index)
         performance_df['x_exit'] = performance_df['ExitedAt_5min'].apply(map_to_x_index)
 
-        # Create trade lines with markers
+        # Create trade traces
         trade_traces = []
         for idx, row in performance_df.iterrows():
             color = 'green' if row['PnL(Net)'] > 0 else 'red'
@@ -76,13 +76,12 @@ def get_candlestick_plot(ticket, future_df, performance_df, show_trades=False):
                 text=hover_text,
                 hoverinfo='text',
                 hoverlabel=dict(bgcolor='white', font_size=12, font_family='Arial'),
-                visible=show_trades  # Toggle visibility based on parameter
+                visible=(idx < current_trace_index)  # Show traces up to current_trace_index
             )
             trade_traces.append(trace)
 
-        # Add trade traces to the same plot if show_trades is True
-        if show_trades:
-            fig.add_traces(trade_traces)
+        # Add all trade traces to the figure
+        fig.add_traces(trade_traces)
 
     step = TIMESTEP
     tickvals = future_df['x_index'][::step]
