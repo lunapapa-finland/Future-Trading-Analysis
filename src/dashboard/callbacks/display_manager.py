@@ -2,12 +2,12 @@ from dash import Input, Output, dash, callback_context, html, dcc, State, dash_t
 import pandas as pd
 import plotly.graph_objects as go
 from dashboard.analysis.plots import *
+from dashboard.config.settings import ANALYSIS_DROPDOWN, DEFAULT_GRANULARITY  # Added for ANALYSIS_DROPDOWN
+from dashboard.analysis.compute import pnl_growth, drawdown
 
 def register_display_callbacks(app):
-    # Add a store to manage the current trace index
     app.layout.children.insert(0, dcc.Store(id='current-trace-index-1', data=0))
 
-    # Single callback for updating section 2 content and cycling through trade traces
     @app.callback(
         [
             Output('tab-1-section-2-content', 'children'),
@@ -37,7 +37,6 @@ def register_display_callbacks(app):
         content_2 = default_content
         new_trace_index = int(current_trace_index) if current_trace_index is not None else 0
 
-        # Handle Previous/Next button clicks to accumulate trade traces
         if trigger_id in ['prev-button-1', 'next-button-1'] and data_store_1:
             ticket = data_store_1.get('ticket', 'Unknown')
             performance_df = pd.DataFrame(data_store_1['performance'])
@@ -45,9 +44,9 @@ def register_display_callbacks(app):
             num_traces = len(performance_df) if not performance_df.empty else 0
 
             if trigger_id == 'prev-button-1' and prev_clicks > 0:
-                new_trace_index = max(0, new_trace_index - 1)  # Stop at 0
+                new_trace_index = max(0, new_trace_index - 1)
             elif trigger_id == 'next-button-1' and next_clicks > 0:
-                new_trace_index = min(num_traces, new_trace_index + 1)  # Stop at max trades
+                new_trace_index = min(num_traces, new_trace_index + 1)
 
             if not future_df.empty:
                 fig = get_candlestick_plot(ticket, future_df, performance_df, current_trace_index=new_trace_index)
@@ -134,7 +133,6 @@ def register_display_callbacks(app):
                         ], style={'width': '100%'})
                     ])
 
-
                 content_1 = html.Div([
                     html.H2(f'{ticket} Futures Data', className='text-xl font-semibold mb-4'),
                     html.Div(future_plot, style={'width': '100%'}),
@@ -143,11 +141,9 @@ def register_display_callbacks(app):
                 ], style={'display': 'block', 'maxWidth': '100%', 'overflowX': 'auto'})
             return [content_1, content_2, new_trace_index]
 
-        # Handle tab switch
         if trigger_id == 'tabs':
             return [default_content, content_2, new_trace_index]
 
-        # Handle data-store-1 update
         if trigger_id == 'data-store-1' and data_store_1:
             ticket = data_store_1.get('ticket', 'Unknown')
             performance_df = pd.DataFrame(data_store_1['performance'])
@@ -227,14 +223,86 @@ def register_display_callbacks(app):
             ], style={'display': 'block', 'maxWidth': '100%', 'overflowX': 'auto'})
             return [content_1, content_2, new_trace_index]
 
-        # Handle data-store-2 update
         if trigger_id == 'data-store-2' and data_store_2:
             ticket = data_store_2.get('ticket', 'Unknown')
             analysis = data_store_2.get('analysis', 'Unknown')
-            content_2 = html.Div([
-                html.H2(f'{ticket} - {analysis} Analysis', className='text-xl font-semibold mb-4'),
-                html.P('Analysis content to be implemented later.', className='text-gray-500')
-            ])
+            performance_df = pd.DataFrame(data_store_2.get('performance', []))
+            
+            content_2 = html.P('No analysis selected.', className='text-gray-500')
+            if analysis in ['PnL Growth', 'Drawdown'] and not performance_df.empty:
+                granularity = data_store_2.get('granularity', DEFAULT_GRANULARITY)
+                granularity_label = {'1D': 'Daily', '1W-MON': 'Weekly', '1M': 'Monthly'}.get(granularity, granularity)
+                if granularity not in ['1D', '1W-MON', '1M']:
+                    content_2 = html.P('Invalid granularity selected.', className='text-red-500')
+                else:
+                    try:
+                        if analysis == 'PnL Growth':
+                            result = pnl_growth(performance_df, granularity=granularity)
+                            y_col = 'NetPnL'
+                            y_title = 'Net PnL ($)'
+                            chart_title = f'{ticket} - PnL Growth ({granularity_label})'
+                            line_color = 'blue'
+                        else:  # Drawdown
+                            result = drawdown(performance_df, granularity=granularity)
+                            y_col = 'Drawdown'
+                            y_title = 'Drawdown ($)'
+                            chart_title = f'{ticket} - Drawdown ({granularity_label})'
+                            line_color = 'red'
+
+                        if result.empty:
+                            content_2 = html.P('No data available for the selected period.', className='text-gray-500')
+                        else:
+                            fig = go.Figure()
+                            fig.add_trace(go.Scatter(
+                                x=result['Period'],
+                                y=result[y_col],
+                                mode='lines+markers',
+                                name=y_col,
+                                line=dict(color=line_color, width=2),
+                                marker=dict(size=8)
+                            ))
+                            fig.update_layout(
+                                title=dict(text=chart_title, x=0.5, xanchor='center', font=dict(size=20)),
+                                xaxis_title='Period',
+                                yaxis_title=y_title,
+                                template='plotly_white',
+                                height=500,
+                                xaxis=dict(showgrid=True, gridcolor='lightgray'),
+                                yaxis=dict(showgrid=True, gridcolor='lightgray'),
+                                hovermode='x unified'
+                            )
+                            content_2 = html.Div([
+                                html.H2(f'{ticket} - {analysis}', className='text-xl font-semibold mb-4'),
+                                dcc.Graph(id=f'{analysis.lower()}-chart', figure=fig, responsive=True, style={'width': '100%'})
+                            ])
+                    except Exception as e:
+                        content_2 = html.P(f'Error generating chart: {str(e)}', className='text-red-500')
+            
             return [content_1, content_2, new_trace_index]
 
         return [content_1, content_2, new_trace_index]
+
+    @app.callback(
+        Output('analysis-selector-2', 'options'),
+        Input('category-selector-2', 'value')
+    )
+    def update_analysis_options(selected_category):
+        if not selected_category:
+            return []
+        return [
+            {'label': analysis, 'value': analysis}
+            for analysis, config in ANALYSIS_DROPDOWN.items()
+            if config['category'] == selected_category
+        ]
+
+    @app.callback(
+        [
+            Output('granularity-selector-2', 'style'),
+            Output('granularity-label-2', 'style')
+        ],
+        Input('category-selector-2', 'value')
+    )
+    def toggle_granularity_visibility(category):
+        if category == 'Period':
+            return [{'display': 'block'}, {'display': 'block'}]
+        return [{'display': 'none'}, {'display': 'none'}]

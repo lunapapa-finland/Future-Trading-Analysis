@@ -56,7 +56,7 @@ BASE_DIR = project_root
 # -----------------------------------
 DEBUG_FLAG = True  # Enable debug mode
 PORT = 8050  # Port number for the Dash server
-TIMEZONE = 'Europe/Helsinki'  # Timezone for date/time handling
+TIMEZONE = 'US/Central'  # Timezone for date/time handling
 LOGGING_PATH = BASE_DIR / 'log' / 'app.log'  # Path for logging
 
 # -----------------------------------
@@ -64,52 +64,50 @@ LOGGING_PATH = BASE_DIR / 'log' / 'app.log'  # Path for logging
 # -----------------------------------
 PERFORMANCE_DIR = BASE_DIR / 'data' / 'performance'
 FUTURE_DIR = BASE_DIR / 'data' / 'future' / 'dash_project'
-
 PERFORMANCE_CSV = str(PERFORMANCE_DIR / 'Combined_performance_for_dash_project.csv')
 MES_CSV = str(FUTURE_DIR / 'MES.csv')
 MNQ_CSV = str(FUTURE_DIR / 'MNQ.csv')
 MGC_CSV = str(FUTURE_DIR / 'MGC.csv')
 
+
 # -----------------------------------
-# Section 4: Dropdown Configurations
+# Section 4: Trading Behavior Settings
 # -----------------------------------
+
 DATA_SOURCE_DROPDOWN = {'MES': MES_CSV, 'MNQ': MNQ_CSV, 'MGC': MGC_CSV}
 DEFAULT_DATA_SOURCE = 'MES'
-
 CURRENT_DATE = date.today().strftime('%Y-%m-%d')  # e.g., '2025-05-19'
 
-GRANULARITY_DROPDOWN = {
-    'Daily': {'timedelta': '1D', 'label': 'Daily'},
-    'Weekly': {'timedelta': '7D', 'label': 'Weekly'},
-    'Monthly': {'timedelta': '30D', 'label': 'Monthly'},
-    'Quarterly': {'timedelta': '90D', 'label': 'Quarterly'},
-    'Yearly': {'timedelta': '365D', 'label': 'Yearly'},
-}
-DEFAULT_GRANULARITY = 'Monthly'
 
-ROLLING_WINDOW_DROPDOWN = {
-    '7 Days': {'days': 7, 'label': '7 Days'},
-    '30 Days': {'days': 30, 'label': '30 Days'},
-    '60 Days': {'days': 60, 'label': '60 Days'},
-    '90 Days': {'days': 90, 'label': '90 Days'},
-}
-DEFAULT_ROLLING_WINDOW = '30 Days'
 
 # -----------------------------------
 # Section 5: Analysis Configurations
 # -----------------------------------
-ANALYSIS_DROPDOWN = {
-    'Drawdown Analysis': {'category': 'Chopped', 'granularity': DEFAULT_GRANULARITY},
-    'Average Daily Return': {'category': 'Chopped', 'granularity': DEFAULT_GRANULARITY},
-    'Rolling Winning Rate': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW},
-    'Sharpe Ratio': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW, 'annualized': True, 'risk_free_rate': 0.02},
-    'Hourly Performance': {'category': 'Rolling', 'window': '7 Days'},
-    'Size and Risk Analysis': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW},
-    'PnL Distribution': {'category': 'Overall'},
-    'Trade Duration Analysis': {'category': 'Overall'},
-}
-DEFAULT_ANALYSIS = 'Rolling Winning Rate'
+DEFAULT_GRANULARITY = '1W-MON'  # Changed to fixed frequency
+DEFAULT_ROLLING_WINDOW = '7D'
+DEFAULT_ANALYSIS = 'Rolling Win Rate'
 
+GRANULARITY_OPTIONS = [
+    {'label': 'Daily', 'value': '1D'},
+    {'label': 'Weekly', 'value': '1W-MON'},  # Changed to fixed frequency
+    {'label': 'Monthly', 'value': '1M'}
+]
+WINDOW_OPTIONS = [
+    {'label': '7 Days', 'value': '7D'},
+    {'label': '14 Days', 'value': '14D'},
+    {'label': '30 Days', 'value': '30D'}
+]
+
+ANALYSIS_DROPDOWN = {
+    'Drawdown': {'category': 'Period', 'granularity': DEFAULT_GRANULARITY},
+    'PnL Growth': {'category': 'Period', 'granularity': DEFAULT_GRANULARITY},
+    'Rolling Win Rate': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW},
+    'Sharpe Ratio': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW, 'risk_free_rate': 0.02},
+    'Trade Efficiency': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW},
+    'Hourly Performance': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW},
+    'PnL Distribution': {'category': 'Overall'},
+    'Behavioral Patterns': {'category': 'Overall'}
+}
 # -----------------------------------
 # Section 6: Plot Settings
 # -----------------------------------

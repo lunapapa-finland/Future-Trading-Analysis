@@ -2,7 +2,7 @@
 CLASS_CONTAINER = 'container mx-auto p-4 bg-gray-50 min-h-screen'
 CLASS_TABS = 'mb-6'
 CLASS_CARD = 'mb-4'
-CLASS_FLEX = 'flex items-center space-x-2 mt-2'
+CLASS_FLEX = 'flex flex-wrap gap-4 mt-2 items-start'
 CLASS_LABEL = 'text-sm font-medium text-gray-700 mr-2'
 CLASS_DROPDOWN = 'w-48'
 CLASS_DATEPICKER = 'w-32'

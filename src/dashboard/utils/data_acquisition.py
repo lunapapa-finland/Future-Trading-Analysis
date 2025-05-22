@@ -81,8 +81,8 @@ def validate_data(df, day):
     except Exception as e:
         logging.error(f"Timezone conversion error for {day}: {e}")
         return pd.DataFrame()
-    rth_start = pd.to_datetime(day.strftime('%Y-%m-%d') + ' 16:30:00').tz_localize(TIMEZONE)
-    rth_end = pd.to_datetime(day.strftime('%Y-%m-%d') + ' 23:10:00').tz_localize(TIMEZONE)
+    rth_start = pd.to_datetime(day.strftime('%Y-%m-%d') + ' 08:30:00').tz_localize(TIMEZONE)
+    rth_end = pd.to_datetime(day.strftime('%Y-%m-%d') + ' 15:10:00').tz_localize(TIMEZONE)
     rth_data = df[(df.index >= rth_start) & (df.index <= rth_end)]
     expected_rows = 81
     actual_rows = len(rth_data)
