@@ -29,7 +29,7 @@ def register_data_callbacks(app):
         [
             State('ticket-selector-1', 'value'),
             State('start-date-picker-1', 'date'),
-            State('start-date-picker-1', 'date'),
+            State('end-date-picker-1', 'date'),
             State('ticket-selector-2', 'value'),
             State('category-selector-2', 'value'),
             State('analysis-selector-2', 'value'),

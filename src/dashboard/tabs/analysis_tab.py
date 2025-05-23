@@ -11,7 +11,7 @@ class AnalysisTab(BaseTab):
     def get_criteria_section(self):
         categories = sorted(set(config['category'] for config in ANALYSIS_DROPDOWN.values()))
         category_options = [
-            {'label': 'Period-Based' if cat == 'Period' else cat.replace('_', ' ').title(), 'value': cat}
+            {'label': cat, 'value': cat}
             for cat in categories
         ]
 

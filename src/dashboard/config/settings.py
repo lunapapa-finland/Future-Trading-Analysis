@@ -84,7 +84,7 @@ CURRENT_DATE = date.today().strftime('%Y-%m-%d')  # e.g., '2025-05-19'
 # Section 5: Analysis Configurations
 # -----------------------------------
 DEFAULT_GRANULARITY = '1W-MON'  # Changed to fixed frequency
-DEFAULT_ROLLING_WINDOW = '7D'
+DEFAULT_ROLLING_WINDOW = 7
 DEFAULT_ANALYSIS = 'Rolling Win Rate'
 
 GRANULARITY_OPTIONS = [
@@ -93,16 +93,16 @@ GRANULARITY_OPTIONS = [
     {'label': 'Monthly', 'value': '1M'}
 ]
 WINDOW_OPTIONS = [
-    {'label': '7 Days', 'value': '7D'},
-    {'label': '14 Days', 'value': '14D'},
-    {'label': '30 Days', 'value': '30D'}
+    {'label': '7 Days', 'value': 7},
+    {'label': '14 Days', 'value': 14},
+    {'label': '30 Days', 'value': 30}
 ]
 
 ANALYSIS_DROPDOWN = {
     'Drawdown': {'category': 'Period', 'granularity': DEFAULT_GRANULARITY},
     'PnL Growth': {'category': 'Period', 'granularity': DEFAULT_GRANULARITY},
     'Rolling Win Rate': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW},
-    'Sharpe Ratio': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW, 'risk_free_rate': 0.02},
+    'Sharpe Ratio': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW, 'risk_free_rate': 0},
     'Trade Efficiency': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW},
     'Hourly Performance': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW},
     'PnL Distribution': {'category': 'Overall'},
