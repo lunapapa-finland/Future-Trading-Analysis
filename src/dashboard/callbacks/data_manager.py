@@ -34,6 +34,7 @@ def register_data_callbacks(app):
             State('category-selector-2', 'value'),
             State('analysis-selector-2', 'value'),
             State('granularity-selector-2', 'value'),
+            State('window-selector-2', 'value'),  # New state for window
             State('start-date-picker-2', 'date'),
             State('end-date-picker-2', 'date'),
         ],
@@ -42,7 +43,7 @@ def register_data_callbacks(app):
     def manage_data_and_reset(
         confirm_1_clicks, confirm_2_clicks, active_tab,
         ticket_1, start_date_1, end_date_1,
-        ticket_2, category_2, analysis_2, granularity_2, start_date_2, end_date_2
+        ticket_2, category_2, analysis_2, granularity_2, window_2, start_date_2, end_date_2
     ):
         ctx = callback_context
         if not ctx.triggered:
@@ -128,6 +129,7 @@ def register_data_callbacks(app):
                     'ticket': ticket_2,
                     'analysis': analysis_2,
                     'granularity': granularity_2 if category_2 == 'Period' else None,
+                    'window': window_2 if category_2 == 'Rolling' else None,  # Add window only for Rolling
                     'start_date': start_date_2.isoformat(),
                     'end_date': end_date_2.isoformat(),
                 }

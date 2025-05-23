@@ -1,5 +1,5 @@
 from dash import html, dcc
-from dashboard.config.settings import DATA_SOURCE_DROPDOWN, ANALYSIS_DROPDOWN, DEFAULT_DATA_SOURCE, CURRENT_DATE, DEFAULT_ANALYSIS, GRANULARITY_OPTIONS, DEFAULT_GRANULARITY
+from dashboard.config.settings import DATA_SOURCE_DROPDOWN, ANALYSIS_DROPDOWN, DEFAULT_DATA_SOURCE, CURRENT_DATE, DEFAULT_ROLLING_WINDOW, DEFAULT_ANALYSIS, GRANULARITY_OPTIONS, DEFAULT_GRANULARITY, WINDOW_OPTIONS
 import dash_bootstrap_components as dbc
 from dashboard.tabs.base_tab import BaseTab
 from dashboard.styles.styles import CLASS_CARD, CLASS_FLEX, CLASS_LABEL, CLASS_DROPDOWN, CLASS_DATEPICKER, CLASS_BUTTON, CLASS_ERROR
@@ -49,6 +49,15 @@ class AnalysisTab(BaseTab):
                         placeholder='Granularity',
                         className=CLASS_DROPDOWN,
                         value=DEFAULT_GRANULARITY,
+                        style={'display': 'none'}
+                    ),
+                    html.Label('Window', className=CLASS_LABEL, id='window-label-2', style={'display': 'none'}),
+                    dcc.Dropdown(
+                        id='window-selector-2',
+                        options=WINDOW_OPTIONS,
+                        placeholder='Window Size',
+                        className=CLASS_DROPDOWN,
+                        value=DEFAULT_ROLLING_WINDOW,
                         style={'display': 'none'}
                     ),
                     html.Label('Start Date', className=CLASS_LABEL),

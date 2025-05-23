@@ -356,7 +356,7 @@ def register_display_callbacks(app):
                             content_2 = html.P(f'Unsupported Overall analysis: {analysis}', className='text-gray-500')
                     
                     elif category == 'Rolling':
-                        window = ANALYSIS_DROPDOWN[analysis].get('window', DEFAULT_ROLLING_WINDOW)
+                        window = data_store_2.get('window', DEFAULT_ROLLING_WINDOW)  # Use window from data_store_2
                         
                         if analysis == 'Rolling Win Rate':
                             result = rolling_win_rate(performance_df, window=window)
@@ -571,5 +571,17 @@ def register_display_callbacks(app):
     )
     def toggle_granularity_visibility(category):
         if category == 'Period':
+            return [{'display': 'block'}, {'display': 'block'}]
+        return [{'display': 'none'}, {'display': 'none'}]
+
+    @app.callback(
+        [
+            Output('window-selector-2', 'style'),
+            Output('window-label-2', 'style')
+        ],
+        Input('category-selector-2', 'value')
+    )
+    def toggle_window_visibility(category):
+        if category == 'Rolling':
             return [{'display': 'block'}, {'display': 'block'}]
         return [{'display': 'none'}, {'display': 'none'}]
