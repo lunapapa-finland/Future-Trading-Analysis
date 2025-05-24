@@ -93,9 +93,9 @@ GRANULARITY_OPTIONS = [
     {'label': 'Monthly', 'value': '1M'}
 ]
 WINDOW_OPTIONS = [
-    {'label': '7 Days', 'value': 7},
-    {'label': '14 Days', 'value': 14},
-    {'label': '30 Days', 'value': 30}
+    {'label': '7', 'value': 7},
+    {'label': '14', 'value': 14},
+    {'label': '30', 'value': 30}
 ]
 
 ANALYSIS_DROPDOWN = {

@@ -3,7 +3,13 @@ channels:
   - defaults
   - conda-forge  
 dependencies:
-  - python=3.9.6 
+  - python=3.9.6
+  - pandas
+  - pytz
+  - numpy
+  - matplotlib
+  - scipy
+  - pandas_market_calendars
   - ipykernel
   - pip
   - pip:
@@ -20,3 +26,8 @@ dependencies:
       - scipy
       - dash
       - papaparse
+      - dash-bootstrap-components
+      - flask
+      - werkzeug
+      - opencv-python
+      - cookiecutter
