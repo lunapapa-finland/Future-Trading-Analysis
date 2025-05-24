@@ -3,12 +3,23 @@ import plotly.graph_objects as go
 from dashboard.config.settings import TIMESTEP, TIMEZONE
 import pytz
 def get_candlestick_plot(ticket, future_df, performance_df, current_trace_index=0):
-    future_df['Datetime'] = pd.to_datetime(future_df['Datetime'])
+    # Validate input
+    if future_df.empty:
+        return go.Figure()
+
+    # Ensure Datetime is timezone-aware datetime64
+    if not pd.api.types.is_datetime64_any_dtype(future_df['Datetime']):
+        try:
+            future_df['Datetime'] = pd.to_datetime(future_df['Datetime'], utc=True, errors='raise').dt.tz_convert(TIMEZONE)
+        except Exception as e:
+            raise ValueError(f"Invalid Datetime format in future_df: {str(e)}")
 
     # Verify RTH data (8:30 AM to 3:10 PM CT, Monday to Friday)
-    is_rth = (future_df['Datetime'].dt.time >= pd.Timestamp('08:30:00').time()) & \
-             (future_df['Datetime'].dt.time <= pd.Timestamp('15:10:00').time()) & \
-             (future_df['Datetime'].dt.weekday < 5)
+    is_rth = (
+        (future_df['Datetime'].dt.time >= pd.Timestamp('08:30:00').time()) & 
+        (future_df['Datetime'].dt.time <= pd.Timestamp('15:10:00').time()) & 
+        (future_df['Datetime'].dt.weekday < 5)
+    )
     if not is_rth.all():
         raise ValueError("future_df contains non-RTH data")
 
@@ -17,9 +28,9 @@ def get_candlestick_plot(ticket, future_df, performance_df, current_trace_index=
 
     # Create per-day index (1 to 80) for hover text (6h40m = 80 bars at 5min)
     future_df['date'] = future_df['Datetime'].dt.date
-    future_df['day_index'] = future_df.groupby('date').cumcount() + 1  # Resets to 1 per day
+    future_df['day_index'] = future_df.groupby('date').cumcount() + 1
 
-    # Enhanced hover text with date, time (CT), and per-day index
+    # Enhanced hover text
     future_df['hover_text'] = future_df['Datetime'].dt.strftime('%Y-%m-%d %H:%M:%S')
     future_df['formatted_hover'] = (
         'Date: ' + future_df['Datetime'].dt.strftime('%Y-%m-%d') + '<br>' +
@@ -42,23 +53,22 @@ def get_candlestick_plot(ticket, future_df, performance_df, current_trace_index=
             name='OHLC',
             text=future_df['formatted_hover'],
             hoverinfo='text',
-            hoverlabel=dict(
-                bgcolor='white',
-                font_size=12,
-                font_family='Arial'
-            )
+            hoverlabel=dict(bgcolor='white', font_size=12, font_family='Arial')
         )
     ])
 
     # Add trade traces from performance_df
     if not performance_df.empty:
-        performance_df['EnteredAt'] = pd.to_datetime(performance_df['EnteredAt'])
-        performance_df['ExitedAt'] = pd.to_datetime(performance_df['ExitedAt'])
-        performance_df['EnteredAt_5min'] = performance_df['EnteredAt'].dt.floor('5min')
-        performance_df['ExitedAt_5min'] = performance_df['ExitedAt'].dt.floor('5min')
+        # Ensure datetime columns are timezone-aware
+        try:
+            performance_df['EnteredAt'] = pd.to_datetime(performance_df['EnteredAt'], utc=True, errors='raise').dt.tz_convert(TIMEZONE)
+            performance_df['ExitedAt'] = pd.to_datetime(performance_df['ExitedAt'], utc=True, errors='raise').dt.tz_convert(TIMEZONE)
+            performance_df['EnteredAt_5min'] = performance_df['EnteredAt'].dt.floor('5min')
+            performance_df['ExitedAt_5min'] = performance_df['ExitedAt'].dt.floor('5min')
+        except Exception as e:
+            raise ValueError(f"Invalid datetime format in performance_df: {str(e)}")
 
         def map_to_x_index(trade_day, day_of_week, time_5min):
-            # Assume inputs: trade_day (date), day_of_week (str), time_5min (pd.Timestamp in America/Chicago)
             trade_day = pd.Timestamp(trade_day).date()
             time_5min = pd.Timestamp(time_5min)
 
@@ -67,12 +77,11 @@ def get_candlestick_plot(ticket, future_df, performance_df, current_trace_index=
                 days_to_add = 2 if day_of_week == 'Saturday' else 1
                 trade_day = (pd.Timestamp(trade_day) + pd.Timedelta(days=days_to_add)).date()
 
-            # Check if RTH (8:30 AM to 3:10 PM CT)
+            # Check if RTH
             is_rth = (time_5min.time() >= pd.Timestamp('08:30:00').time()) and \
                      (time_5min.time() <= pd.Timestamp('15:10:00').time())
 
             if is_rth:
-                # Map to exact bar for RTH trades
                 time_idx = future_df.index[
                     (future_df['date'] == trade_day) &
                     (future_df['Datetime'].dt.floor('5min') == time_5min.floor('5min'))
@@ -80,24 +89,20 @@ def get_candlestick_plot(ticket, future_df, performance_df, current_trace_index=
                 if time_idx:
                     return future_df.loc[time_idx[0], 'x_index']
 
-            # Non-RTH: Map to first or last bar of trade_day
+            # Non-RTH: Map to first or last bar
             rth_start = pd.Timestamp(trade_day).tz_localize(TIMEZONE).replace(hour=8, minute=30)
             rth_end = pd.Timestamp(trade_day).tz_localize(TIMEZONE).replace(hour=15, minute=10)
 
             if time_5min < rth_start:
-                # Before 8:30 AM CT: First bar (8:30 AM CT)
                 time_idx = future_df.index[future_df['Datetime'].dt.floor('5min') == rth_start].tolist()
             else:
-                # After 3:10 PM CT: Last bar (3:10 PM CT)
                 time_idx = future_df.index[future_df['Datetime'].dt.floor('5min') == rth_end].tolist()
 
             if time_idx:
                 return future_df.loc[time_idx[0], 'x_index']
-
-            # Fallback: First x_index
             return future_df['x_index'].iloc[0]
 
-        # Apply mapping using TradeDay, DayOfWeek, and time
+        # Apply mapping
         performance_df['x_entry'] = performance_df.apply(
             lambda row: map_to_x_index(row['TradeDay'], row['DayOfWeek'], row['EnteredAt_5min']), axis=1
         )
@@ -124,12 +129,7 @@ def get_candlestick_plot(ticket, future_df, performance_df, current_trace_index=
                 y=[row['EntryPrice'], row['ExitPrice']],
                 mode='lines+markers',
                 line=dict(color=color, width=2),
-                marker=dict(
-                    size=8,
-                    color=color,
-                    symbol='circle',
-                    line=dict(width=1, color='black')
-                ),
+                marker=dict(size=8, color=color, symbol='circle', line=dict(width=1, color='black')),
                 name=f'Trade {idx + 1}',
                 text=hover_text,
                 hoverinfo='text',
@@ -150,12 +150,7 @@ def get_candlestick_plot(ticket, future_df, performance_df, current_trace_index=
         title=f'{ticket} Futures Candlestick (Chicago Time)',
         xaxis_title='Trading Session',
         yaxis_title='Price',
-        xaxis=dict(
-            tickvals=tickvals,
-            ticktext=ticktext,
-            tickangle=45,
-            rangeslider_visible=False
-        ),
+        xaxis=dict(tickvals=tickvals, ticktext=ticktext, tickangle=45, rangeslider_visible=False),
         yaxis=dict(autorange=True),
         width=1280,
         height=1280,
