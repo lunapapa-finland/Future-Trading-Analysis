@@ -107,7 +107,9 @@ ANALYSIS_DROPDOWN = {
     'Trade Efficiency': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW},
     'Hourly Performance': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW},
     'PnL Distribution': {'category': 'Overall'},
-    'Behavioral Patterns': {'category': 'Overall'}
+    'Behavioral Patterns': {'category': 'Overall'},
+    'Overtrading Detection': {'category': 'Overall'},
+    'Kelly Criterion': {'category': 'Overall'}  # New addition
 }
 # -----------------------------------
 # Section 6: Plot Settings

@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from dashboard.analysis.plots import *
 from dashboard.config.settings import ANALYSIS_DROPDOWN, DEFAULT_GRANULARITY, GRANULARITY_OPTIONS, DEFAULT_ROLLING_WINDOW
-from dashboard.analysis.compute import pnl_growth, drawdown, pnl_distribution, behavioral_patterns, rolling_win_rate, sharpe_ratio, trade_efficiency, hourly_performance, performance_envelope
+from dashboard.analysis.compute import pnl_growth, drawdown, pnl_distribution, behavioral_patterns, rolling_win_rate, sharpe_ratio, trade_efficiency, hourly_performance, performance_envelope, overtrading_detection, kelly_criterion
 
 def register_display_callbacks(app):
     app.layout.children.insert(0, dcc.Store(id='current-trace-index-1', data=0))
@@ -424,35 +424,147 @@ def register_display_callbacks(app):
                             if result.empty or 'TradeCount' not in result or 'AvgPnL' not in result:
                                 content_2 = html.P('No data available for the selected period.', className='text-gray-500')
                             else:
-                                fig = go.Figure()
-                                fig.add_trace(go.Bar(
-                                    x=result['Hour'],
-                                    y=result['TradeCount'],
-                                    name='Trade Count',
-                                    marker=dict(color='teal'),
-                                    opacity=0.6
-                                ))
-                                fig.add_trace(go.Scatter(
-                                    x=result['Hour'],
-                                    y=result['AvgPnL'],
-                                    name='Average PnL ($)',
-                                    line=dict(color='orange', width=2),
-                                    yaxis='y2'
+                                # Pivot the data for heatmap: Hour as X, DayOfWeek as Y, AvgPnL as color
+                                pivot_data = result.pivot(index='DayOfWeek', columns='Hour', values='AvgPnL').fillna(0)
+                                
+                                # Dynamically determine zmin and zmax based on data
+                                zmin = pivot_data.values.min()
+                                zmax = pivot_data.values.max()
+                                z_range = max(abs(zmin), abs(zmax))
+                                zmin = -z_range if zmin < 0 else -10
+                                zmax = z_range if zmax > 0 else 10
+                                
+                                fig = go.Figure(data=go.Heatmap(
+                                    z=pivot_data.values,
+                                    x=pivot_data.columns,
+                                    y=pivot_data.index,
+                                    colorscale='RdBu_r',  # Reversed Red-Blue for better contrast
+                                    zmin=zmin,  # Dynamic min based on data
+                                    zmax=zmax,  # Dynamic max based on data
+                                    colorbar=dict(title='Avg PnL per Contract ($)', tickformat='.1f')
                                 ))
                                 fig.update_layout(
-                                    title=dict(text=chart_title, x=0.5, xanchor='center', font=dict(size=20)),
+                                    title=dict(text=chart_title, x=0.5, xanchor='center', font=dict(size=24)),
                                     xaxis_title='Hour of Day',
-                                    yaxis=dict(title='Number of Trades', showgrid=True, gridcolor='lightgray'),
-                                    yaxis2=dict(title='Average PnL ($)', overlaying='y', side='right', showgrid=False),
+                                    yaxis_title='Day of Week',
+                                    yaxis=dict(categoryorder='array', categoryarray=['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+                                            tickangle=0, tickfont=dict(size=12)),  # Rotate y-axis labels if needed
                                     template='plotly_white',
-                                    height=500,
-                                    xaxis=dict(showgrid=True, gridcolor='lightgray', tickmode='linear', dtick=1),
-                                    hovermode='x unified',
-                                    showlegend=True
+                                    height=600,  # Increased height for better visibility
+                                    margin=dict(l=50, r=50, t=80, b=80),  # Adjust margins
+                                    xaxis=dict(showgrid=True, gridcolor='lightgray', tickmode='linear', dtick=1, tickfont=dict(size=12)),
+                                    hovermode='closest',
+                                    showlegend=False
                                 )
                                 content_2 = html.Div([
                                     html.H2(f'{ticket} - {analysis}', className='text-xl font-semibold mb-4'),
                                     dcc.Graph(id='behavioral-patterns-chart', figure=fig, responsive=True, style={'width': '100%'})
+                                ])
+                        elif analysis == 'Overtrading Detection':
+                            result = overtrading_detection(performance_df)
+                            chart_title = f'{ticket} - Overtrading Detection'
+                            if result.empty or 'TradesPerDay' not in result or 'DailyPnL' not in result:
+                                content_2 = html.P('No data available for the selected period.', className='text-gray-500')
+                            else:
+                                # Scatter Plot: Trades per Day vs Daily PnL
+                                scatter_fig = go.Figure()
+                                scatter_fig.add_trace(go.Scatter(
+                                    x=result['TradesPerDay'],
+                                    y=result['DailyPnL'],
+                                    mode='markers',
+                                    marker=dict(size=10, color=result['DailyPnL'], colorscale='RdBu_r', showscale=True),
+                                    text=result['TradeDay'].dt.strftime('%Y-%m-%d'),
+                                    hovertemplate='Date: %{text}<br>Trades: %{x}<br>PnL: %{y:.2f}<extra></extra>'
+                                ))
+                                scatter_fig.update_layout(
+                                    title=dict(text=f'{chart_title} (Scatter)', x=0.5, xanchor='center', font=dict(size=24)),
+                                    xaxis_title='Trades per Day',
+                                    yaxis_title='Daily PnL ($)',
+                                    template='plotly_white',
+                                    height=400,
+                                    margin=dict(l=50, r=50, t=80, b=80),
+                                    xaxis=dict(showgrid=True, gridcolor='lightgray'),
+                                    yaxis=dict(showgrid=True, gridcolor='lightgray'),
+                                    hovermode='closest'
+                                )
+                                
+                                # Line Chart: Trades per Day and Daily PnL over time
+                                line_fig = go.Figure()
+                                line_fig.add_trace(go.Scatter(
+                                    x=result['TradeDay'],
+                                    y=result['TradesPerDay'],
+                                    mode='lines+markers',
+                                    name='Trades per Day',
+                                    line=dict(color='blue'),
+                                    hovertemplate='Date: %{x|%Y-%m-%d}<br>Trades: %{y}<extra></extra>'
+                                ))
+                                line_fig.add_trace(go.Scatter(
+                                    x=result['TradeDay'],
+                                    y=result['DailyPnL'],
+                                    mode='lines+markers',
+                                    name='Daily PnL ($)',
+                                    line=dict(color='red'),
+                                    yaxis='y2',
+                                    hovertemplate='Date: %{x|%Y-%m-%d}<br>PnL: %{y:.2f}<extra></extra>'
+                                ))
+                                line_fig.update_layout(
+                                    title=dict(text=f'{chart_title} (Over Time)', x=0.5, xanchor='center', font=dict(size=24)),
+                                    xaxis_title='Date',
+                                    yaxis=dict(
+                                        title=dict(text='Trades per Day', font=dict(color='blue')),
+                                        tickfont=dict(color='blue')
+                                    ),
+                                    yaxis2=dict(
+                                        title=dict(text='Daily PnL ($)', font=dict(color='red')),
+                                        tickfont=dict(color='red'),
+                                        overlaying='y',
+                                        side='right'
+                                    ),
+                                    template='plotly_white',
+                                    height=400,
+                                    margin=dict(l=50, r=50, t=80, b=80),
+                                    xaxis=dict(showgrid=True, gridcolor='lightgray'),
+                                    hovermode='x unified',  # Fixed: Changed 'x_unified' to 'x unified'
+                                    legend=dict(x=0, y=1.1, orientation='h')
+                                )
+                                
+                                content_2 = html.Div([
+                                    html.H2(f'{ticket} - {analysis}', className='text-xl font-semibold mb-4'),
+                                    dcc.Graph(id='overtrading-scatter', figure=scatter_fig, responsive=True, style={'width': '100%'}),
+                                    dcc.Graph(id='overtrading-line', figure=line_fig, responsive=True, style={'width': '100%'})
+                                ])
+                        elif analysis == 'Kelly Criterion':
+                            result = kelly_criterion(performance_df)
+                            chart_title = f'{ticket} - Kelly Criterion (Category: {result["metadata"]["Kelly Criterion"]["category"]})'
+                            
+                            # Check if the DataFrame (inside "data") is empty or lacks 'KellyValue'
+                            if result["data"].empty or 'KellyValue' not in result["data"]:
+                                content_2 = html.P('No data available for the selected period.', className='text-gray-500')
+                            else:
+                                fig = go.Figure()
+                                fig.add_trace(go.Scatter(
+                                    x=result["data"]['TradeDay'],
+                                    y=result["data"]['KellyValue'],
+                                    mode='lines+markers',
+                                    name='Kelly Criterion',
+                                    line=dict(color='green'),
+                                    hovertemplate='Date: %{x|%Y-%m-%d}<br>Kelly Value: %{y:.2f}<extra></extra>'
+                                ))
+                                fig.update_layout(
+                                    title=dict(text=chart_title, x=0.5, xanchor='center', font=dict(size=24)),
+                                    xaxis_title='Date',
+                                    yaxis_title='Kelly Value',
+                                    template='plotly_white',
+                                    height=400,
+                                    margin=dict(l=50, r=50, t=80, b=80),
+                                    xaxis=dict(showgrid=True, gridcolor='lightgray'),
+                                    yaxis=dict(range=[-15, 15], showgrid=True, gridcolor='lightgray'),  # Kelly range updated to [-1, 1]
+                                    hovermode='x unified',
+                                    legend=dict(x=0, y=1.1, orientation='h')
+                                )
+                                content_2 = html.Div([
+                                    html.H2(f'{ticket} - {analysis}', className='text-xl font-semibold mb-4'),
+                                    dcc.Graph(id='kelly-criterion-chart', figure=fig, responsive=True, style={'width': '100%'})
                                 ])
                         else:
                             content_2 = html.P(f'Unsupported Overall analysis: {analysis}', className='text-gray-500')
@@ -637,6 +749,8 @@ def register_display_callbacks(app):
                                     html.H2(f'{ticket} - Hourly Performance Analysis (Window: {window} Hours)', className='text-xl font-semibold mb-4'),
                                     dcc.Graph(id='hourly-performance-chart', figure=fig, responsive=True, style={'width': '100%'})
                                 ])
+
+
                         
                         else:
                             content_2 = html.P(f'Unsupported Rolling analysis: {analysis}', className='text-gray-500')
