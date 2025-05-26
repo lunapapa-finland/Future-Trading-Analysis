@@ -101,6 +101,7 @@ WINDOW_OPTIONS = [
 ANALYSIS_DROPDOWN = {
     'Drawdown': {'category': 'Period', 'granularity': DEFAULT_GRANULARITY},
     'PnL Growth': {'category': 'Period', 'granularity': DEFAULT_GRANULARITY},
+    'Performance Envelope': {'category': 'Period', 'granularity': DEFAULT_GRANULARITY},
     'Rolling Win Rate': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW},
     'Sharpe Ratio': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW, 'risk_free_rate': 0.02},
     'Trade Efficiency': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW},

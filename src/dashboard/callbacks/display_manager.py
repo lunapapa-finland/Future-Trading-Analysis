@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from dashboard.analysis.plots import *
 from dashboard.config.settings import ANALYSIS_DROPDOWN, DEFAULT_GRANULARITY, GRANULARITY_OPTIONS, DEFAULT_ROLLING_WINDOW
-from dashboard.analysis.compute import pnl_growth, drawdown, pnl_distribution, behavioral_patterns, rolling_win_rate, sharpe_ratio, trade_efficiency, hourly_performance
+from dashboard.analysis.compute import pnl_growth, drawdown, pnl_distribution, behavioral_patterns, rolling_win_rate, sharpe_ratio, trade_efficiency, hourly_performance, performance_envelope
 
 def register_display_callbacks(app):
     app.layout.children.insert(0, dcc.Store(id='current-trace-index-1', data=0))
@@ -248,43 +248,146 @@ def register_display_callbacks(app):
                             y_title = 'Net PnL ($)'
                             chart_title = f'{ticket} - PnL Growth ({granularity_label})'
                             line_color = 'blue'
+                            # Line chart for PnL Growth
+                            if result.empty:
+                                content_2 = html.P('No data available for the selected period.', className='text-gray-500')
+                            else:
+                                fig = go.Figure()
+                                fig.add_trace(go.Scatter(
+                                    x=result['Period'],
+                                    y=result[y_col],
+                                    mode='lines+markers',
+                                    name=y_col,
+                                    line=dict(color=line_color, width=2),
+                                    marker=dict(size=8)
+                                ))
+                                fig.update_layout(
+                                    title=dict(text=chart_title, x=0.5, xanchor='center', font=dict(size=20)),
+                                    xaxis_title='Period',
+                                    yaxis_title=y_title,
+                                    template='plotly_white',
+                                    height=500,
+                                    xaxis=dict(showgrid=True, gridcolor='lightgray'),
+                                    yaxis=dict(showgrid=True, gridcolor='lightgray'),
+                                    hovermode='x unified'
+                                )
+                                content_2 = html.Div([
+                                    html.H2(f'{ticket} - {analysis}', className='text-xl font-semibold mb-4'),
+                                    dcc.Graph(id=f'{analysis.lower()}-chart', figure=fig, responsive=True, style={'width': '100%'})
+                                ])
+
                         elif analysis == 'Drawdown':
                             result = drawdown(performance_df, granularity=granularity)
                             y_col = 'Drawdown'
                             y_title = 'Drawdown ($)'
                             chart_title = f'{ticket} - Drawdown ({granularity_label})'
                             line_color = 'red'
-                        else:
-                            content_2 = html.P(f'Unsupported Period analysis: {analysis}', className='text-red-500')
-                            return [content_1, content_2, new_trace_index]
+                            # Line chart for Drawdown
+                            if result.empty:
+                                content_2 = html.P('No data available for the selected period.', className='text-gray-500')
+                            else:
+                                fig = go.Figure()
+                                fig.add_trace(go.Scatter(
+                                    x=result['Period'],
+                                    y=result[y_col],
+                                    mode='lines+markers',
+                                    name=y_col,
+                                    line=dict(color=line_color, width=2),
+                                    marker=dict(size=8)
+                                ))
+                                fig.update_layout(
+                                    title=dict(text=chart_title, x=0.5, xanchor='center', font=dict(size=20)),
+                                    xaxis_title='Period',
+                                    yaxis_title=y_title,
+                                    template='plotly_white',
+                                    height=500,
+                                    xaxis=dict(showgrid=True, gridcolor='lightgray'),
+                                    yaxis=dict(showgrid=True, gridcolor='lightgray'),
+                                    hovermode='x unified'
+                                )
+                                content_2 = html.Div([
+                                    html.H2(f'{ticket} - {analysis}', className='text-xl font-semibold mb-4'),
+                                    dcc.Graph(id=f'{analysis.lower()}-chart', figure=fig, responsive=True, style={'width': '100%'})
+                                ])
 
-                        if result.empty:
-                            content_2 = html.P('No data available for the selected period.', className='text-gray-500')
-                        else:
+                        elif analysis == 'Performance Envelope':
+                            theoretical_data, actual_data = performance_envelope(performance_df, granularity=granularity)
+                            chart_title = f'{ticket} - Performance Envelope ({granularity_label})'
                             fig = go.Figure()
+
+                            # Theoretical Envelope Curve
                             fig.add_trace(go.Scatter(
-                                x=result['Period'],
-                                y=result[y_col],
-                                mode='lines+markers',
-                                name=y_col,
-                                line=dict(color=line_color, width=2),
-                                marker=dict(size=8)
+                                x=theoretical_data['WinningRate'],
+                                y=theoretical_data['TheoreticalWinToLoss'],
+                                mode='lines',
+                                name='Theoretical Envelope',
+                                line=dict(color='green', width=2),
+                                hovertemplate='Winning Rate: %{x:.1f}%<br>Theoretical Avg Win / Avg Loss: %{y:.2f}'
                             ))
+
+                            # Actual Data Points
+                            if not actual_data.empty:
+                                # Split points into those above and below/equal to the theoretical curve
+                                above_theoretical = actual_data[actual_data['AboveTheoretical']]
+                                below_or_equal = actual_data[~actual_data['AboveTheoretical']]
+
+                                if not below_or_equal.empty:
+                                    fig.add_trace(go.Scatter(
+                                        x=below_or_equal['WinningRate'],
+                                        y=below_or_equal['AvgWinToAvgLoss'],
+                                        mode='markers',
+                                        name='Actual (Below/Equal)',
+                                        marker=dict(color='red', size=10),
+                                        hovertemplate=(
+                                            'Winning Rate: %{x:.1f}%<br>'
+                                            'Avg Win / Avg Loss: %{y:.2f}<br>'
+                                            'Start at: %{customdata[0]}<br>'
+                                            'End at: %{customdata[1]}'
+                                        ),
+                                        customdata=below_or_equal[['PeriodStart', 'PeriodEnd']].values
+                                    ))
+
+                                if not above_theoretical.empty:
+                                    fig.add_trace(go.Scatter(
+                                        x=above_theoretical['WinningRate'],
+                                        y=above_theoretical['AvgWinToAvgLoss'],
+                                        mode='markers',
+                                        name='Actual (Above)',
+                                        marker=dict(color='green', size=10),
+                                        hovertemplate=(
+                                            'Winning Rate: %{x:.1f}%<br>'
+                                            'Avg Win / Avg Loss: %{y:.2f}<br>'
+                                            'Start at: %{customdata[0]}<br>'
+                                            'End at: %{customdata[1]}'
+                                        ),
+                                        customdata=above_theoretical[['PeriodStart', 'PeriodEnd']].values
+                                    ))
+
+                            # Dynamically set y-axis range based on data
+                            y_max = max(theoretical_data['TheoreticalWinToLoss'].max(), actual_data['AvgWinToAvgLoss'].max()) if not actual_data.empty else 20
+                            y_max = max(20, y_max + 2)  # Ensure at least 20 with some padding
+                            print(f"Dynamic y_max set to: {y_max}")  # Debug: Verify y-axis range
+
                             fig.update_layout(
                                 title=dict(text=chart_title, x=0.5, xanchor='center', font=dict(size=20)),
-                                xaxis_title='Period',
-                                yaxis_title=y_title,
+                                xaxis_title='Winning Rate (%)',
+                                yaxis_title='Avg Win / Avg Loss',
                                 template='plotly_white',
                                 height=500,
-                                xaxis=dict(showgrid=True, gridcolor='lightgray'),
-                                yaxis=dict(showgrid=True, gridcolor='lightgray'),
-                                hovermode='x unified'
+                                xaxis=dict(showgrid=True, gridcolor='lightgray', range=[0, 100]),
+                                yaxis=dict(showgrid=True, gridcolor='lightgray', range=[0, y_max]),
+                                hovermode='closest',
+                                showlegend=True
                             )
+
                             content_2 = html.Div([
                                 html.H2(f'{ticket} - {analysis}', className='text-xl font-semibold mb-4'),
                                 dcc.Graph(id=f'{analysis.lower()}-chart', figure=fig, responsive=True, style={'width': '100%'})
                             ])
 
+                        else:
+                            content_2 = html.P(f'Unsupported Period analysis: {analysis}', className='text-red-500')
+                            return [content_1, content_2, new_trace_index]
                     elif category == 'Overall':
                         if analysis == 'PnL Distribution':
                             result = pnl_distribution(performance_df)

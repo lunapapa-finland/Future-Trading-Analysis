@@ -250,3 +250,66 @@ def hourly_performance(performance_df, window=DEFAULT_ROLLING_WINDOW):
         return pd.DataFrame(hourly_data)
     except Exception as e:
         raise ValueError(f"Failed to compute hourly performance: {str(e)}")
+    
+
+def performance_envelope(performance_df, granularity=DEFAULT_GRANULARITY):
+    # Part 1: Theoretical Envelope Curve (independent of trades and granularity)
+    winning_rates = np.arange(5, 86, 1)  # Extended to 5% to get y up to 19
+    theoretical_data = pd.DataFrame({'WinningRate': winning_rates})
+    theoretical_data['TheoreticalWinToLoss'] = (100 - theoretical_data['WinningRate']) / theoretical_data['WinningRate'].replace(0, 1e-10)
+    print(f"Theoretical max y-value: {theoretical_data['TheoreticalWinToLoss'].max()}")  # Debug: Should be ~19 at 5%
+
+    # Part 2: Actual Data Points based on granularity
+    if performance_df.empty:
+        return theoretical_data, pd.DataFrame(columns=['WinningRate', 'AvgWinToAvgLoss', 'PeriodStart', 'PeriodEnd', 'AboveTheoretical'])
+
+    performance_df = performance_df.copy()
+    performance_df['ExitedAt'] = pd.to_datetime(performance_df['ExitedAt'])
+    performance_df = performance_df.sort_values('ExitedAt')
+
+    try:
+        # Group by granularity
+        if granularity.startswith('1W'):
+            performance_df['Period'] = performance_df['ExitedAt'].dt.to_period('W-MON').dt.start_time
+        elif granularity == '1M':
+            performance_df['Period'] = performance_df['ExitedAt'].dt.to_period('M').dt.start_time
+        else:  # Daily (1D)
+            performance_df['Period'] = performance_df['ExitedAt'].dt.floor('D')
+
+        # Group by Period to calculate metrics
+        grouped = performance_df.groupby('Period').agg({
+            'PnL(Net)': ['count'],
+            'WinOrLoss': lambda x: (x == 1).sum(),  # Count wins
+            'ExitedAt': ['min', 'max']  # Start and end dates of the period
+        }).reset_index()
+
+        grouped.columns = ['Period', 'TradeCount', 'WinCount', 'PeriodStart', 'PeriodEnd']
+        grouped['WinningRate'] = grouped['WinCount'] / grouped['TradeCount'] * 100  # In percentage
+
+        # Calculate Avg Win and Avg Loss for each period
+        avg_metrics = []
+        for period in grouped['Period']:
+            period_trades = performance_df[performance_df['Period'] == period]
+            wins = period_trades[period_trades['WinOrLoss'] == 1]['PnL(Net)']
+            losses = period_trades[period_trades['WinOrLoss'] == -1]['PnL(Net)']
+            avg_win = wins.mean() if not wins.empty else 0
+            avg_loss = abs(losses.mean()) if not losses.empty else 1e-10  # Avoid division by zero
+            avg_win_to_avg_loss = avg_win / avg_loss if avg_loss != 0 else 0
+            avg_metrics.append(avg_win_to_avg_loss)
+
+        grouped['AvgWinToAvgLoss'] = avg_metrics
+        grouped['AvgWinToAvgLoss'] = grouped['AvgWinToAvgLoss'].clip(upper=20)  # Increased cap to 20
+
+        actual_data = grouped[['WinningRate', 'AvgWinToAvgLoss', 'PeriodStart', 'PeriodEnd']]
+        actual_data['PeriodStart'] = pd.to_datetime(actual_data['PeriodStart']).dt.strftime('%Y-%m-%d')
+        actual_data['PeriodEnd'] = pd.to_datetime(actual_data['PeriodEnd']).dt.strftime('%Y-%m-%d')
+
+        # Merge with theoretical data to determine points above the curve
+        theoretical_curve = theoretical_data.set_index('WinningRate')['TheoreticalWinToLoss']
+        actual_data = actual_data.join(theoretical_curve, on='WinningRate', rsuffix='_Theoretical')
+        actual_data['AboveTheoretical'] = actual_data['AvgWinToAvgLoss'] > actual_data['TheoreticalWinToLoss']
+        print(f"Actual max y-value: {actual_data['AvgWinToAvgLoss'].max()}")  # Debug: Check actual range
+
+        return theoretical_data, actual_data
+    except Exception as e:
+        raise ValueError(f"Failed to compute Performance Envelope for {granularity}: {str(e)}")
