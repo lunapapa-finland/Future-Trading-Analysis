@@ -366,7 +366,6 @@ def register_display_callbacks(app):
                             # Dynamically set y-axis range based on data
                             y_max = max(theoretical_data['TheoreticalWinToLoss'].max(), actual_data['AvgWinToAvgLoss'].max()) if not actual_data.empty else 20
                             y_max = max(20, y_max + 2)  # Ensure at least 20 with some padding
-                            print(f"Dynamic y_max set to: {y_max}")  # Debug: Verify y-axis range
 
                             fig.update_layout(
                                 title=dict(text=chart_title, x=0.5, xanchor='center', font=dict(size=20)),
