@@ -39,6 +39,11 @@ live: setup
 	@$(PYTHON_INTERPRETER) src/dashboard/app.py
 	@$(MAKE) clean >/dev/null 2>&1
 
+## performance
+performance: setup
+	@$(PYTHON_INTERPRETER) src/dashboard/utils/performance_acquisition.py
+	@$(MAKE) clean >/dev/null 2>&1
+
 ## Delete all compiled Python files
 clean:
 	@find . -type f -name "*.py[co]" -delete

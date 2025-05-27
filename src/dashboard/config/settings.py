@@ -54,7 +54,7 @@ BASE_DIR = project_root
 # -----------------------------------
 # Section 2: General Application Settings
 # -----------------------------------
-DEBUG_FLAG = True  # Enable debug mode
+DEBUG_FLAG = False  # Enable debug mode
 PORT = 8050  # Port number for the Dash server
 TIMEZONE = 'US/Central'  # Timezone for date/time handling
 LOGGING_PATH = BASE_DIR / 'log' / 'app.log'  # Path for logging
