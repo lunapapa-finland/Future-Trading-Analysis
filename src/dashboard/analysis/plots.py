@@ -65,21 +65,44 @@ def get_candlestick_plot(ticket, future_df, performance_df, current_trace_index=
             performance_df['ExitedAt'] = pd.to_datetime(performance_df['ExitedAt'], utc=True, errors='raise').dt.tz_convert(TIMEZONE)
             performance_df['EnteredAt_5min'] = performance_df['EnteredAt'].dt.floor('5min')
             performance_df['ExitedAt_5min'] = performance_df['ExitedAt'].dt.floor('5min')
+            # Add TradeDay and DayOfWeek for both entry and exit
+            performance_df['TradeDay_Entry'] = performance_df['EnteredAt'].dt.date
+            performance_df['DayOfWeek_Entry'] = performance_df['EnteredAt'].dt.day_name()
+            performance_df['TradeDay_Exit'] = performance_df['ExitedAt'].dt.date
+            performance_df['DayOfWeek_Exit'] = performance_df['ExitedAt'].dt.day_name()
         except Exception as e:
             raise ValueError(f"Invalid datetime format in performance_df: {str(e)}")
 
         def map_to_x_index(trade_day, day_of_week, time_5min):
             trade_day = pd.Timestamp(trade_day).date()
             time_5min = pd.Timestamp(time_5min)
+            
+            # Use the date from time_5min if it differs from trade_day
+            if time_5min.date() != trade_day:
+                trade_day = time_5min.date()
+                day_of_week = pd.Timestamp(trade_day).day_name()
 
             # Map weekend to next Monday
             if day_of_week in ['Saturday', 'Sunday']:
                 days_to_add = 2 if day_of_week == 'Saturday' else 1
                 trade_day = (pd.Timestamp(trade_day) + pd.Timedelta(days=days_to_add)).date()
 
+            # Check if trade_day is outside future_df's date range
+            future_df_dates = future_df['date'].unique()
+            if trade_day > max(future_df_dates):
+                # Map to the last bar of the last day in future_df
+                last_date = max(future_df_dates)
+                rth_end = pd.Timestamp(last_date).tz_localize(TIMEZONE).replace(hour=15, minute=10)
+                time_idx = future_df.index[future_df['Datetime'].dt.floor('5min') == rth_end].tolist()
+                if time_idx:
+                    return future_df.loc[time_idx[0], 'x_index']
+                return future_df['x_index'].iloc[-1]  # Fallback to last index
+
             # Check if RTH
-            is_rth = (time_5min.time() >= pd.Timestamp('08:30:00').time()) and \
-                     (time_5min.time() <= pd.Timestamp('15:10:00').time())
+            is_rth = (
+                time_5min.time() >= pd.Timestamp('08:30:00').time() and
+                time_5min.time() <= pd.Timestamp('15:10:00').time()
+            )
 
             if is_rth:
                 time_idx = future_df.index[
@@ -104,12 +127,11 @@ def get_candlestick_plot(ticket, future_df, performance_df, current_trace_index=
 
         # Apply mapping
         performance_df['x_entry'] = performance_df.apply(
-            lambda row: map_to_x_index(row['TradeDay'], row['DayOfWeek'], row['EnteredAt_5min']), axis=1
+            lambda row: map_to_x_index(row['TradeDay_Entry'], row['DayOfWeek_Entry'], row['EnteredAt_5min']), axis=1
         )
         performance_df['x_exit'] = performance_df.apply(
-            lambda row: map_to_x_index(row['TradeDay'], row['DayOfWeek'], row['ExitedAt_5min']), axis=1
+            lambda row: map_to_x_index(row['TradeDay_Exit'], row['DayOfWeek_Exit'], row['ExitedAt_5min']), axis=1
         )
-
         trade_traces = []
         for idx, row in performance_df.iterrows():
             color = 'green' if row['PnL(Net)'] > 0 else 'red'
