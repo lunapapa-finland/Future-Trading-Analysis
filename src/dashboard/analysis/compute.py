@@ -2,20 +2,26 @@ import pandas as pd
 from dashboard.config.settings import DEFAULT_GRANULARITY, DEFAULT_ROLLING_WINDOW
 import numpy as np
 
-def pnl_growth(performance_df, granularity=DEFAULT_GRANULARITY):
+def pnl_growth(performance_df, granularity=DEFAULT_GRANULARITY, daily_compounding_rate=0.001902, initial_funding=10000):
+    # Initialize empty result if performance_df is empty
     if performance_df.empty:
-        return pd.DataFrame(columns=['Period', 'NetPnL'])
+        return pd.DataFrame(columns=['Period', 'NetPnL', 'CumulativePnL', 'PassiveGrowth', 'CumulativePassive'])
     
     performance_df = performance_df.copy()
     # Convert ExitedAt to datetime and remove timezone
     performance_df['ExitedAt'] = pd.to_datetime(performance_df['ExitedAt'], errors='coerce').dt.tz_localize(None)
+    
+    # Check for invalid ExitedAt values
+    if performance_df['ExitedAt'].isna().any():
+        raise ValueError("Invalid datetime values in 'ExitedAt' column")
+    
     performance_df = performance_df.sort_values('ExitedAt')
     
     try:
         # Validate granularity
         valid_granularities = ['1D', '1W-MON', '1M']
         if granularity not in valid_granularities:
-            raise ValueError(f"Unsupported granularity: {granularity}. Must be one of {valid_granularities}")
+            raise ValueError(f"Unsupported granularity: {granularity}. Must be one of: {valid_granularities}")
         
         # Assign Period based on granularity
         if granularity == '1D':
@@ -25,12 +31,48 @@ def pnl_growth(performance_df, granularity=DEFAULT_GRANULARITY):
         elif granularity == '1M':
             performance_df['Period'] = performance_df['ExitedAt'].dt.to_period('M').dt.start_time
         
+        # Group by Period and sum PnL
         grouped = performance_df.groupby('Period')['PnL(Net)'].sum().reset_index()
         grouped['Period'] = pd.to_datetime(grouped['Period'])
-        return grouped.rename(columns={'PnL(Net)': 'NetPnL'})
+        grouped = grouped.rename(columns={'PnL(Net)': 'NetPnL'})
+        grouped['CumulativePnL'] = grouped['NetPnL'].cumsum()
+        
+        # Calculate passive compounding growth
+        start_date = pd.Timestamp(performance_df['ExitedAt'].dt.date.min())
+        end_date = pd.Timestamp(performance_df['ExitedAt'].dt.date.max())
+        
+        # Create daily date range (all calendar days)
+        date_range = pd.date_range(start=start_date, end=end_date, freq='D')
+        passive_df = pd.DataFrame({'Date': date_range})
+        passive_df['Days'] = (passive_df['Date'] - start_date).dt.days + 1  # Include start date
+        passive_df['PassiveGrowth'] = (1 + daily_compounding_rate) ** passive_df['Days'] * initial_funding - initial_funding
+        passive_df['Period'] = passive_df['Date']
+        
+        # Aggregate passive growth by granularity (take last value of period)
+        if granularity == '1D':
+            passive_df['Period'] = passive_df['Period'].dt.floor('D')
+        elif granularity == '1W-MON':
+            passive_df['Period'] = passive_df['Period'].dt.to_period('W-MON').dt.start_time
+        elif granularity == '1M':
+            passive_df['Period'] = passive_df['Period'].dt.to_period('M').dt.start_time
+        
+        passive_grouped = passive_df.groupby('Period').agg({'PassiveGrowth': 'last'}).reset_index()
+        passive_grouped['CumulativePassive'] = passive_grouped['PassiveGrowth']  # No cumsum, already cumulative
+        
+        # Merge with grouped PnL
+        grouped = pd.merge(grouped, passive_grouped[['Period', 'PassiveGrowth', 'CumulativePassive']],
+                         on='Period', how='outer').sort_values('Period')
+        
+        # Fill NaN for periods with no trades
+        grouped = grouped.fillna({'NetPnL': 0, 'PassiveGrowth': 0, 'CumulativePassive': 0})
+        grouped['CumulativePnL'] = grouped['NetPnL'].cumsum()
+        
+        return grouped[['Period', 'NetPnL', 'CumulativePnL', 'PassiveGrowth', 'CumulativePassive']]
+    
     except Exception as e:
         raise ValueError(f"Failed to group by {granularity}: {str(e)}")
     
+
 def drawdown(performance_df, granularity=DEFAULT_GRANULARITY):
     if performance_df.empty:
         return pd.DataFrame(columns=['Period', 'Drawdown'])
@@ -382,34 +424,93 @@ def performance_envelope(performance_df, granularity=DEFAULT_GRANULARITY):
     except Exception as e:
         raise ValueError(f"Failed to compute Performance Envelope for {granularity}: {str(e)}")
     
-def overtrading_detection(performance_df):
+def overtrading_detection(performance_df, cap_loss_per_trade=200, cap_trades_after_big_loss=5):
+    # Initialize empty DataFrames if performance_df is empty
+    daily_columns = ['TradeDay', 'TradesPerDay', 'DailyPnL']
+    trade_columns = ['TradeIndex', 'R_multiple', 'IsPostLoss', 'TradeDay', 'ExitedAt', 'PnL(Net)', 'Size', 'Duration', 'TradeTag']
     if performance_df.empty:
-        return pd.DataFrame(columns=['TradeDay', 'TradesPerDay', 'DailyPnL'])
+        return pd.DataFrame(columns=daily_columns), pd.DataFrame(columns=trade_columns)
     
     performance_df = performance_df.copy()
     try:
-        if 'TradeDay' not in performance_df or 'PnL(Net)' not in performance_df:
-            raise ValueError("Required columns missing: TradeDay, PnL(Net)")
+        # Validate required columns
+        required_cols = ['TradeDay', 'PnL(Net)', 'ExitedAt', 'EnteredAt', 'Size']
+        if not all(col in performance_df for col in required_cols):
+            raise ValueError(f"Required columns missing: {', '.join(set(required_cols) - set(performance_df.columns))}")
         
-        # Ensure TradeDay is in datetime format
+        # Ensure datetime columns are timezone-naive
         performance_df['TradeDay'] = pd.to_datetime(performance_df['TradeDay']).dt.tz_localize(None)
+        performance_df['ExitedAt'] = pd.to_datetime(performance_df['ExitedAt'], errors='coerce').dt.tz_localize(None)
+        performance_df['EnteredAt'] = pd.to_datetime(performance_df['EnteredAt'], errors='coerce').dt.tz_localize(None)
         
-        # Group by TradeDay to compute trades per day and daily PnL
+        # Check for invalid datetimes
+        if performance_df[['ExitedAt', 'EnteredAt']].isna().any().any():
+            raise ValueError("Invalid datetime values in 'ExitedAt' or 'EnteredAt' column")
+        
+        # Daily aggregation for existing plots
         grouped = performance_df.groupby('TradeDay').agg({
             'PnL(Net)': 'sum',  # Sum of PnL(Net) for daily PnL
             'TradeDay': 'size'  # Count of rows (trades) per TradeDay
         }).rename(columns={'TradeDay': 'TradesPerDay', 'PnL(Net)': 'DailyPnL'}).reset_index()
         
-        # Create a full date range from min to max TradeDay
+        # Create full date range from min to max TradeDay
         date_range = pd.date_range(start=grouped['TradeDay'].min(), end=grouped['TradeDay'].max(), freq='D')
         full_df = pd.DataFrame({'TradeDay': date_range})
         
         # Merge with grouped data, filling missing days with 0
-        grouped = full_df.merge(grouped, on='TradeDay', how='left')
-        grouped['TradesPerDay'] = grouped['TradesPerDay'].fillna(0).astype(int)
-        grouped['DailyPnL'] = grouped['DailyPnL'].fillna(0).round(2)
+        daily_df = full_df.merge(grouped, on='TradeDay', how='left')
+        daily_df['TradesPerDay'] = daily_df['TradesPerDay'].fillna(0).astype(int)
+        daily_df['DailyPnL'] = daily_df['DailyPnL'].fillna(0).round(2)
         
-        return grouped
+        # Trade-level processing for revenge trading
+        trade_df = performance_df[['TradeDay', 'PnL(Net)', 'ExitedAt', 'EnteredAt', 'Size']].copy()
+        trade_df = trade_df.sort_values('ExitedAt').reset_index(drop=True)
+        trade_df['TradeIndex'] = trade_df.index + 1
+        
+        # Compute R-multiple
+        trade_df['R_multiple'] = trade_df['PnL(Net)'] / cap_loss_per_trade
+        
+        # Compute duration in minutes
+        trade_df['Duration'] = (trade_df['ExitedAt'] - trade_df['EnteredAt']).dt.total_seconds() / 60
+        
+        # Identify large loss trades and post-loss trades
+        trade_df['IsLoss'] = trade_df['R_multiple'] <= -1
+        trade_df['IsPostLoss'] = False
+        for idx in trade_df[trade_df['IsLoss']].index:
+            end_idx = min(idx + cap_trades_after_big_loss + 1, len(trade_df))
+            trade_df.loc[idx + 1:end_idx - 1, 'IsPostLoss'] = True
+        
+        # Analyze post-loss trades for overtrading criteria
+        trade_df['TradeTag'] = 'LightBlue'  # Default to Blue
+        for idx in trade_df[trade_df['IsPostLoss']].index:
+            loss_idx = trade_df.index[trade_df.index.get_loc(idx) - 1]
+            if loss_idx in trade_df[trade_df['IsLoss']].index:
+                # Get the 5 subsequent trades (including current) for this loss
+                start_idx = loss_idx + 1
+                end_idx = min(loss_idx + cap_trades_after_big_loss + 1, len(trade_df))
+                subset = trade_df.iloc[start_idx:end_idx]
+                
+                # Calculate averages for the 5 subsequent trades
+                avg_size = subset['Size'].mean()
+                avg_duration = subset['Duration'].mean()
+                
+                # Current trade criteria
+                current_trade = trade_df.loc[idx]
+                r_criterion = current_trade['R_multiple'] < 0
+                size_criterion = current_trade['Size'] > avg_size
+                duration_criterion = current_trade['Duration'] < avg_duration
+                
+                # Update TradeTag
+                if r_criterion and size_criterion and duration_criterion:
+                    trade_df.loc[idx, 'TradeTag'] = 'DarkRed'
+                elif r_criterion or size_criterion or duration_criterion:
+                    trade_df.loc[idx, 'TradeTag'] = 'LightCoral'
+        
+        # Select relevant columns
+        trade_df = trade_df[['TradeIndex', 'R_multiple', 'IsPostLoss', 'TradeDay', 'ExitedAt', 'PnL(Net)', 'Size', 'Duration', 'TradeTag']]
+        
+        return daily_df, trade_df
+    
     except Exception as e:
         raise ValueError(f"Failed to compute overtrading detection: {str(e)}")
     

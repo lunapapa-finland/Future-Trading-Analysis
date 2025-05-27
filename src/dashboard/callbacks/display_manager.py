@@ -243,10 +243,12 @@ def register_display_callbacks(app):
                             return [content_1, content_2, new_trace_index]
 
                         if analysis == 'PnL Growth':
-                            result = pnl_growth(performance_df, granularity=granularity)
-                            y_col = 'NetPnL'
-                            y_title = 'Net PnL ($)'
-                            chart_title = f'{ticket} - PnL Growth ({granularity_label})'
+                            daily_compounding_rate = ANALYSIS_DROPDOWN[analysis].get('daily_compounding_rate', 0.001902)
+                            initial_funding = ANALYSIS_DROPDOWN[analysis].get('initial_funding', 10000)
+                            result = pnl_growth(performance_df, granularity=granularity, daily_compounding_rate=daily_compounding_rate, initial_funding=initial_funding)
+                            y_col = 'CumulativePnL'
+                            y_title = 'Cumulative Return ($)'
+                            chart_title = f'{ticket} - PnL Growth vs. Passive Growth ({granularity_label})'
                             line_color = 'blue'
                             # Line chart for PnL Growth
                             if result.empty:
@@ -257,8 +259,16 @@ def register_display_callbacks(app):
                                     x=result['Period'],
                                     y=result[y_col],
                                     mode='lines+markers',
-                                    name=y_col,
+                                    name='Trading PnL',
                                     line=dict(color=line_color, width=2),
+                                    marker=dict(size=8)
+                                ))
+                                fig.add_trace(go.Scatter(
+                                    x=result['Period'],
+                                    y=result['CumulativePassive'],
+                                    mode='lines+markers',
+                                    name='Passive Growth (100% Annually Compounded)',
+                                    line=dict(color='green', width=2),
                                     marker=dict(size=8)
                                 ))
                                 fig.update_layout(
@@ -269,7 +279,8 @@ def register_display_callbacks(app):
                                     height=500,
                                     xaxis=dict(showgrid=True, gridcolor='lightgray'),
                                     yaxis=dict(showgrid=True, gridcolor='lightgray'),
-                                    hovermode='x unified'
+                                    hovermode='x unified',
+                                    showlegend=True
                                 )
                                 content_2 = html.Div([
                                     html.H2(f'{ticket} - {analysis}', className='text-xl font-semibold mb-4'),
@@ -461,19 +472,22 @@ def register_display_callbacks(app):
                                     dcc.Graph(id='behavioral-patterns-chart', figure=fig, responsive=True, style={'width': '100%'})
                                 ])
                         elif analysis == 'Overtrading Detection':
-                            result = overtrading_detection(performance_df)
+                            cap_loss_per_trade = ANALYSIS_DROPDOWN[analysis].get('cap_loss_per_trade', 200)
+                            cap_trades_after_big_loss = ANALYSIS_DROPDOWN[analysis].get('cap_trades_after_big_loss', 5)
+                            daily_df, trade_df = overtrading_detection(performance_df, cap_loss_per_trade, cap_trades_after_big_loss)
+                            
                             chart_title = f'{ticket} - Overtrading Detection'
-                            if result.empty or 'TradesPerDay' not in result or 'DailyPnL' not in result:
+                            if daily_df.empty or 'TradesPerDay' not in daily_df or 'DailyPnL' not in daily_df:
                                 content_2 = html.P('No data available for the selected period.', className='text-gray-500')
                             else:
                                 # Scatter Plot: Trades per Day vs Daily PnL
                                 scatter_fig = go.Figure()
                                 scatter_fig.add_trace(go.Scatter(
-                                    x=result['TradesPerDay'],
-                                    y=result['DailyPnL'],
+                                    x=daily_df['TradesPerDay'],
+                                    y=daily_df['DailyPnL'],
                                     mode='markers',
-                                    marker=dict(size=10, color=result['DailyPnL'], colorscale='RdBu_r', showscale=True),
-                                    text=result['TradeDay'].dt.strftime('%Y-%m-%d'),
+                                    marker=dict(size=10, color=daily_df['DailyPnL'], colorscale='RdBu_r', showscale=True),
+                                    text=daily_df['TradeDay'].dt.strftime('%Y-%m-%d'),
                                     hovertemplate='Date: %{text}<br>Trades: %{x}<br>PnL: %{y:.2f}<extra></extra>'
                                 ))
                                 scatter_fig.update_layout(
@@ -491,16 +505,16 @@ def register_display_callbacks(app):
                                 # Line Chart: Trades per Day and Daily PnL over time
                                 line_fig = go.Figure()
                                 line_fig.add_trace(go.Scatter(
-                                    x=result['TradeDay'],
-                                    y=result['TradesPerDay'],
+                                    x=daily_df['TradeDay'],
+                                    y=daily_df['TradesPerDay'],
                                     mode='lines+markers',
                                     name='Trades per Day',
                                     line=dict(color='blue'),
                                     hovertemplate='Date: %{x|%Y-%m-%d}<br>Trades: %{y}<extra></extra>'
                                 ))
                                 line_fig.add_trace(go.Scatter(
-                                    x=result['TradeDay'],
-                                    y=result['DailyPnL'],
+                                    x=daily_df['TradeDay'],
+                                    y=daily_df['DailyPnL'],
                                     mode='lines+markers',
                                     name='Daily PnL ($)',
                                     line=dict(color='red'),
@@ -524,14 +538,79 @@ def register_display_callbacks(app):
                                     height=400,
                                     margin=dict(l=50, r=50, t=80, b=80),
                                     xaxis=dict(showgrid=True, gridcolor='lightgray'),
-                                    hovermode='x unified',  # Fixed: Changed 'x_unified' to 'x unified'
+                                    hovermode='x unified',
                                     legend=dict(x=0, y=1.1, orientation='h')
                                 )
                                 
+                                # Third Scatter Plot: R-multiple vs Trade Index for Revenge Trading
+                                if trade_df.empty or 'TradeIndex' not in trade_df or 'R_multiple' not in trade_df:
+                                    revenge_fig = None
+                                else:
+                                    revenge_fig = go.Figure()
+                                    # Regular trades (Blue)
+                                    regular_trades = trade_df[trade_df['TradeTag'] == 'LightBlue']
+                                    revenge_fig.add_trace(go.Scatter(
+                                        x=regular_trades['TradeIndex'],
+                                        y=regular_trades['R_multiple'],
+                                        mode='markers',
+                                        name='Regular Trades',
+                                        marker=dict(size=8, color='#ADD8E6'),
+                                        text=regular_trades.apply(
+                                            lambda row: f"Date: {row['TradeDay'].strftime('%Y-%m-%d')}<br>Exit: {row['ExitedAt'].strftime('%H:%M:%S')}<br>PnL: ${row['PnL(Net)']:.2f}<br>R: {row['R_multiple']:.2f}<br>Size: {row['Size']}<br>Dur: {row['Duration']:.2f} min",
+                                            axis=1
+                                        ),
+                                        hovertemplate='%{text}<extra></extra>'
+                                    ))
+                                    # Moderate overtrading trades (Red)
+                                    red_trades = trade_df[trade_df['TradeTag'] == 'LightCoral']
+                                    revenge_fig.add_trace(go.Scatter(
+                                        x=red_trades['TradeIndex'],
+                                        y=red_trades['R_multiple'],
+                                        mode='markers',
+                                        name='Moderate Overtrading',
+                                        marker=dict(size=8, color='#F08080'),
+                                        text=red_trades.apply(
+                                            lambda row: f"Date: {row['TradeDay'].strftime('%Y-%m-%d')}<br>Exit: {row['ExitedAt'].strftime('%H:%M:%S')}<br>PnL: ${row['PnL(Net)']:.2f}<br>R: {row['R_multiple']:.2f}<br>Size: {row['Size']}<br>Dur: {row['Duration']:.2f} min",
+                                            axis=1
+                                        ),
+                                        hovertemplate='%{text}<extra></extra>'
+                                    ))
+                                    # Severe overtrading trades (Black)
+                                    black_trades = trade_df[trade_df['TradeTag'] == 'DarkRed']
+                                    revenge_fig.add_trace(go.Scatter(
+                                        x=black_trades['TradeIndex'],
+                                        y=black_trades['R_multiple'],
+                                        mode='markers',
+                                        name='Severe Overtrading',
+                                        marker=dict(size=8, color='#8B0000'),
+                                        text=black_trades.apply(
+                                            lambda row: f"Date: {row['TradeDay'].strftime('%Y-%m-%d')}<br>Exit: {row['ExitedAt'].strftime('%H:%M:%S')}<br>PnL: ${row['PnL(Net)']:.2f}<br>R: {row['R_multiple']:.2f}<br>Size: {row['Size']}<br>Dur: {row['Duration']:.2f} min",
+                                            axis=1
+                                        ),
+                                        hovertemplate='%{text}<extra></extra>'
+                                    ))
+                                    # Add horizontal line at y=0
+                                    revenge_fig.add_hline(y=0, line_dash='dash', line_color='black', annotation_text='Break-even')
+                                    
+                                    revenge_fig.update_layout(
+                                        title=dict(text=f'{ticket} - R-multiple Analysis Post-Loss', x=0.5, xanchor='center', font=dict(size=24)),
+                                        xaxis_title='Trade Index',
+                                        yaxis_title='R-multiple',
+                                        template='plotly_white',
+                                        height=400,
+                                        margin=dict(l=50, r=50, t=80, b=80),
+                                        xaxis=dict(showgrid=True, gridcolor='lightgray'),
+                                        yaxis=dict(showgrid=True, gridcolor='lightgray'),
+                                        hovermode='closest',
+                                        legend=dict(x=0, y=1.1, orientation='h')
+                                    )
+                                
+                                # Combine plots
                                 content_2 = html.Div([
                                     html.H2(f'{ticket} - {analysis}', className='text-xl font-semibold mb-4'),
                                     dcc.Graph(id='overtrading-scatter', figure=scatter_fig, responsive=True, style={'width': '100%'}),
-                                    dcc.Graph(id='overtrading-line', figure=line_fig, responsive=True, style={'width': '100%'})
+                                    dcc.Graph(id='overtrading-line', figure=line_fig, responsive=True, style={'width': '100%'}),
+                                    dcc.Graph(id='revenge-scatter', figure=revenge_fig, responsive=True, style={'width': '100%'}) if revenge_fig else html.P('No data for revenge trading analysis.', className='text-gray-500')
                                 ])
                         elif analysis == 'Kelly Criterion':
                             result = kelly_criterion(performance_df)

@@ -100,7 +100,7 @@ WINDOW_OPTIONS = [
 
 ANALYSIS_DROPDOWN = {
     'Drawdown': {'category': 'Period', 'granularity': DEFAULT_GRANULARITY},
-    'PnL Growth': {'category': 'Period', 'granularity': DEFAULT_GRANULARITY},
+    'PnL Growth': {'category': 'Period', 'granularity': DEFAULT_GRANULARITY, 'daily_compounding_rate': 0.001902, 'initial_funding' : 10000}, # Daily Rate = (1 + Annual Rate)^(1/365) - 1,  where Annual Rate = 100%
     'Performance Envelope': {'category': 'Period', 'granularity': DEFAULT_GRANULARITY},
     'Rolling Win Rate': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW},
     'Sharpe Ratio': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW, 'risk_free_rate': 0.02},
@@ -108,7 +108,7 @@ ANALYSIS_DROPDOWN = {
     'Hourly Performance': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW},
     'PnL Distribution': {'category': 'Overall'},
     'Behavioral Patterns': {'category': 'Overall'},
-    'Overtrading Detection': {'category': 'Overall'},
+    'Overtrading Detection': {'category': 'Overall', 'cap_loss_per_trade':200, 'cap_trades_after_big_loss': 5},
     'Kelly Criterion': {'category': 'Overall'}  # New addition
 }
 # -----------------------------------
