@@ -144,7 +144,8 @@ def get_candlestick_plot(ticket, future_df, performance_df, current_trace_index=
                 f"ExitPrice: {row['ExitPrice']}<br>"
                 f"EnteredAt: {row['EnteredAt'].strftime('%Y-%m-%d %H:%M:%S')} CT<br>"
                 f"ExitedAt: {row['ExitedAt'].strftime('%Y-%m-%d %H:%M:%S')} CT<br>"
-                f"TradeDay: {row['TradeDay']}"
+                f"TradeDay: {row['TradeDay']}<br>"
+                f"Comment: {row['Comment']}"
             )
             trace = go.Scatter(
                 x=[row['x_entry'], row['x_exit']],

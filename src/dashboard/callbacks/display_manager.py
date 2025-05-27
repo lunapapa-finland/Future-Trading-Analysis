@@ -58,7 +58,7 @@ def register_display_callbacks(app):
                     config={'scrollZoom': True}
                 )
                 if not performance_df.empty and new_trace_index > 0:
-                    visible_trades = performance_df.iloc[:new_trace_index][['EnteredAt', 'ExitedAt', 'Type', 'Size', 'PnL(Net)', 'EntryPrice', 'ExitPrice']]
+                    visible_trades = performance_df.iloc[:new_trace_index][['EnteredAt', 'ExitedAt', 'Type', 'Size', 'PnL(Net)', 'EntryPrice', 'ExitPrice', 'Comment']].copy()
                     trade_table = dash_table.DataTable(
                         id='trade-table-1',
                         columns=[
@@ -68,12 +68,36 @@ def register_display_callbacks(app):
                             {'name': 'Size', 'id': 'Size'},
                             {'name': 'PnL(Net)', 'id': 'PnL(Net)'},
                             {'name': 'Entry Price', 'id': 'EntryPrice'},
-                            {'name': 'Exit Price', 'id': 'ExitPrice'}
+                            {'name': 'Exit Price', 'id': 'ExitPrice'},
+                            {'name': 'Comment', 'id': 'Comment'}
                         ],
                         data=visible_trades.to_dict('records'),
                         style_table={'overflowX': 'auto'},
                         style_cell={'textAlign': 'left', 'padding': '5px'},
-                        style_header={'fontWeight': 'bold'}
+                        style_header={'fontWeight': 'bold'},
+                        # Enable row selection
+                        row_selectable='multi',
+                        # Enhance copying with headers
+                        include_headers_on_copy_paste=True,
+                        # Optional: Export as CSV
+                        export_format='csv',
+                        css=[{'selector': '', 'rule': 'border: 2px solid #4CAF50; border-radius: 5px; padding: 10px;'}],
+                        # Optional: Highlight selected rows
+                        style_data_conditional=[
+                            {
+                                'if': {'state': 'selected'},
+                                'backgroundColor': 'rgba(0, 116, 217, 0.3)',
+                                'border': '1px solid blue'
+                            }
+                        ],
+                        # Optional: Tooltip to guide users
+                        tooltip_data=[
+                            {
+                                column: {'value': 'Select rows, Ctrl+C to copy, or use export button', 'type': 'markdown'}
+                                for column in visible_trades.columns
+                            }
+                        ],
+                        tooltip_duration=None  # Tooltip stays until dismissed
                     )
                 else:
                     trade_table = html.P("No trades visible.", className='text-gray-500')
