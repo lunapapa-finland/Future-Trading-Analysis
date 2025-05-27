@@ -7,10 +7,8 @@ The project on the way to be changed from static to dynamic analysis using Dash
 Begin by executing the following commands:
 
 - `make`: Displays all available commands.
-- `make data`: Retrieves data via yfinance.
-- `make report`: Generates candlestick plots with specified intervals and includes performance statistics.
-- `make clean`: Clears compiled files to ensure a clean setup.
 - `make live`: dash project, more robutst analysis tools
+- `make performace`: preprocess the performace data based on your daily trades(IBKR)
 
 
 ## Setup Environment
@@ -30,3 +28,8 @@ This project is licensed under the [MIT License](LICENSE). For more information,
 
 ## Support
 For assistance or inquiries, consult the `Issues` section on GitHub or contact me via email.
+
+![](img/sample1.png)
+![](img/sample2.png)
+![](img/sample3.png)
+![](img/sample4.png)
