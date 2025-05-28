@@ -272,7 +272,7 @@ def register_display_callbacks(app):
                             result = pnl_growth(performance_df, granularity=granularity, daily_compounding_rate=daily_compounding_rate, initial_funding=initial_funding)
                             y_col = 'CumulativePnL'
                             y_title = 'Cumulative Return ($)'
-                            chart_title = f'{ticket} - PnL Growth vs. Passive Growth ({granularity_label})'
+                            chart_title = f'{ticket} - PnL Growth(Net) vs. Passive Growth ({granularity_label})'
                             line_color = 'blue'
                             # Line chart for PnL Growth
                             if result.empty:

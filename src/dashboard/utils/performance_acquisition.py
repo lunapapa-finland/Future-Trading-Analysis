@@ -270,8 +270,8 @@ def round_trip_converter():
         # Generate round trips
         round_trips_df = process_csv(file_path)
         round_trips_df['TradeDay'] = pd.to_datetime(round_trips_df['TradeDay'])
-        startdate=round_trips_df['TradeDay'].max().date()
-        enddate=round_trips_df['TradeDay'].min().date()
+        startdate=round_trips_df['TradeDay'].min().date()
+        enddate=round_trips_df['TradeDay'].max().date()
         # Extract date range from the file name
         # Generate output filename in the same directory, removing 'Raw_' prefix
         output_filename = os.path.join(

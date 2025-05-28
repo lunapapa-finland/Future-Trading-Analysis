@@ -1,4 +1,4 @@
-.PHONY: clean data report analysis simulation live test_environment setup
+.PHONY: clean performance live test_environment setup
 
 #################################################################################
 # GLOBALS                                                                       #
@@ -14,34 +14,15 @@ PYTHON_INTERPRETER = python
 #################################################################################
 
 
-## Make Dataset
-data: setup
-	@$(PYTHON_INTERPRETER) src/data/get_dataset.py
-	@$(MAKE) clean >/dev/null 2>&1
-
-## Generate Analysis
-report: setup data
-	@$(PYTHON_INTERPRETER) src/visualization/generate_report.py
-	@$(MAKE) clean >/dev/null 2>&1
-
-## Calculate system stability
-analysis: setup
-	@$(PYTHON_INTERPRETER) src/visualization/trade_analysis.py
-	@$(MAKE) clean >/dev/null 2>&1
-
-## simualtion
-simulation: setup
-	@$(PYTHON_INTERPRETER) src/visualization/trade_simulation.py
-	@$(MAKE) clean >/dev/null 2>&1
-
-## live
-live: setup
-	@$(PYTHON_INTERPRETER) src/dashboard/app.py
-	@$(MAKE) clean >/dev/null 2>&1
 
 ## performance
 performance: setup
 	@$(PYTHON_INTERPRETER) src/dashboard/utils/performance_acquisition.py
+	@$(MAKE) clean >/dev/null 2>&1
+
+## live
+live: setup performance
+	@$(PYTHON_INTERPRETER) src/dashboard/app.py
 	@$(MAKE) clean >/dev/null 2>&1
 
 ## Delete all compiled Python files
