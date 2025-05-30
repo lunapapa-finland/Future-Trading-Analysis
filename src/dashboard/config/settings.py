@@ -63,7 +63,7 @@ LOGGING_PATH = BASE_DIR / 'log' / 'app.log'  # Path for logging
 # Section 3: Data File Paths
 # -----------------------------------
 PERFORMANCE_DIR = BASE_DIR / 'data' / 'performance'
-FUTURE_DIR = BASE_DIR / 'data' / 'future' / 'dash_project'
+FUTURE_DIR = BASE_DIR / 'data' / 'future'
 PERFORMANCE_CSV = str(PERFORMANCE_DIR / 'Combined_performance_for_dash_project.csv')
 MES_CSV = str(FUTURE_DIR / 'MES.csv')
 MNQ_CSV = str(FUTURE_DIR / 'MNQ.csv')
@@ -103,12 +103,12 @@ ANALYSIS_DROPDOWN = {
     'PnL Growth': {'category': 'Period', 'granularity': DEFAULT_GRANULARITY, 'daily_compounding_rate': 0.001902, 'initial_funding' : 10000}, # Daily Rate = (1 + Annual Rate)^(1/365) - 1,  where Annual Rate = 100%
     'Performance Envelope': {'category': 'Period', 'granularity': DEFAULT_GRANULARITY},
     'Rolling Win Rate': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW},
-    'Sharpe Ratio': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW, 'risk_free_rate': 0.02},
+    'Sharpe Ratio': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW, 'risk_free_rate': 0.02}, # Risk-free rate for Sharpe Ratio calculation, standing for 2% annual rate
     'Trade Efficiency': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW},
     'Hourly Performance': {'category': 'Rolling', 'window': DEFAULT_ROLLING_WINDOW},
     'PnL Distribution': {'category': 'Overall'},
     'Behavioral Patterns': {'category': 'Overall'},
-    'Overtrading Detection': {'category': 'Overall', 'cap_loss_per_trade':200, 'cap_trades_after_big_loss': 5},
+    'Overtrading Detection': {'category': 'Overall', 'cap_loss_per_trade':200, 'cap_trades_after_big_loss': 5}, # cap_loss_per_trade: Maximum loss per trade, considering the fixed risk control; cap_trades_after_big_loss : Maximum number of trades that will be scrutinized after a big loss
     'Kelly Criterion': {'category': 'Overall'}  # New addition
 }
 # -----------------------------------

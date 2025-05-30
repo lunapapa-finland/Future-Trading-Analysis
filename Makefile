@@ -1,4 +1,4 @@
-.PHONY: clean performance live test_environment setup
+.PHONY: clean performance live test_environment setup data
 
 #################################################################################
 # GLOBALS                                                                       #
@@ -18,6 +18,11 @@ PYTHON_INTERPRETER = python
 ## performance
 performance: setup
 	@$(PYTHON_INTERPRETER) src/dashboard/utils/performance_acquisition.py
+	@$(MAKE) clean >/dev/null 2>&1
+
+## performance
+data: setup
+	@$(PYTHON_INTERPRETER) src/dashboard/utils/data_acquisition.py
 	@$(MAKE) clean >/dev/null 2>&1
 
 ## live
