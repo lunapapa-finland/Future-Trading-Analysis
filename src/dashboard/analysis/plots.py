@@ -2,7 +2,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from dashboard.config.settings import TIMESTEP, TIMEZONE
 import pytz
-def get_candlestick_plot(ticket, future_df, performance_df, current_trace_index=0):
+def get_candlestick_plot(ticker, future_df, performance_df, current_trace_index=0):
     # Validate input
     if future_df.empty:
         return go.Figure()
@@ -170,7 +170,7 @@ def get_candlestick_plot(ticket, future_df, performance_df, current_trace_index=
     ticktext = future_df['Datetime'].dt.strftime('%H:%M')[::TIMESTEP].tolist() + day_starts['date'].astype(str).tolist()
 
     fig.update_layout(
-        title=f'{ticket} Futures Candlestick (Chicago Time)',
+        title=f'{ticker} Futures Candlestick (Chicago Time)',
         xaxis_title='Trading Session',
         yaxis_title='Price',
         xaxis=dict(tickvals=tickvals, ticktext=ticktext, tickangle=45, rangeslider_visible=False),

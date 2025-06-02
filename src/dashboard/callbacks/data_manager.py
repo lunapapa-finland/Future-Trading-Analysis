@@ -12,10 +12,10 @@ def register_data_callbacks(app):
             Output('error-message-1', 'className'),
             Output('error-message-2', 'children'),
             Output('error-message-2', 'className'),
-            Output('ticket-selector-1', 'value'),
+            Output('ticker-selector-1', 'value'),
             Output('start-date-picker-1', 'date'),
             Output('end-date-picker-1', 'date'),
-            Output('ticket-selector-2', 'value'),
+            Output('ticker-selector-2', 'value'),
             Output('analysis-selector-2', 'value'),
             Output('start-date-picker-2', 'date'),
             Output('end-date-picker-2', 'date'),
@@ -27,10 +27,10 @@ def register_data_callbacks(app):
             Input('tabs', 'value'),
         ],
         [
-            State('ticket-selector-1', 'value'),
+            State('ticker-selector-1', 'value'),
             State('start-date-picker-1', 'date'),
             State('end-date-picker-1', 'date'),
-            State('ticket-selector-2', 'value'),
+            State('ticker-selector-2', 'value'),
             State('category-selector-2', 'value'),
             State('analysis-selector-2', 'value'),
             State('granularity-selector-2', 'value'),
@@ -42,8 +42,8 @@ def register_data_callbacks(app):
     )
     def manage_data_and_reset(
         confirm_1_clicks, confirm_2_clicks, active_tab,
-        ticket_1, start_date_1, end_date_1,
-        ticket_2, category_2, analysis_2, granularity_2, window_2, start_date_2, end_date_2
+        ticker_1, start_date_1, end_date_1,
+        ticker_2, category_2, analysis_2, granularity_2, window_2, start_date_2, end_date_2
     ):
         ctx = callback_context
         if not ctx.triggered:
@@ -75,19 +75,19 @@ def register_data_callbacks(app):
                     error_message_2, error_class_2] + selection_reset + ['']
 
         elif trigger_id == 'confirm-button-1':
-            if not ticket_1 or not start_date_1 or not end_date_1:
+            if not ticker_1 or not start_date_1 or not end_date_1:
                 return [data_store_1, data_store_2,
-                        'Please select a ticket and both dates.', 'text-red-600 mt-2',
+                        'Please select a ticker and both dates.', 'text-red-600 mt-2',
                         error_message_2, error_class_2] + selection_no_update + ['']
             try:
                 csv_map = DATA_SOURCE_DROPDOWN
-                future_csv = csv_map[ticket_1]
-                performance_df = load_performance(ticket_1, start_date_1, end_date_1, PERFORMANCE_CSV)
+                future_csv = csv_map[ticker_1]
+                performance_df = load_performance(ticker_1, start_date_1, end_date_1, PERFORMANCE_CSV)
                 future_df = load_future(start_date_1, end_date_1, future_csv)
                 data_store_1 = {
                     'performance': performance_df.to_dict('records'),
                     'future': future_df.to_dict('records'),
-                    'ticket': ticket_1,
+                    'ticker': ticker_1,
                 }
                 return [data_store_1, data_store_2, error_message_1, error_class_1,
                         error_message_2, error_class_2] + selection_no_update + ['']
@@ -97,10 +97,10 @@ def register_data_callbacks(app):
                         error_message_2, error_class_2] + selection_no_update + ['']
 
         elif trigger_id == 'confirm-button-2':
-            if not ticket_2 or not analysis_2 or not start_date_2 or not end_date_2:
+            if not ticker_2 or not analysis_2 or not start_date_2 or not end_date_2:
                 return [data_store_1, data_store_2,
                         error_message_1, error_class_1,
-                        'Please select a ticket, analysis type, and both dates.', 'text-red-600 mt-2'] + selection_no_update + ['']
+                        'Please select a ticker, analysis type, and both dates.', 'text-red-600 mt-2'] + selection_no_update + ['']
             try:
                 start_date_2 = pd.to_datetime(start_date_2)
                 end_date_2 = pd.to_datetime(end_date_2)
@@ -110,8 +110,8 @@ def register_data_callbacks(app):
                             error_message_2, error_class_2] + selection_no_update + ['End date must be after start date.']
                 
                 csv_map = DATA_SOURCE_DROPDOWN
-                future_csv = csv_map[ticket_2]
-                performance_df = load_performance(ticket_2, start_date_2, end_date_2, PERFORMANCE_CSV)
+                future_csv = csv_map[ticker_2]
+                performance_df = load_performance(ticker_2, start_date_2, end_date_2, PERFORMANCE_CSV)
                 future_df = load_future(start_date_2, end_date_2, future_csv)
                 if performance_df.empty:
                     return [data_store_1, data_store_2,
@@ -126,7 +126,7 @@ def register_data_callbacks(app):
                 data_store_2 = {
                     'performance': performance_df.to_dict('records'),
                     'future': future_df.to_dict('records'),
-                    'ticket': ticket_2,
+                    'ticker': ticker_2,
                     'analysis': analysis_2,
                     'granularity': granularity_2 if category_2 == 'Period' else None,
                     'window': window_2 if category_2 == 'Rolling' else None,  # Add window only for Rolling

@@ -4,7 +4,7 @@ from dashboard.config.settings import TIMEZONE
 import pytz
 
 
-def load_performance(ticket, start_date, end_date, csv_path):
+def load_performance(ticker, start_date, end_date, csv_path):
     try:
         df = pd.read_csv(csv_path)
 
@@ -19,8 +19,8 @@ def load_performance(ticket, start_date, end_date, csv_path):
         # Filter by date range
         mask = (df['TradeDay'] >= start_date) & (df['TradeDay'] <= end_date)
         df = df[mask]
-        # Apply ticket prefix filter on ContractName
-        df = df[df['ContractName'].str.startswith(ticket)]
+        # Apply ticker prefix filter on ContractName
+        df = df[df['ContractName'].str.startswith(ticker)]
 
         return df.reset_index(drop=True)
     

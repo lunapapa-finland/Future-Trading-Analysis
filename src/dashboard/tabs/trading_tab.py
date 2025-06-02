@@ -12,11 +12,11 @@ class TradingTab(BaseTab):
         return dbc.Card([
             dbc.CardBody([
                 html.Div([
-                    html.Label('Ticket', className=CLASS_LABEL),
+                    html.Label('Ticker', className=CLASS_LABEL),
                     dcc.Dropdown(
-                        id='ticket-selector-1',
-                        options=[{'label': ticket, 'value': ticket} for ticket in DATA_SOURCE_DROPDOWN.keys()],
-                        placeholder='Ticket Name',
+                        id='ticker-selector-1',
+                        options=[{'label': ticker, 'value': ticker} for ticker in DATA_SOURCE_DROPDOWN.keys()],
+                        placeholder='Ticker Name',
                         className=CLASS_DROPDOWN,
                         value=DEFAULT_DATA_SOURCE
                     ),

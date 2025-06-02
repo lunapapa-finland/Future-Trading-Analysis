@@ -38,7 +38,7 @@ def register_display_callbacks(app):
         new_trace_index = int(current_trace_index) if current_trace_index is not None else 0
 
         if trigger_id in ['prev-button-1', 'next-button-1'] and data_store_1:
-            ticket = data_store_1.get('ticket', 'Unknown')
+            ticker = data_store_1.get('ticker', 'Unknown')
             performance_df = pd.DataFrame(data_store_1['performance'])
             future_df = pd.DataFrame(data_store_1['future'])
             num_traces = len(performance_df) if not performance_df.empty else 0
@@ -49,7 +49,7 @@ def register_display_callbacks(app):
                 new_trace_index = min(num_traces, new_trace_index + 1)
 
             if not future_df.empty:
-                fig = get_candlestick_plot(ticket, future_df, performance_df, current_trace_index=new_trace_index)
+                fig = get_candlestick_plot(ticker, future_df, performance_df, current_trace_index=new_trace_index)
                 future_plot = dcc.Graph(
                     id='candlestick-plot',
                     figure=fig,
@@ -158,7 +158,7 @@ def register_display_callbacks(app):
                     ])
 
                 content_1 = html.Div([
-                    html.H2(f'{ticket} Futures Data', className='text-xl font-semibold mb-4'),
+                    html.H2(f'{ticker} Futures Data', className='text-xl font-semibold mb-4'),
                     html.Div(future_plot, style={'width': '100%'}),
                     html.Div(trade_table, style={'marginTop': '20px'}),
                     html.Div(stats_content, style={'width': '100%'})
@@ -169,14 +169,14 @@ def register_display_callbacks(app):
             return [default_content, content_2, new_trace_index]
 
         if trigger_id == 'data-store-1' and data_store_1:
-            ticket = data_store_1.get('ticket', 'Unknown')
+            ticker = data_store_1.get('ticker', 'Unknown')
             performance_df = pd.DataFrame(data_store_1['performance'])
             future_df = pd.DataFrame(data_store_1['future'])
 
             if future_df.empty:
-                future_plot = html.P(f'No futures data for {ticket}', className='text-gray-500')
+                future_plot = html.P(f'No futures data for {ticker}', className='text-gray-500')
             else:
-                fig = get_candlestick_plot(ticket, future_df, performance_df, current_trace_index=new_trace_index)
+                fig = get_candlestick_plot(ticker, future_df, performance_df, current_trace_index=new_trace_index)
                 future_plot = dcc.Graph(
                     id='candlestick-plot',
                     figure=fig,
@@ -241,14 +241,14 @@ def register_display_callbacks(app):
                 ])
 
             content_1 = html.Div([
-                html.H2(f'{ticket} Futures Data', className='text-xl font-semibold mb-4'),
+                html.H2(f'{ticker} Futures Data', className='text-xl font-semibold mb-4'),
                 html.Div(future_plot, style={'width': '100%'}),
                 html.Div(stats_content, style={'width': '100%'})
             ], style={'display': 'block', 'maxWidth': '100%', 'overflowX': 'auto'})
             return [content_1, content_2, new_trace_index]
 
         if trigger_id == 'data-store-2' and data_store_2:
-            ticket = data_store_2.get('ticket', 'Unknown')
+            ticker = data_store_2.get('ticker', 'Unknown')
             analysis = data_store_2.get('analysis', 'Unknown')
             performance_df = pd.DataFrame(data_store_2.get('performance', []))
             
@@ -272,7 +272,7 @@ def register_display_callbacks(app):
                             result = pnl_growth(performance_df, granularity=granularity, daily_compounding_rate=daily_compounding_rate, initial_funding=initial_funding)
                             y_col = 'CumulativePnL'
                             y_title = 'Cumulative Return ($)'
-                            chart_title = f'{ticket} - PnL Growth(Net) vs. Passive Growth ({granularity_label})'
+                            chart_title = f'{ticker} - PnL Growth(Net) vs. Passive Growth ({granularity_label})'
                             line_color = 'blue'
                             # Line chart for PnL Growth
                             if result.empty:
@@ -307,7 +307,7 @@ def register_display_callbacks(app):
                                     showlegend=True
                                 )
                                 content_2 = html.Div([
-                                    html.H2(f'{ticket} - {analysis}', className='text-xl font-semibold mb-4'),
+                                    html.H2(f'{ticker} - {analysis}', className='text-xl font-semibold mb-4'),
                                     dcc.Graph(id=f'{analysis.lower()}-chart', figure=fig, responsive=True, style={'width': '100%'})
                                 ])
 
@@ -315,7 +315,7 @@ def register_display_callbacks(app):
                             result = drawdown(performance_df, granularity=granularity)
                             y_col = 'Drawdown'
                             y_title = 'Drawdown ($)'
-                            chart_title = f'{ticket} - Drawdown ({granularity_label})'
+                            chart_title = f'{ticker} - Drawdown ({granularity_label})'
                             line_color = 'red'
                             # Line chart for Drawdown
                             if result.empty:
@@ -341,13 +341,13 @@ def register_display_callbacks(app):
                                     hovermode='x unified'
                                 )
                                 content_2 = html.Div([
-                                    html.H2(f'{ticket} - {analysis}', className='text-xl font-semibold mb-4'),
+                                    html.H2(f'{ticker} - {analysis}', className='text-xl font-semibold mb-4'),
                                     dcc.Graph(id=f'{analysis.lower()}-chart', figure=fig, responsive=True, style={'width': '100%'})
                                 ])
 
                         elif analysis == 'Performance Envelope':
                             theoretical_data, actual_data = performance_envelope(performance_df, granularity=granularity)
-                            chart_title = f'{ticket} - Performance Envelope ({granularity_label})'
+                            chart_title = f'{ticker} - Performance Envelope ({granularity_label})'
                             fig = go.Figure()
 
                             # Theoretical Envelope Curve
@@ -415,7 +415,7 @@ def register_display_callbacks(app):
                             )
 
                             content_2 = html.Div([
-                                html.H2(f'{ticket} - {analysis}', className='text-xl font-semibold mb-4'),
+                                html.H2(f'{ticker} - {analysis}', className='text-xl font-semibold mb-4'),
                                 dcc.Graph(id=f'{analysis.lower()}-chart', figure=fig, responsive=True, style={'width': '100%'})
                             ])
 
@@ -425,7 +425,7 @@ def register_display_callbacks(app):
                     elif category == 'Overall':
                         if analysis == 'PnL Distribution':
                             result = pnl_distribution(performance_df)
-                            chart_title = f'{ticket} - PnL Distribution'
+                            chart_title = f'{ticker} - PnL Distribution'
                             if result.empty or 'PnL(Net)' not in result:
                                 content_2 = html.P('No data available for the selected period.', className='text-gray-500')
                             else:
@@ -450,12 +450,12 @@ def register_display_callbacks(app):
                                     showlegend=True
                                 )
                                 content_2 = html.Div([
-                                    html.H2(f'{ticket} - {analysis}', className='text-xl font-semibold mb-4'),
+                                    html.H2(f'{ticker} - {analysis}', className='text-xl font-semibold mb-4'),
                                     dcc.Graph(id='pnl-distribution-chart', figure=fig, responsive=True, style={'width': '100%'})
                                 ])
                         elif analysis == 'Behavioral Patterns':
                             result = behavioral_patterns(performance_df)
-                            chart_title = f'{ticket} - Behavioral Patterns'
+                            chart_title = f'{ticker} - Behavioral Patterns'
                             if result.empty or 'TradeCount' not in result or 'AvgPnL' not in result:
                                 content_2 = html.P('No data available for the selected period.', className='text-gray-500')
                             else:
@@ -492,7 +492,7 @@ def register_display_callbacks(app):
                                     showlegend=False
                                 )
                                 content_2 = html.Div([
-                                    html.H2(f'{ticket} - {analysis}', className='text-xl font-semibold mb-4'),
+                                    html.H2(f'{ticker} - {analysis}', className='text-xl font-semibold mb-4'),
                                     dcc.Graph(id='behavioral-patterns-chart', figure=fig, responsive=True, style={'width': '100%'})
                                 ])
                         elif analysis == 'Overtrading Detection':
@@ -500,7 +500,7 @@ def register_display_callbacks(app):
                             cap_trades_after_big_loss = ANALYSIS_DROPDOWN[analysis].get('cap_trades_after_big_loss', 5)
                             daily_df, trade_df = overtrading_detection(performance_df, cap_loss_per_trade, cap_trades_after_big_loss)
                             
-                            chart_title = f'{ticket} - Overtrading Detection'
+                            chart_title = f'{ticker} - Overtrading Detection'
                             if daily_df.empty or 'TradesPerDay' not in daily_df or 'DailyPnL' not in daily_df:
                                 content_2 = html.P('No data available for the selected period.', className='text-gray-500')
                             else:
@@ -617,7 +617,7 @@ def register_display_callbacks(app):
                                     revenge_fig.add_hline(y=0, line_dash='dash', line_color='black', annotation_text='Break-even')
                                     
                                     revenge_fig.update_layout(
-                                        title=dict(text=f'{ticket} - R-multiple Analysis Post-Loss', x=0.5, xanchor='center', font=dict(size=24)),
+                                        title=dict(text=f'{ticker} - R-multiple Analysis Post-Loss', x=0.5, xanchor='center', font=dict(size=24)),
                                         xaxis_title='Trade Index',
                                         yaxis_title='R-multiple',
                                         template='plotly_white',
@@ -631,14 +631,14 @@ def register_display_callbacks(app):
                                 
                                 # Combine plots
                                 content_2 = html.Div([
-                                    html.H2(f'{ticket} - {analysis}', className='text-xl font-semibold mb-4'),
+                                    html.H2(f'{ticker} - {analysis}', className='text-xl font-semibold mb-4'),
                                     dcc.Graph(id='overtrading-scatter', figure=scatter_fig, responsive=True, style={'width': '100%'}),
                                     dcc.Graph(id='overtrading-line', figure=line_fig, responsive=True, style={'width': '100%'}),
                                     dcc.Graph(id='revenge-scatter', figure=revenge_fig, responsive=True, style={'width': '100%'}) if revenge_fig else html.P('No data for revenge trading analysis.', className='text-gray-500')
                                 ])
                         elif analysis == 'Kelly Criterion':
                             result = kelly_criterion(performance_df)
-                            chart_title = f'{ticket} - Kelly Criterion (Category: {result["metadata"]["Kelly Criterion"]["category"]})'
+                            chart_title = f'{ticker} - Kelly Criterion (Category: {result["metadata"]["Kelly Criterion"]["category"]})'
                             
                             # Check if the DataFrame (inside "data") is empty or lacks 'KellyValue'
                             if result["data"].empty or 'KellyValue' not in result["data"]:
@@ -666,7 +666,7 @@ def register_display_callbacks(app):
                                     legend=dict(x=0, y=1.1, orientation='h')
                                 )
                                 content_2 = html.Div([
-                                    html.H2(f'{ticket} - {analysis}', className='text-xl font-semibold mb-4'),
+                                    html.H2(f'{ticker} - {analysis}', className='text-xl font-semibold mb-4'),
                                     dcc.Graph(id='kelly-criterion-chart', figure=fig, responsive=True, style={'width': '100%'})
                                 ])
                         else:
@@ -712,7 +712,7 @@ def register_display_callbacks(app):
                                     line=dict(color='#ef4444', width=2, dash='dash')
                                 ))
                                 fig.update_layout(
-                                    title=dict(text=f'{ticket} - Rolling Win Rate Analysis (Window: {window} Trades)', x=0.5, xanchor='center', font=dict(size=20)),
+                                    title=dict(text=f'{ticker} - Rolling Win Rate Analysis (Window: {window} Trades)', x=0.5, xanchor='center', font=dict(size=20)),
                                     xaxis_title='Trade Index',
                                     yaxis_title='Win Rate (%)',
                                     template='plotly_white',
@@ -723,7 +723,7 @@ def register_display_callbacks(app):
                                     showlegend=True
                                 )
                                 content_2 = html.Div([
-                                    html.H2(f'{ticket} - Rolling Win Rate Analysis (Window: {window} Trades)', className='text-xl font-semibold mb-4'),
+                                    html.H2(f'{ticker} - Rolling Win Rate Analysis (Window: {window} Trades)', className='text-xl font-semibold mb-4'),
                                     dcc.Graph(id='rolling-win-rate-chart', figure=fig, responsive=True, style={'width': '100%'})
                                 ])
                         
@@ -750,7 +750,7 @@ def register_display_callbacks(app):
                                     line=dict(color='#ef4444', width=2, dash='dash')
                                 ))
                                 fig.update_layout(
-                                    title=dict(text=f'{ticket} - Sharpe Ratio Analysis (Window: {window} Days)', x=0.5, xanchor='center', font=dict(size=20)),
+                                    title=dict(text=f'{ticker} - Sharpe Ratio Analysis (Window: {window} Days)', x=0.5, xanchor='center', font=dict(size=20)),
                                     xaxis_title='Date',
                                     yaxis_title='Sharpe Ratio',
                                     template='plotly_white',
@@ -761,7 +761,7 @@ def register_display_callbacks(app):
                                     showlegend=True
                                 )
                                 content_2 = html.Div([
-                                    html.H2(f'{ticket} - Sharpe Ratio Analysis (Window: {window} Days)', className='text-xl font-semibold mb-4'),
+                                    html.H2(f'{ticker} - Sharpe Ratio Analysis (Window: {window} Days)', className='text-xl font-semibold mb-4'),
                                     dcc.Graph(id='sharpe-ratio-chart', figure=fig, responsive=True, style={'width': '100%'})
                                 ])
                         
@@ -795,7 +795,7 @@ def register_display_callbacks(app):
                                     'Exited At: %{customdata.ExitedAt}<br>'
                                 ))
                                 fig.update_layout(
-                                    title=dict(text=f'{ticket} - Trade Efficiency Analysis (Window: {window} Trades)', x=0.5, xanchor='center', font=dict(size=20)),
+                                    title=dict(text=f'{ticker} - Trade Efficiency Analysis (Window: {window} Trades)', x=0.5, xanchor='center', font=dict(size=20)),
                                     xaxis_title='Trade Index',
                                     yaxis_title='Efficiency ($/Hour)',
                                     template='plotly_white',
@@ -806,7 +806,7 @@ def register_display_callbacks(app):
                                     showlegend=True
                                 )
                                 content_2 = html.Div([
-                                    html.H2(f'{ticket} - Trade Efficiency Analysis (Window: {window} Trades)', className='text-xl font-semibold mb-4'),
+                                    html.H2(f'{ticker} - Trade Efficiency Analysis (Window: {window} Trades)', className='text-xl font-semibold mb-4'),
                                     dcc.Graph(id='trade-efficiency-chart', figure=fig, responsive=True, style={'width': '100%'})
                                 ])             
                         elif analysis == 'Hourly Performance':
@@ -838,7 +838,7 @@ def register_display_callbacks(app):
                                     line=dict(color='#ef4444', width=2, dash='dash')
                                 ))
                                 fig.update_layout(
-                                    title=dict(text=f'{ticket} - Hourly Performance Analysis (Window: {window} Hours)', x=0.5, xanchor='center', font=dict(size=20)),
+                                    title=dict(text=f'{ticker} - Hourly Performance Analysis (Window: {window} Hours)', x=0.5, xanchor='center', font=dict(size=20)),
                                     xaxis_title='Hourly Index',
                                     yaxis_title='Hourly PnL ($)',
                                     template='plotly_white',
@@ -849,7 +849,7 @@ def register_display_callbacks(app):
                                     showlegend=True
                                 )
                                 content_2 = html.Div([
-                                    html.H2(f'{ticket} - Hourly Performance Analysis (Window: {window} Hours)', className='text-xl font-semibold mb-4'),
+                                    html.H2(f'{ticker} - Hourly Performance Analysis (Window: {window} Hours)', className='text-xl font-semibold mb-4'),
                                     dcc.Graph(id='hourly-performance-chart', figure=fig, responsive=True, style={'width': '100%'})
                                 ])
 
