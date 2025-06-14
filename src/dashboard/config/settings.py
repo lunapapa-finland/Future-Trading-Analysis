@@ -67,14 +67,16 @@ FUTURE_DIR = BASE_DIR / 'data' / 'future'
 PERFORMANCE_CSV = str(PERFORMANCE_DIR / 'Combined_performance_for_dash_project.csv')
 MES_CSV = str(FUTURE_DIR / 'MES.csv')
 MNQ_CSV = str(FUTURE_DIR / 'MNQ.csv')
-MGC_CSV = str(FUTURE_DIR / 'MGC.csv')
-
+M2K_CSV = str(FUTURE_DIR / 'M2K.csv')
+M6E_CSV = str(FUTURE_DIR / 'M6E.csv')
+M6B_CSV = str(FUTURE_DIR / 'M6B.csv')
+MBT_CSV = str(FUTURE_DIR / 'MBT.csv') 
 
 # -----------------------------------
 # Section 4: Trading Behavior Settings
 # -----------------------------------
 
-DATA_SOURCE_DROPDOWN = {'MES': MES_CSV, 'MNQ': MNQ_CSV, 'MGC': MGC_CSV}
+DATA_SOURCE_DROPDOWN = {'MES': MES_CSV, 'MNQ': MNQ_CSV, 'M2K': M2K_CSV, 'M6E': M6E_CSV, 'M6B': M6B_CSV, 'MBT': MBT_CSV}
 DEFAULT_DATA_SOURCE = 'MES'
 CURRENT_DATE = date.today().strftime('%Y-%m-%d')  # e.g., '2025-05-19'
 

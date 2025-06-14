@@ -105,8 +105,9 @@ def acquire_missing_data(max_retries=5, retry_delay=10, fallback_source=None):
     for symbol, csv_path in DATA_SOURCE_DROPDOWN.items():
         last_date = get_last_date_in_csv(csv_path)
         if last_date is None:
-            logging.error(f"No valid data in {csv_path}. Cannot proceed without a starting date.")
-            continue
+            logging.info(f"No valid data in {csv_path}. Initializing last_date to 30 days before current_date.")
+            last_date = (current_date - pd.Timedelta(days=30)).date()
+            # continue
 
         # Find gap days from the day after the last date to target_date
         start_date = last_date + timedelta(days=1)
@@ -124,13 +125,14 @@ def acquire_missing_data(max_retries=5, retry_delay=10, fallback_source=None):
                 continue
 
             ticker = get_active_contract(symbol, current_date)
-            end_day = day + timedelta(days=1)
+            # end_day = day + timedelta(days=1)
             for attempt in range(max_retries):
                 try:
                     df = yf.download(
                         tickers=ticker,
                         start=str(day),
-                        end=str(end_day),
+                        # end=str(end_day),
+                        period="1d",
                         auto_adjust=False,
                         interval="5m",
                         ignore_tz=False,
