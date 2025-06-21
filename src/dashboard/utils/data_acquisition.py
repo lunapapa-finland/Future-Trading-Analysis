@@ -4,7 +4,8 @@ import logging
 import time
 from datetime import timedelta
 from pathlib import Path
-from dashboard.config.settings import DATA_SOURCE_DROPDOWN, ACQUISITION_LAST_BUSINESS_DATE, CURRENT_DATE, CMEHolidayCalendar, TIMEZONE, LOGGING_PATH
+from dashboard.config.settings import SYMBOL_ASSET_CLASS, EXCHANGE, DATA_SOURCE_DROPDOWN, ACQUISITION_LAST_BUSINESS_DATE, CURRENT_DATE, CMEHolidayCalendar, TIMEZONE, LOGGING_PATH
+import datetime
 
 # Configure logging
 logging.basicConfig(
@@ -50,26 +51,77 @@ def is_holiday(date):
     holidays = calendar.holidays(start=date, end=date)
     return date in holidays
 
-def get_active_contract(symbol, current_date):
-    """Determine the active futures contract using a quarterly roll approximation."""
+def get_third_friday(year, month):
+    """Calculate the third Friday of the given month and year."""
+    first_day = datetime.date(year, month, 1)
+    first_friday = first_day + datetime.timedelta(days=(4 - first_day.weekday() + 7) % 7)
+    third_friday = first_friday + datetime.timedelta(weeks=2)
+    return third_friday
+
+def get_last_wednesday(year, month):
+    """Calculate the last Wednesday of the given month and year."""
+    next_month = month % 12 + 1
+    next_year = year + (month // 12)
+    first_day_next_month = datetime.date(next_year, next_month, 1)
+    last_day = first_day_next_month - datetime.timedelta(days=1)
+    days_to_wednesday = (last_day.weekday() - 2) % 7  # Wednesday = 2
+    last_wednesday = last_day - datetime.timedelta(days=days_to_wednesday)
+    return last_wednesday
+
+def get_active_contract(symbol, current_date=None):
+    """Determine the active futures contract for intraday/swing trading with precise rollover."""
     try:
-        # Use 'CME' for MES, 'CMX' for MGC
-        exchange = "CMX" if symbol == "MGC" else "CME"
+        # Validate symbol
+        if symbol not in DATA_SOURCE_DROPDOWN:
+            raise ValueError(f"Invalid symbol: {symbol}. Must be one of {list(DATA_SOURCE_DROPDOWN.keys())}")
+
+        # Handle current_date
+        if current_date is None:
+            current_date = datetime.date.today()
+        elif isinstance(current_date, str):
+            current_date = datetime.datetime.strptime(current_date, '%Y-%m-%d').date()
+        elif isinstance(current_date, datetime.datetime):
+            current_date = current_date.date()
+
+        current_year = current_date.year
         current_month = current_date.month
-        # Futures contracts typically roll in Mar (H), Jun (M), Sep (U), Dec (Z)
-        month_codes = ['H', 'M', 'U', 'Z']  # Mar, Jun, Sep, Dec
-        # Find the next roll month after the current month
-        roll_months = [3, 6, 9, 12]
-        month_idx = next(i for i, rm in enumerate(roll_months) if current_month <= rm)
-        year = current_date.year
-        if current_month > roll_months[month_idx]:
-            month_idx = (month_idx + 1) % 4
-            if month_idx == 0:
-                year += 1
-        month_code = month_codes[month_idx]
-        contract_year = str(year)[-2:]
-        # Yahoo Finance format: e.g., MESM25.CME or MGCM25.CMX
-        return f"{symbol}{month_code}{contract_year}.{exchange}"
+        asset_class = SYMBOL_ASSET_CLASS.get(symbol, 'equity')  # Default to equity
+        exchange = EXCHANGE[0]  # CME
+
+        if asset_class in ['equity', 'fx']:  # MES, MNQ, M2K, M6E, M6B
+            month_codes = ['H', 'M', 'U', 'Z']  # Mar, Jun, Sep, Dec
+            roll_months = [3, 6, 9, 12]
+            month_idx = next(i for i, rm in enumerate(roll_months) if current_month <= rm)
+            contract_month = roll_months[month_idx]
+            contract_year = current_year
+            # Roll on Wednesday before third Friday
+            third_friday = get_third_friday(current_year, contract_month)
+            rollover_date = third_friday - datetime.timedelta(days=2)  # Wednesday
+            if current_date >= rollover_date:
+                month_idx = (month_idx + 1) % 4
+                contract_month = roll_months[month_idx]
+                if month_idx == 0:
+                    contract_year += 1
+            month_code = month_codes[month_idx]
+
+        elif asset_class == 'crypto':  # MBT, MET
+            month_codes = ['F', 'G', 'H', 'J', 'K', 'M', 'N', 'Q', 'U', 'V', 'X', 'Z']  # Jan-Dec
+            roll_months = list(range(1, 13))
+            month_idx = next(i for i, rm in enumerate(roll_months) if current_month <= rm)
+            contract_month = roll_months[month_idx]
+            contract_year = current_year
+            # Roll on last Wednesday of the month
+            rollover_date = get_last_wednesday(current_year, contract_month)
+            if current_date >= rollover_date:
+                month_idx = (month_idx + 1) % 12
+                contract_month = roll_months[month_idx]
+                if month_idx == 0:
+                    contract_year += 1
+            month_code = month_codes[month_idx]
+
+        contract_year_str = str(contract_year)[-2:]  # Last two digits of year
+        return f"{symbol}{month_code}{contract_year_str}.{exchange}"
+
     except Exception as e:
         logging.error(f"Error determining active contract for {symbol}: {e}")
         return f"{symbol}M{str(current_date.year)[-2:]}.{exchange}"
@@ -89,7 +141,7 @@ def validate_data(df, day):
     if actual_rows != expected_rows:
         missing_rows = expected_rows - actual_rows
         if 0 < missing_rows <= 6:
-            rth_data = rth_data.resample('5T').mean().interpolate()
+            rth_data = rth_data.resample('5min').mean().interpolate()
             logging.info(f"Interpolated {missing_rows} missing rows for {day}")
         elif missing_rows < 0:
             logging.warning(f"Excess rows ({actual_rows}) for {day}. Trimming to {expected_rows}.")
@@ -106,7 +158,7 @@ def acquire_missing_data(max_retries=5, retry_delay=10, fallback_source=None):
         last_date = get_last_date_in_csv(csv_path)
         if last_date is None:
             logging.info(f"No valid data in {csv_path}. Initializing last_date to 30 days before current_date.")
-            last_date = (current_date - pd.Timedelta(days=30)).date()
+            last_date = (current_date - pd.Timedelta(days=20)).date()
             # continue
 
         # Find gap days from the day after the last date to target_date
@@ -124,7 +176,7 @@ def acquire_missing_data(max_retries=5, retry_delay=10, fallback_source=None):
                 logging.info(f"Data for {day} already exists in {csv_path}. Skipping.")
                 continue
 
-            ticker = get_active_contract(symbol, current_date)
+            ticker = get_active_contract(symbol, day)
             # end_day = day + timedelta(days=1)
             for attempt in range(max_retries):
                 try:

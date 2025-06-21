@@ -62,6 +62,7 @@ LOGGING_PATH = BASE_DIR / 'log' / 'app.log'  # Path for logging
 # -----------------------------------
 # Section 3: Data File Paths
 # -----------------------------------
+EXCHANGE = ['CME']  # Exchange for futures trading
 PERFORMANCE_DIR = BASE_DIR / 'data' / 'performance'
 FUTURE_DIR = BASE_DIR / 'data' / 'future'
 PERFORMANCE_CSV = str(PERFORMANCE_DIR / 'Combined_performance_for_dash_project.csv')
@@ -71,12 +72,24 @@ M2K_CSV = str(FUTURE_DIR / 'M2K.csv')
 M6E_CSV = str(FUTURE_DIR / 'M6E.csv')
 M6B_CSV = str(FUTURE_DIR / 'M6B.csv')
 MBT_CSV = str(FUTURE_DIR / 'MBT.csv') 
+MET_CSV = str(FUTURE_DIR / 'MET.csv')  
 
+
+SYMBOL_ASSET_CLASS = {
+    'MES': 'equity',  # Micro E-mini S&P 500
+    'MNQ': 'equity',  # Micro E-mini Nasdaq-100
+    'M2K': 'equity',  # Micro E-mini Russell 2000
+    'M6E': 'fx',      # Micro EUR/USD
+    'M6B': 'fx',      # Micro GBP/USD
+    'MBT': 'crypto',  # Micro Bitcoin
+    'MET': 'crypto'   # Micro Ether
+}
 # -----------------------------------
 # Section 4: Trading Behavior Settings
 # -----------------------------------
 
-DATA_SOURCE_DROPDOWN = {'MES': MES_CSV, 'MNQ': MNQ_CSV, 'M2K': M2K_CSV, 'M6E': M6E_CSV, 'M6B': M6B_CSV, 'MBT': MBT_CSV}
+DATA_SOURCE_DROPDOWN = {'MES': MES_CSV, 'MNQ': MNQ_CSV, 'M2K': M2K_CSV, 'M6E': M6E_CSV, 'M6B': M6B_CSV, 'MBT': MBT_CSV, 'MET': MET_CSV}
+
 DEFAULT_DATA_SOURCE = 'MES'
 CURRENT_DATE = date.today().strftime('%Y-%m-%d')  # e.g., '2025-05-19'
 
