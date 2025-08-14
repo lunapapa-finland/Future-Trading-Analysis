@@ -10,8 +10,8 @@ from dashboard.utils.performance_acquisition import acquire_missing_performance
 import dash_bootstrap_components as dbc
 
 # Run data acquisition before app initialization
-acquire_missing_data()
-acquire_missing_performance()
+# acquire_missing_data()
+# acquire_missing_performance()
 
 # Initialize Dash app with routes and requests pathname prefixes
 app = Dash(
@@ -24,6 +24,10 @@ app = Dash(
     routes_pathname_prefix='/',
     requests_pathname_prefix='/'
 )
+
+# Health endpoint for container/orchestrator checks
+app.server.add_url_rule("/health", "health", lambda: ("ok", 200))
+
 
 # Serve static assets (e.g., logo)
 app.css.config.serve_locally = True
@@ -97,4 +101,7 @@ def toggle_sidebar(n_clicks, is_open):
     return not is_open
 
 if __name__ == '__main__':
+    # Only in local dev runs
+    acquire_missing_data()
+    acquire_missing_performance()
     app.run(debug=DEBUG_FLAG)

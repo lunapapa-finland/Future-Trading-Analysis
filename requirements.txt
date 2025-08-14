@@ -1,0 +1,13 @@
+dash
+dash-bootstrap-components
+plotly
+flask
+werkzeug
+pandas
+numpy
+scipy
+matplotlib
+pandas-market-calendars
+yfinance
+gunicorn
+pytz

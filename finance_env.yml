@@ -1,33 +1,9 @@
 name: finance_env
 channels:
+  - conda-forge
   - defaults
-  - conda-forge  
 dependencies:
-  - python=3.9.6
-  - pandas
-  - pytz
-  - numpy
-  - matplotlib
-  - scipy
-  - pandas_market_calendars
-  - ipykernel
+  - python=3.9.6        
   - pip
   - pip:
-      - yfinance
-      - plotly
-      - jinja2
-      - markdown2
-      - IPython
-      - dash
-      - opencv-python
-      - cookiecutter
-      - matplotlib
-      - pandas_market_calendars
-      - scipy
-      - dash
-      - papaparse
-      - dash-bootstrap-components
-      - flask
-      - werkzeug
-      - opencv-python
-      - cookiecutter
+      - -r file:requirements.txt
