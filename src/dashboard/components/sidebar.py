@@ -34,7 +34,7 @@ def get_sidebar():
             dbc.Row([dbc.Col(
                             html.A(
                                 'Contact Me',
-                                href='https://lunapapa.eu/about',
+                                href='mailto:info@lunapapa.eu',
                                 target='_blank',  # Opens link in a new tab
                                 className='text-blue-500 hover:text-blue-700 mt-4 block text-center'
                             )
