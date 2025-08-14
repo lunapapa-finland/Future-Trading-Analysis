@@ -6,7 +6,7 @@ from dashboard.config.settings import ANALYSIS_DROPDOWN, DEFAULT_GRANULARITY, GR
 from dashboard.analysis.compute import pnl_growth, drawdown, pnl_distribution, behavioral_patterns, rolling_win_rate, sharpe_ratio, trade_efficiency, hourly_performance, performance_envelope, overtrading_detection, kelly_criterion
 
 def register_display_callbacks(app):
-    app.layout.children.insert(0, dcc.Store(id='current-trace-index-1', data=0))
+    # app.layout.children.insert(0, dcc.Store(id='current-trace-index-1', data=0))
 
     @app.callback(
         [
