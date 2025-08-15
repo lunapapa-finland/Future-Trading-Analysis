@@ -94,3 +94,6 @@ Summary.md
 # Mypy cache
 .mypy_cache/
 
+src/dashboard/config/credentials.env
+
+docker-compose.override.yml

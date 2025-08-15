@@ -1,0 +1,13 @@
+.git
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv
+build/
+dist/
+*.egg-info/
+log/*.log*
+src/dashboard/config/credentials.env
+docker-compose.override.yml

@@ -1,0 +1,5 @@
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+*/10 * * * * root cd /app && /usr/local/bin/python /app/jobs/run_trading_if_ready.py >> /app/log/cron_trading_gate.log 2>&1
+*/5  * * * * root cd /app && /usr/local/bin/python /app/jobs/run_perf_if_files.py   >> /app/log/cron_perf_poll.log   2>&1

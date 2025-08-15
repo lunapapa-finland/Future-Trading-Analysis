@@ -8,6 +8,24 @@ from dashboard.components.sidebar import get_sidebar, get_sidebar_toggle
 from dashboard.utils.data_acquisition import acquire_missing_data
 from dashboard.utils.performance_acquisition import acquire_missing_performance
 import dash_bootstrap_components as dbc
+import dash_auth
+import os, secrets
+
+import logging
+from logging.handlers import TimedRotatingFileHandler
+from dashboard.config.settings import LOGGING_PATH, LOG_DIR
+from dotenv import load_dotenv
+
+os.makedirs(LOG_DIR, exist_ok=True)
+file_handler = TimedRotatingFileHandler(
+    filename=str(LOGGING_PATH), when="midnight", interval=1, backupCount=14, encoding="utf-8"
+)
+file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+file_handler.setLevel(logging.INFO)
+root = logging.getLogger()
+root.setLevel(logging.INFO)
+root.addHandler(file_handler)
+
 
 # Run data acquisition before app initialization
 # acquire_missing_data()
@@ -25,8 +43,25 @@ app = Dash(
     requests_pathname_prefix='/'
 )
 
+
+load_dotenv("config/credentials.env")
+
+# must be set for Flask sessions; required by dash-auth
+app.server.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or secrets.token_urlsafe(32)
+VALID = { os.environ.get("DASH_USER", "admin") : os.environ.get("DASH_PASS", "change-me") }
+auth = dash_auth.BasicAuth(app, VALID)
+
+
+
 # Health endpoint for container/orchestrator checks
 app.server.add_url_rule("/health", "health", lambda: ("ok", 200))
+
+# Let health checks bypass auth (optional)
+from flask import request
+@app.server.before_request
+def _allow_health():
+    if request.path == "/health":
+        return None  # bypass auth
 
 
 # Serve static assets (e.g., logo)

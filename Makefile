@@ -1,117 +1,99 @@
-.PHONY: clean performance live test_environment setup data
+.PHONY: install run run-dev data data-gated performance \
+        docker-up docker-down docker-logs docker-rebuild docker-ps \
+        docker-job-trading docker-job-perf clean help
 
-#################################################################################
-# GLOBALS                                                                       #
-#################################################################################
+# -------- Config --------
+PY        ?= python
+GUNI      ?= gunicorn
+HOST      ?= 127.0.0.1
+PORT      ?= 8050
+WORKERS   ?= 2
+TIMEOUT   ?= 120
+ENV_FILE ?= src/dashboard/config/credentials.env
 
-PROJECT_DIR := $(shell dirname $(realpath $(lastword $(MAKEFILE_LIST))))
-PROJECT_NAME = Future_Trading_Analysis
-PYTHON_INTERPRETER = python
+# -------- Local (no Docker) --------
 
+## Install deps locally (editable package)
+install:
+	$(PY) -m pip install -r requirements.txt
+	$(PY) -m pip install -e .
 
-#################################################################################
-# COMMANDS                                                                      #
-#################################################################################
+## Run with Gunicorn (production-style locally)
+run:
+	@set -a; . $(ENV_FILE); set +a; \
+	 gunicorn -b 127.0.0.1:8050 --workers 2 --timeout 120 wsgi:server
 
+## Run with Dash's dev server (debug/reload)
+run-dev:
+	$(PY) src/dashboard/app.py
 
+## Run trading-data acquisition NOW (direct call)
+data:
+	$(PY) src/dashboard/utils/data_acquisition.py
 
-## performance
-performance: setup
-	@$(PYTHON_INTERPRETER) src/dashboard/utils/performance_acquisition.py
-	@$(MAKE) clean >/dev/null 2>&1
+## Run trading-data job with daily gate/stamp logic (respects HOURS_DELAY)
+data-gated:
+	$(PY) jobs/run_trading_if_ready.py
 
-## performance
-data: setup
-	@$(PYTHON_INTERPRETER) src/dashboard/utils/data_acquisition.py
-	@$(MAKE) clean >/dev/null 2>&1
+## Process temp performance CSVs if any (idempotent)
+performance:
+	$(PY) jobs/run_perf_if_files.py
 
-## live
-live: setup performance
-	@$(PYTHON_INTERPRETER) src/dashboard/app.py
-	@$(MAKE) clean >/dev/null 2>&1
+# -------- Docker/Compose helpers --------
 
-## Delete all compiled Python files
+## Start containers (dash + jobs)
+docker-up:
+	docker compose up -d
+
+## Stop/Remove containers
+docker-down:
+	docker compose down
+
+## Rebuild image(s) and restart
+docker-rebuild:
+	docker compose build --no-cache
+	docker compose up -d
+
+## Tail all logs
+docker-logs:
+	docker compose logs -f
+
+## Show container status
+docker-ps:
+	docker compose ps
+
+## Trigger trading job inside the jobs container (once, immediately)
+docker-job-trading:
+	docker exec trading_jobs python /app/jobs/run_trading_if_ready.py
+
+## Trigger performance job inside the jobs container (once, immediately)
+docker-job-perf:
+	docker exec trading_jobs python /app/jobs/run_perf_if_files.py
+
+# -------- Housekeeping --------
+
+## Remove Python caches & build artifacts
 clean:
-	@find . -type f -name "*.py[co]" -delete
-	@find . -type d -name "__pycache__" -exec rm -r {} + >/dev/null 2>&1
-	@find . -type d -name ".ipynb_checkpoints" -exec rm -r {} + >/dev/null 2>&1
-	@find . -type d -name "build" -exec rm -r {} + >/dev/null 2>&1
-	@find . -type d -name "dist" -exec rm -r {} + >/dev/null 2>&1
-	@find . -type d -name "src.egg-info" -exec rm -r {} + >/dev/null 2>&1
+	find . -type f -name "*.py[co]" -delete
+	find . -type d -name "__pycache__" -prune -exec rm -rf {} +
+	rm -rf build dist .pytest_cache .mypy_cache .ruff_cache .coverage *.egg-info
 
-## run setup script
-setup:
-	@$(PYTHON_INTERPRETER) setup.py install >/dev/null 2>&1
-
-
-## Test python environment is setup correctly
-test_environment:
-	$(PYTHON_INTERPRETER) test_environment.py
-
-
-#################################################################################
-# PROJECT RULES                                                                 #
-#################################################################################
-
-
-
-#################################################################################
-# Self Documenting Commands                                                     #
-#################################################################################
-
-.DEFAULT_GOAL := help
-
-# Inspired by <http://marmelab.com/blog/2016/02/29/auto-documented-makefile.html>
-# sed script explained:
-# /^##/:
-# 	* save line in hold space
-# 	* purge line
-# 	* Loop:
-# 		* append newline + line to hold space
-# 		* go to next line
-# 		* if line starts with doc comment, strip comment character off and loop
-# 	* remove target prerequisites
-# 	* append hold space (+ newline) to line
-# 	* replace newline plus comments by `---`
-# 	* print line
-# Separate expressions are necessary because labels cannot be delimited by
-# semicolon; see <http://stackoverflow.com/a/11799865/1968>
-.PHONY: help
+## Show available commands
 help:
-	@echo "$$(tput bold)Available rules:$$(tput sgr0)"
-	@echo
-	@sed -n -e "/^## / { \
-		h; \
-		s/.*//; \
-		:doc" \
-		-e "H; \
-		n; \
-		s/^## //; \
-		t doc" \
-		-e "s/:.*//; \
-		G; \
-		s/\\n## /---/; \
-		s/\\n/ /g; \
-		p; \
-	}" ${MAKEFILE_LIST} \
-	| LC_ALL='C' sort --ignore-case \
-	| awk -F '---' \
-		-v ncol=$$(tput cols) \
-		-v indent=19 \
-		-v col_on="$$(tput setaf 6)" \
-		-v col_off="$$(tput sgr0)" \
-	'{ \
-		printf "%s%*s%s ", col_on, -indent, $$1, col_off; \
-		n = split($$2, words, " "); \
-		line_length = ncol - indent; \
-		for (i = 1; i <= n; i++) { \
-			line_length -= length(words[i]) + 1; \
-			if (line_length <= 0) { \
-				line_length = ncol - indent - length(words[i]) - 1; \
-				printf "\n%*s ", -indent, " "; \
-			} \
-			printf "%s ", words[i]; \
-		} \
-		printf "\n"; \
-	}' \
-	| more $(shell test $(shell uname) = Darwin && echo '--no-init --raw-control-chars')
+	@echo "Targets:"
+	@echo "  install             - pip install requirements + editable package"
+	@echo "  run                 - run with gunicorn on $(HOST):$(PORT)"
+	@echo "  run-dev             - run Dash dev server"
+	@echo "  data                - run data acquisition now"
+	@echo "  data-gated          - run trading job (respects HOURS_DELAY & stamp)"
+	@echo "  performance         - process temp performance CSVs if present"
+	@echo "  docker-up           - docker compose up -d"
+	@echo "  docker-down         - docker compose down"
+	@echo "  docker-rebuild      - rebuild image(s) and restart"
+	@echo "  docker-logs         - tail compose logs"
+	@echo "  docker-ps           - list containers"
+	@echo "  docker-job-trading  - run the trading job inside jobs container"
+	@echo "  docker-job-perf     - run the performance job inside jobs container"
+	@echo "  clean               - remove caches/build artifacts"
+	
+.DEFAULT_GOAL := help

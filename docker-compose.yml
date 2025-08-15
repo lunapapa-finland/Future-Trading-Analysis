@@ -1,0 +1,42 @@
+# docker-compose.yml (no 'version:' at top)
+services:
+  dash:
+    build: .
+    image: trading-dashboard:latest      # <— add this
+    container_name: trading_dash
+    restart: unless-stopped
+    env_file:
+      - src/dashboard/config/credentials.env
+    environment:
+      - TZ=Europe/Helsinki
+      - HOST=0.0.0.0
+      - PORT=8050
+      - WORKERS=2
+      - TIMEOUT=120
+      - LOG_DIR=/app/log
+      - PYTHONPATH=/app:/app/src
+    volumes:
+      - ./data/future:/app/data/future
+      - ./data/performance:/app/data/performance
+      - ./data/temp_performance:/app/data/temp_performance
+      - ./log:/app/log
+    ports:
+      - "127.0.0.1:8050:8050"
+
+  jobs:
+    image: trading-dashboard:latest      # <— reuse the built image
+    container_name: trading_jobs
+    env_file:
+      - src/dashboard/config/credentials.env
+    restart: unless-stopped
+    environment:
+      - TZ=Europe/Helsinki
+      - LOG_DIR=/app/log
+      - HOURS_DELAY=12                    # for Mac testing; switch to 12 on RPi
+      - TRADING_STAMP_PATH=/app/log/.trading_last_run
+    volumes:
+      - ./data/future:/app/data/future
+      - ./data/performance:/app/data/performance
+      - ./data/temp_performance:/app/data/temp_performance
+      - ./log:/app/log
+    command: ["/bin/bash","-lc","cron -f"]

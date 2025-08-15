@@ -8,6 +8,8 @@ extensibility.
 
 # Standard library imports
 import sys
+import os
+import logging
 from pathlib import Path
 from datetime import date
 
@@ -15,6 +17,45 @@ from datetime import date
 import pandas as pd
 from pandas.tseries.holiday import AbstractHolidayCalendar, Holiday, USFederalHolidayCalendar
 from exchange_calendars import get_calendar
+
+log = logging.getLogger(__name__)
+
+# -----------------------------------
+# Robust project root + dirs (Docker-friendly)
+# -----------------------------------
+def _resolve_project_root() -> Path:
+    # 1) Explicit env override (best for Docker)
+    env_root = os.environ.get("PROJECT_ROOT")
+    if env_root:
+        p = Path(env_root).resolve()
+        if p.exists():
+            return p
+
+    # 2) Walk up from this file to find a repo-like root
+    here = Path(__file__).resolve()
+    for parent in [*here.parents]:
+        if (parent / "src" / "dashboard").exists():
+            return parent
+        if (parent / "data").exists() and (parent / "log").exists():
+            return parent
+
+    # 3) Fallback: current working directory (don’t crash)
+    log.warning("PROJECT_ROOT not set; falling back to CWD")
+    return Path.cwd()
+
+BASE_DIR = _resolve_project_root()
+
+# Allow path overrides via env, otherwise default under BASE_DIR
+LOG_DIR = Path(os.environ.get("LOG_DIR", BASE_DIR / "log"))
+DATA_DIR = Path(os.environ.get("DATA_DIR", BASE_DIR / "data"))
+PERFORMANCE_DIR = Path(os.environ.get("PERFORMANCE_DIR", DATA_DIR / "performance"))
+FUTURE_DIR = Path(os.environ.get("FUTURE_DIR", DATA_DIR / "future"))
+TEMP_PERF_DIR = Path(os.environ.get("TEMP_PERFORMANCE_DIR", DATA_DIR / "temp_performance"))
+
+# Ensure directories exist
+for d in (LOG_DIR, DATA_DIR, PERFORMANCE_DIR, FUTURE_DIR, TEMP_PERF_DIR):
+    d.mkdir(parents=True, exist_ok=True)
+
 
 # Define a custom CME holiday calendar
 class CMEHolidayCalendar(AbstractHolidayCalendar):
@@ -36,18 +77,6 @@ class CMEHolidayCalendar(AbstractHolidayCalendar):
         Holiday("Christmas Day", month=12, day=25, observance=lambda d: pd.offsets.CustomBusinessDay(n=1, weekmask='Mon').rollforward(d)),
     ]
 
-# -----------------------------------
-# Section 1: Project Directory Setup
-# -----------------------------------
-project_root = None
-for path in sys.path:
-    candidate = Path(path).resolve()
-    if candidate.name == 'Future-Trading-Analysis' and (candidate / 'src').exists():
-        project_root = candidate
-        break
-if project_root is None:
-    raise RuntimeError("Could not find project root in sys.path.")
-BASE_DIR = project_root
 
 
 
@@ -55,7 +84,7 @@ BASE_DIR = project_root
 # Section 2: General Application Settings
 # -----------------------------------
 DEBUG_FLAG = False  # Enable debug mode
-PORT = 8050  # Port number for the Dash server
+PORT = int(os.environ.get("PORT", "8050"))
 TIMEZONE = 'US/Central'  # Timezone for date/time handling
 LOGGING_PATH = BASE_DIR / 'log' / 'app.log'  # Path for logging
 
