@@ -1,4 +1,4 @@
-.PHONY: install run run-dev data data-gated performance \
+.PHONY: install run run-dev run-dev-data run-dev-performance \
         docker-up docker-down docker-logs docker-rebuild docker-ps \
         docker-job-trading docker-job-perf clean help
 
@@ -27,17 +27,13 @@ run:
 run-dev:
 	$(PY) src/dashboard/app.py
 
-## Run trading-data acquisition NOW (direct call)
-data:
+## Run trading-data acquisition NOW (direct call) in dev
+run-dev-data:
 	$(PY) src/dashboard/utils/data_acquisition.py
 
-## Run trading-data job with daily gate/stamp logic (respects HOURS_DELAY)
-data-gated:
-	$(PY) jobs/run_trading_if_ready.py
-
-## Process temp performance CSVs if any (idempotent)
-performance:
-	$(PY) jobs/run_perf_if_files.py
+## Process temp performance CSVs if any (idempotent) in dev
+run-dev-performance:
+	$(PY) src/dashboard/utils/performance_acquisition.py
 
 # -------- Docker/Compose helpers --------
 
@@ -84,9 +80,8 @@ help:
 	@echo "  install             - pip install requirements + editable package"
 	@echo "  run                 - run with gunicorn on $(HOST):$(PORT)"
 	@echo "  run-dev             - run Dash dev server"
-	@echo "  data                - run data acquisition now"
-	@echo "  data-gated          - run trading job (respects HOURS_DELAY & stamp)"
-	@echo "  performance         - process temp performance CSVs if present"
+	@echo "  run-dev-data        - run data acquisition now without Docker locally"
+	@echo "  run-dev-performance - process temp performance CSVs if present without Docker locally"
 	@echo "  docker-up           - docker compose up -d"
 	@echo "  docker-down         - docker compose down"
 	@echo "  docker-rebuild      - rebuild image(s) and restart"
