@@ -6,11 +6,24 @@ An interactive **Dash** app for futures **data acquisition**, **candlestick char
 
 ## What it does
 
-* **Market data (daily):** fetches & appends yesterday’s trading data (holiday-aware).
-* **Performance data (on demand):** when you drop CSVs into `data/temp_performance/`, they’re detected and processed automatically.
-* **Dashboard:** candles, stats, and behavioral insights for instruments like **MES, MNQ, M2K, M6E, M6B, MBT, MET** (and more if you add them).
+* **Market data (daily):** Automatically fetches & appends yesterday’s trading data (holiday-aware) from [yfinance](https://pypi.org/project/yfinance/)
+* **Performance data (on demand):** when you drop CSVs into `data/temp_performance/`, they’re detected and processed automatically(every 5mins) into the performace data pool.
+* **Dashboard:** candles, stats, and behavioral insights for instruments like **MES, MNQ, M2K, M6E, M6B, MBT, MET** (and more if you add them in the config.py).
 * **Login & health:** basic login for the whole app; `/health` endpoint for simple status checks.
 * **Logging:** rotating app logs in `log/app.log` + small cron logs for the background jobs.
+
+---
+
+## TODO
+
+* Wrapped Backtesting Modual based on [Backtrader](https://www.backtrader.com/)
+* CI/CD
+* Abscract codes for better extension
+* Expose the Congigurations out of py persistently
+* Optimize UI
+
+---
+
 
 ---
 
