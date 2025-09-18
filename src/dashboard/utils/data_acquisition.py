@@ -96,7 +96,7 @@ def get_active_contract(symbol, current_date=None):
             contract_year = current_year
             # Roll on Wednesday before third Friday
             third_friday = get_third_friday(current_year, contract_month)
-            rollover_date = third_friday - datetime.timedelta(days=2)  # Wednesday
+            rollover_date = third_friday - datetime.timedelta(days=4)  # Wednesday
             if current_date >= rollover_date:
                 month_idx = (month_idx + 1) % 4
                 contract_month = roll_months[month_idx]
