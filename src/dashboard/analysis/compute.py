@@ -245,6 +245,83 @@ def sharpe_ratio(performance_df, window=DEFAULT_ROLLING_WINDOW, risk_free_rate=0
     except Exception as e:
         raise ValueError(f"Failed to compute Sharpe ratio: {str(e)}")
 
+# # 日内交易专属参数
+# TRADING_DAYS = 252
+# DEFAULT_WINDOWS = [7, 14, 30]  # 你最爱的三个窗口
+
+# def sharpe_intraday_es(performance_df, 
+#                        initial_capital=100000, 
+#                        risk_free_rate=0.0483,  # 2025.11.06 SOFR = 4.83%，美股期货标配
+#                        windows=DEFAULT_WINDOWS):
+#     """
+#     专为 ES/NQ 日内交易设计，一行代码出 7/14/30 天滚动Sharpe
+#     performance_df 只需要两列：'PnL(Net)' 和 'ExitedAt'（任意时区时间）
+#     """
+#     if performance_df.empty:
+#         return pd.DataFrame()
+    
+#     df = performance_df.copy()
+#     df['date'] = pd.to_datetime(df['ExitedAt']).dt.date
+    
+#     # 1. 按天聚合（日内多笔自动合并）
+#     daily = df.groupby('date')['PnL(Net)'].sum().reset_index()
+#     daily['date'] = pd.to_datetime(daily['date'])
+#     daily = daily.sort_values('date')
+    
+#     # 2. 资金曲线（日内交易最准做法）
+#     capital = initial_capital
+#     capital_series = [capital]
+#     for pnl in daily['PnL(Net)']:
+#         capital += pnl
+#         capital_series.append(capital)
+    
+#     daily['capital'] = capital_series[1:]           # 当天结束时的资金
+#     daily['prev_capital'] = capital_series[:-1]     # 开盘资金
+#     daily['return'] = daily['PnL(Net)'] / daily['prev_capital']
+    
+#     # 3. 补全无交易日（防止周末跳空，√252 更准）
+#     full_dates = pd.date_range(daily['date'].min(), daily['date'].max(), freq='B')
+#     daily = daily.set_index('date').reindex(full_dates).fillna({'PnL(Net)': 0, 'return': 0})
+#     daily = daily.reset_index().rename(columns={'index': 'date'})
+#     daily['capital'] = initial_capital + daily['PnL(Net)'].cumsum()
+#     daily['prev_capital'] = daily['capital'].shift(1).fillna(initial_capital)
+#     daily['return'] = daily['PnL(Net)'] / daily['prev_capital']
+    
+#     # 4. 多窗口滚动Sharpe（向量化，飞快）
+#     returns = daily['return'].values
+#     dates = daily['date'].values
+#     rf_daily = risk_free_rate / TRADING_DAYS
+    
+#     result_list = []
+#     for window in windows:
+#         sharpe_values = np.full(len(returns), np.nan)
+        
+#         for i in range(window - 1, len(returns)):
+#             window_ret = returns[i - window + 1: i + 1]
+#             excess_mean = np.mean(window_ret) - rf_daily
+#             std_daily = np.std(window_ret, ddof=1)
+            
+#             if std_daily > 1e-8:  # 避免除0
+#                 sharpe = excess_mean * TRADING_DAYS / (std_daily * np.sqrt(TRADING_DAYS))
+#             else:
+#                 sharpe = np.inf if excess_mean > 0 else -np.inf
+                
+#             sharpe_values[i] = round(sharpe, 3)
+        
+#         temp_df = pd.DataFrame({
+#             'Date': dates,
+#             f'Sharpe_{window}d': sharpe_values
+#         })
+#         result_list.append(temp_df)
+    
+#     # 5. 合并所有窗口
+#     result = result_list[0]
+#     for df in result_list[1:]:
+#         result = result.merge(df[['Date', df.columns[1]]], on='Date', how='outer')
+    
+#     return result[result['Date'] >= daily['date'].iloc[window-1]]  # 去掉前window-1行无效值
+
+
 def trade_efficiency(performance_df, window=DEFAULT_ROLLING_WINDOW):
     if performance_df.empty:
         return pd.DataFrame(columns=['TradeIndex', 'Efficiency'])

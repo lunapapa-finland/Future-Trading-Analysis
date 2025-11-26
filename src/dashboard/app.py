@@ -1,21 +1,13 @@
-from dash import Dash, html, dcc, Output, Input, State
-from dashboard.tabs.trading_tab import TradingTab
-from dashboard.tabs.analysis_tab import AnalysisTab
-from dashboard.callbacks.data_manager import register_data_callbacks
-from dashboard.callbacks.display_manager import register_display_callbacks
-from dashboard.config.settings import DEBUG_FLAG
-from dashboard.components.sidebar import get_sidebar, get_sidebar_toggle
-from dashboard.utils.data_acquisition import acquire_missing_data
-from dashboard.utils.performance_acquisition import acquire_missing_performance
-import dash_bootstrap_components as dbc
-import dash_auth
-import os, secrets
-
+import os
+import secrets
 import logging
 from logging.handlers import TimedRotatingFileHandler
-from dashboard.config.settings import LOGGING_PATH, LOG_DIR
+from flask import Flask, request, make_response
 from dotenv import load_dotenv
+from dashboard.api import register_api
+from dashboard.config.settings import LOGGING_PATH, LOG_DIR
 
+# Logging setup
 os.makedirs(LOG_DIR, exist_ok=True)
 file_handler = TimedRotatingFileHandler(
     filename=str(LOGGING_PATH), when="midnight", interval=1, backupCount=14, encoding="utf-8"
@@ -26,117 +18,33 @@ root = logging.getLogger()
 root.setLevel(logging.INFO)
 root.addHandler(file_handler)
 
-
-# Run data acquisition before app initialization
-# acquire_missing_data()
-# acquire_missing_performance()
-
-# Initialize Dash app with routes and requests pathname prefixes
-app = Dash(
-    __name__,
-    external_stylesheets=[
-        'https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css',
-        'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css',
-        dbc.themes.BOOTSTRAP,
-    ],
-    routes_pathname_prefix='/',
-    requests_pathname_prefix='/'
-)
-
-
 load_dotenv("config/credentials.env")
 
-# must be set for Flask sessions; required by dash-auth
-app.server.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or secrets.token_urlsafe(32)
-VALID = { os.environ.get("DASH_USER", "admin") : os.environ.get("DASH_PASS", "change-me") }
-auth = dash_auth.BasicAuth(app, VALID)
+app = Flask(__name__)
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or secrets.token_urlsafe(32)
 
 
-
-# Health endpoint for container/orchestrator checks
-app.server.add_url_rule("/health", "health", lambda: ("ok", 200))
-
-# Let health checks bypass auth (optional)
-from flask import request
-@app.server.before_request
-def _allow_health():
+# CORS / health handling
+def _allow_health_and_preflight():
     if request.path == "/health":
-        return None  # bypass auth
+        return None
+    if request.method == "OPTIONS":
+        resp = make_response("", 200)
+        origin = os.environ.get("FRONTEND_ORIGIN", "*")
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        resp.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
+        resp.headers["Access-Control-Allow-Credentials"] = "true"
+        return resp
+    return None
 
 
-# Serve static assets (e.g., logo)
-app.css.config.serve_locally = True
+app.before_request(_allow_health_and_preflight)
+app.add_url_rule("/health", "health", lambda: ("ok", 200))
 
-# Custom CSS to ensure OffCanvas width and behavior
-app.index_string = '''
-<!DOCTYPE html>
-<html>
-    <head>
-        {%metas%}
-        <title>Future Trading Analysis</title>
-        {%favicon%}
-        {%css%}
-        <style>
-            .offcanvas-custom {
-                width: 250px !important;
-                max-width: 250px !important;
-                min-width: 250px !important;
-            }
-            .offcanvas-backdrop {
-                opacity: 0.5 !important;
-            }
-        </style>
-    </head>
-    <body>
-        {%app_entry%}
-        <footer>
-            {%config%}
-            {%scripts%}
-            {%renderer%}
-        </footer>
-    </body>
-</html>
-'''
+# Register JSON API only
+register_api(app)
 
-tabs = [TradingTab(), AnalysisTab()]
+server = app
 
-# App layout with sidebar and main content
-app.layout = html.Div([
-    # Sidebar toggle button (positioned independently)
-    get_sidebar_toggle(),
-    # OffCanvas sidebar (does not affect main content)
-    get_sidebar(),
-    # Main content (unaffected by sidebar)
-    html.Div([
-        dcc.Tabs([
-            dcc.Tab(label=tab.label, value=tab.value, children=[
-                html.Div([
-                    tab.get_criteria_section(),
-                    tab.get_display_section()
-                ])
-            ]) for tab in tabs
-        ], id='tabs', value='tab-1', className='mb-6'),
-        dcc.Store(id='data-store-1'),
-        dcc.Store(id='data-store-2'),
-    ], className='container mx-auto p-4 bg-gray-50 min-h-screen')
-])
-
-# Register callbacks
-register_data_callbacks(app)
-register_display_callbacks(app)
-
-# Add callback to toggle the sidebar
-@app.callback(
-    Output('sidebar-offcanvas', 'is_open'),
-    Input('sidebar-toggle', 'n_clicks'),
-    State('sidebar-offcanvas', 'is_open'),
-    prevent_initial_call=True
-)
-def toggle_sidebar(n_clicks, is_open):
-    return not is_open
-
-if __name__ == '__main__':
-    # Only in local dev runs
-    acquire_missing_data()
-    acquire_missing_performance()
-    app.run(debug=DEBUG_FLAG)
+__all__ = ["app", "server"]

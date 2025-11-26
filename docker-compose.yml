@@ -2,7 +2,7 @@
 services:
   dash:
     build: .
-    image: trading-dashboard:latest      # <— add this
+    image: trading-dashboard:latest
     container_name: trading_dash
     restart: unless-stopped
     env_file:
@@ -14,6 +14,8 @@ services:
       - WORKERS=2
       - TIMEOUT=120
       - LOG_DIR=/app/log
+      - FRONTEND_ORIGIN=http://localhost:8050
+      - NEXT_PUBLIC_API_BASE_URL=/api
       - PYTHONPATH=/app:/app/src
     volumes:
       - ./data/future:/app/data/future
@@ -21,10 +23,10 @@ services:
       - ./data/temp_performance:/app/data/temp_performance
       - ./log:/app/log
     ports:
-      - "127.0.0.1:8050:8050"
+      - "${HOST_PORT:-8050}:8050"
 
   jobs:
-    image: trading-dashboard:latest      # <— reuse the built image
+    image: trading-dashboard:latest
     container_name: trading_jobs
     env_file:
       - src/dashboard/config/credentials.env
@@ -40,3 +42,4 @@ services:
       - ./data/temp_performance:/app/data/temp_performance
       - ./log:/app/log
     command: ["/bin/bash","-lc","cron -f"]
+    ports: []
