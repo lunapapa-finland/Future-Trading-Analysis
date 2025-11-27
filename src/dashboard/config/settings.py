@@ -6,56 +6,31 @@ and plot settings used across the application. Organized into sections for clari
 extensibility.
 """
 
-# Standard library imports
-import sys
-import os
 import logging
-from pathlib import Path
 from datetime import date
 
-# Third-party imports
 import pandas as pd
-from pandas.tseries.holiday import AbstractHolidayCalendar, Holiday, USFederalHolidayCalendar
-from exchange_calendars import get_calendar
+from pandas.tseries.holiday import AbstractHolidayCalendar, Holiday
+
+from dashboard.config.env import (
+    BASE_DIR,
+    LOG_DIR,
+    DATA_DIR,
+    PERFORMANCE_DIR,
+    FUTURE_DIR,
+    TEMP_PERF_DIR,
+    DEBUG_FLAG,
+    PORT,
+    TIMEZONE,
+    LOGGING_PATH,
+    TIMEFRAME_OPTIONS,
+)
+from dashboard.config.symbols import (
+    DEFAULT_EXCHANGE,
+    resolve_symbol_catalog,
+)
 
 log = logging.getLogger(__name__)
-
-# -----------------------------------
-# Robust project root + dirs (Docker-friendly)
-# -----------------------------------
-def _resolve_project_root() -> Path:
-    # 1) Explicit env override (best for Docker)
-    env_root = os.environ.get("PROJECT_ROOT")
-    if env_root:
-        p = Path(env_root).resolve()
-        if p.exists():
-            return p
-
-    # 2) Walk up from this file to find a repo-like root
-    here = Path(__file__).resolve()
-    for parent in [*here.parents]:
-        if (parent / "src" / "dashboard").exists():
-            return parent
-        if (parent / "data").exists() and (parent / "log").exists():
-            return parent
-
-    # 3) Fallback: current working directory (don’t crash)
-    log.warning("PROJECT_ROOT not set; falling back to CWD")
-    return Path.cwd()
-
-BASE_DIR = _resolve_project_root()
-
-# Allow path overrides via env, otherwise default under BASE_DIR
-LOG_DIR = Path(os.environ.get("LOG_DIR", BASE_DIR / "log"))
-DATA_DIR = Path(os.environ.get("DATA_DIR", BASE_DIR / "data"))
-PERFORMANCE_DIR = Path(os.environ.get("PERFORMANCE_DIR", DATA_DIR / "performance"))
-FUTURE_DIR = Path(os.environ.get("FUTURE_DIR", DATA_DIR / "future"))
-TEMP_PERF_DIR = Path(os.environ.get("TEMP_PERFORMANCE_DIR", DATA_DIR / "temp_performance"))
-
-# Ensure directories exist
-for d in (LOG_DIR, DATA_DIR, PERFORMANCE_DIR, FUTURE_DIR, TEMP_PERF_DIR):
-    d.mkdir(parents=True, exist_ok=True)
-
 
 # Define a custom CME holiday calendar
 class CMEHolidayCalendar(AbstractHolidayCalendar):
@@ -78,48 +53,23 @@ class CMEHolidayCalendar(AbstractHolidayCalendar):
     ]
 
 
-
-
 # -----------------------------------
-# Section 2: General Application Settings
+# Section 3: Data File Paths & Symbols
 # -----------------------------------
-DEBUG_FLAG = False  # Enable debug mode
-PORT = int(os.environ.get("PORT", "8050"))
-TIMEZONE = 'US/Central'  # Timezone for date/time handling
-LOGGING_PATH = BASE_DIR / 'log' / 'app.log'  # Path for logging
+EXCHANGE = [DEFAULT_EXCHANGE]
+PERFORMANCE_CSV = str(PERFORMANCE_DIR / "Combined_performance_for_dash_project.csv")
 
-# -----------------------------------
-# Section 3: Data File Paths
-# -----------------------------------
-EXCHANGE = ['CME']  # Exchange for futures trading
-PERFORMANCE_DIR = BASE_DIR / 'data' / 'performance'
-FUTURE_DIR = BASE_DIR / 'data' / 'future'
-PERFORMANCE_CSV = str(PERFORMANCE_DIR / 'Combined_performance_for_dash_project.csv')
-MES_CSV = str(FUTURE_DIR / 'MES.csv')
-MNQ_CSV = str(FUTURE_DIR / 'MNQ.csv')
-M2K_CSV = str(FUTURE_DIR / 'M2K.csv')
-M6E_CSV = str(FUTURE_DIR / 'M6E.csv')
-M6B_CSV = str(FUTURE_DIR / 'M6B.csv')
-MBT_CSV = str(FUTURE_DIR / 'MBT.csv') 
-MET_CSV = str(FUTURE_DIR / 'MET.csv')  
+# Resolved symbol catalog (absolute paths, defaults applied)
+SYMBOL_CATALOG = resolve_symbol_catalog(BASE_DIR)
 
-
-SYMBOL_ASSET_CLASS = {
-    'MES': 'equity',  # Micro E-mini S&P 500
-    'MNQ': 'equity',  # Micro E-mini Nasdaq-100
-    'M2K': 'equity',  # Micro E-mini Russell 2000
-    'M6E': 'fx',      # Micro EUR/USD
-    'M6B': 'fx',      # Micro GBP/USD
-    'MBT': 'crypto',  # Micro Bitcoin
-    'MET': 'crypto'   # Micro Ether
+SYMBOL_ASSET_CLASS = {symbol: cfg.get("asset_class", "unknown") for symbol, cfg in SYMBOL_CATALOG.items()}
+DATA_SOURCE_DROPDOWN = {
+    symbol: cfg["data_path"]
+    for symbol, cfg in SYMBOL_CATALOG.items()
+    if cfg.get("enabled", True)
 }
-# -----------------------------------
-# Section 4: Trading Behavior Settings
-# -----------------------------------
 
-DATA_SOURCE_DROPDOWN = {'MES': MES_CSV, 'MNQ': MNQ_CSV, 'M2K': M2K_CSV, 'M6E': M6E_CSV, 'M6B': M6B_CSV, 'MBT': MBT_CSV, 'MET': MET_CSV}
-
-DEFAULT_DATA_SOURCE = 'MES'
+DEFAULT_DATA_SOURCE = next(iter(DATA_SOURCE_DROPDOWN.keys()), "MES")
 CURRENT_DATE = date.today().strftime('%Y-%m-%d')  # e.g., '2025-05-19'
 
 

@@ -5,7 +5,7 @@ from logging.handlers import TimedRotatingFileHandler
 from flask import Flask, request, make_response
 from dotenv import load_dotenv
 from dashboard.api import register_api
-from dashboard.config.settings import LOGGING_PATH, LOG_DIR
+from dashboard.config.env import LOGGING_PATH, LOG_DIR
 
 # Logging setup
 os.makedirs(LOG_DIR, exist_ok=True)

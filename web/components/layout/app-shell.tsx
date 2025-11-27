@@ -4,7 +4,8 @@ import clsx from "clsx";
 
 const navLinks = [
   { href: "/trading", label: "Trading" },
-  { href: "/analysis", label: "Analysis" }
+  { href: "/analysis", label: "Analysis" },
+  { href: "/config", label: "Config" }
 ];
 
 export function AppShell({ children, active }: { children: ReactNode; active?: string }) {

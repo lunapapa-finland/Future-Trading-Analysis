@@ -13,3 +13,4 @@ gunicorn
 pytz
 dash-auth
 python-dotenv
+pytest

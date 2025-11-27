@@ -1,11 +1,22 @@
-import pandas as pd
-import yfinance as yf
+import datetime
 import logging
 import time
 from datetime import timedelta
 from pathlib import Path
-from dashboard.config.settings import SYMBOL_ASSET_CLASS, EXCHANGE, DATA_SOURCE_DROPDOWN, ACQUISITION_LAST_BUSINESS_DATE, CURRENT_DATE, CMEHolidayCalendar, TIMEZONE, LOGGING_PATH
-import datetime
+
+import pandas as pd
+import yfinance as yf
+from exchange_calendars import get_calendar
+
+from dashboard.config.settings import (
+    ACQUISITION_LAST_BUSINESS_DATE,
+    CURRENT_DATE,
+    DATA_SOURCE_DROPDOWN,
+    LOGGING_PATH,
+    SYMBOL_CATALOG,
+    TIMEZONE,
+    CMEHolidayCalendar,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -45,10 +56,37 @@ def remove_weekends(date_list):
     """Remove weekends from a list of dates."""
     return [d for d in date_list if d.weekday() < 5]
 
-def is_holiday(date):
-    """Check if a date is a CME holiday."""
-    calendar = CMEHolidayCalendar()
-    holidays = calendar.holidays(start=date, end=date)
+_CALENDAR_CACHE = {}
+
+
+def _get_calendar(symbol_cfg=None):
+    name = None
+    if symbol_cfg:
+        name = (symbol_cfg.get("calendar") or "cme").lower()
+    if not name:
+        return None
+    if name in _CALENDAR_CACHE:
+        return _CALENDAR_CACHE[name]
+    try:
+        cal = get_calendar("CME") if name == "cme" else get_calendar(name.upper())
+        _CALENDAR_CACHE[name] = cal
+        return cal
+    except Exception as e:
+        logging.warning(f"Falling back to holiday list for calendar {name}: {e}")
+        _CALENDAR_CACHE[name] = None
+        return None
+
+
+def is_holiday(date, symbol_cfg=None):
+    """Check if a date is a holiday for the symbol's calendar."""
+    cal = _get_calendar(symbol_cfg)
+    if cal is not None:
+        try:
+            return not cal.is_session(pd.Timestamp(date))
+        except Exception as e:
+            logging.warning(f"Calendar check failed for {date}: {e}. Falling back to static holidays.")
+    # Fallback: static CME holiday list
+    holidays = CMEHolidayCalendar().holidays(start=date, end=date)
     return date in holidays
 
 def get_third_friday(year, month):
@@ -68,14 +106,21 @@ def get_last_wednesday(year, month):
     last_wednesday = last_day - datetime.timedelta(days=days_to_wednesday)
     return last_wednesday
 
-def get_active_contract(symbol, current_date=None):
-    """Determine the active futures contract for intraday/swing trading with precise rollover."""
+def get_active_contract(symbol, current_date=None, symbol_cfg=None):
+    """Determine the active futures contract using per-symbol roll rules."""
     try:
-        # Validate symbol
-        if symbol not in DATA_SOURCE_DROPDOWN:
-            raise ValueError(f"Invalid symbol: {symbol}. Must be one of {list(DATA_SOURCE_DROPDOWN.keys())}")
+        if symbol_cfg is None:
+            symbol_cfg = SYMBOL_CATALOG.get(symbol)
+        if not symbol_cfg:
+            raise ValueError(f"Invalid symbol: {symbol}. Must be one of {list(SYMBOL_CATALOG.keys())}")
 
-        # Handle current_date
+        source = symbol_cfg.get("source", {})
+        ticker_format = source.get("ticker_format", "{symbol}{month_code}{yy}.{exchange}")
+        roll_rule = source.get("roll_rule", "weds_before_third_friday")
+        months = source.get("months") or [3, 6, 9, 12]
+        codes = source.get("codes") or ["H", "M", "U", "Z"]
+        exchange = symbol_cfg.get("exchange", "CME")
+
         if current_date is None:
             current_date = datetime.date.today()
         elif isinstance(current_date, str):
@@ -85,58 +130,59 @@ def get_active_contract(symbol, current_date=None):
 
         current_year = current_date.year
         current_month = current_date.month
-        asset_class = SYMBOL_ASSET_CLASS.get(symbol, 'equity')  # Default to equity
-        exchange = EXCHANGE[0]  # CME
 
-        if asset_class in ['equity', 'fx']:  # MES, MNQ, M2K, M6E, M6B
-            month_codes = ['H', 'M', 'U', 'Z']  # Mar, Jun, Sep, Dec
-            roll_months = [3, 6, 9, 12]
-            month_idx = next(i for i, rm in enumerate(roll_months) if current_month <= rm)
-            contract_month = roll_months[month_idx]
-            contract_year = current_year
-            # Roll on Wednesday before third Friday
-            third_friday = get_third_friday(current_year, contract_month)
-            rollover_date = third_friday - datetime.timedelta(days=4)  # Wednesday
-            if current_date >= rollover_date:
-                month_idx = (month_idx + 1) % 4
-                contract_month = roll_months[month_idx]
-                if month_idx == 0:
-                    contract_year += 1
-            month_code = month_codes[month_idx]
+        # pick nearest contract month; if we wrap around, bump the year
+        base_idx = next((i for i, m in enumerate(months) if current_month <= m), 0)
+        contract_year = current_year + (1 if base_idx == 0 and current_month > months[-1] else 0)
+        contract_month = months[base_idx]
 
-        elif asset_class == 'crypto':  # MBT, MET
-            month_codes = ['F', 'G', 'H', 'J', 'K', 'M', 'N', 'Q', 'U', 'V', 'X', 'Z']  # Jan-Dec
-            roll_months = list(range(1, 13))
-            month_idx = next(i for i, rm in enumerate(roll_months) if current_month <= rm)
-            contract_month = roll_months[month_idx]
-            contract_year = current_year
-            # Roll on last Wednesday of the month
-            rollover_date = get_last_wednesday(current_year, contract_month)
-            if current_date >= rollover_date:
-                month_idx = (month_idx + 1) % 12
-                contract_month = roll_months[month_idx]
-                if month_idx == 0:
-                    contract_year += 1
-            month_code = month_codes[month_idx]
+        # determine rollover date
+        if roll_rule == "weds_before_third_friday":
+            third_friday = get_third_friday(contract_year, contract_month)
+            rollover_date = third_friday - datetime.timedelta(days=2)  # Wednesday before third Friday
+        elif roll_rule == "last_wednesday":
+            rollover_date = get_last_wednesday(contract_year, contract_month)
+        else:
+            rollover_date = None
 
-        contract_year_str = str(contract_year)[-2:]  # Last two digits of year
-        return f"{symbol}{month_code}{contract_year_str}.{exchange}"
+        # if we've crossed rollover, move to next contract
+        if rollover_date and current_date >= rollover_date:
+            base_idx = (base_idx + 1) % len(months)
+            if base_idx == 0:
+                contract_year += 1
+            contract_month = months[base_idx]
+
+        month_code = codes[base_idx % len(codes)]
+        contract_year_str = str(contract_year)[-2:]
+
+        return ticker_format.format(symbol=symbol, month_code=month_code, yy=contract_year_str, exchange=exchange)
 
     except Exception as e:
         logging.error(f"Error determining active contract for {symbol}: {e}")
-        return f"{symbol}M{str(current_date.year)[-2:]}.{exchange}"
+        fallback_exchange = symbol_cfg.get("exchange", "CME") if symbol_cfg else "CME"
+        fallback_year = (current_date.year if current_date else datetime.date.today().year) % 100
+        return f"{symbol}M{fallback_year}.{fallback_exchange}"
 
-def validate_data(df, day):
-    """Validate fetched data for RTH completeness (expect exactly 81 bars)."""
+def validate_data(df, day, symbol_cfg=None):
+    """Validate fetched data for RTH completeness (expected rows/time window per symbol)."""
+    tz = TIMEZONE
+    expected_rows = 81
+    start_str = "08:30"
+    end_str = "15:10"
+    if symbol_cfg:
+        th = symbol_cfg.get("trading_hours") or {}
+        tz = th.get("timezone", tz)
+        start_str = th.get("start", start_str)
+        end_str = th.get("end", end_str)
+        expected_rows = symbol_cfg.get("expected_rows", expected_rows)
     try:
-        df.index = pd.to_datetime(df.index).tz_convert(TIMEZONE)
+        df.index = pd.to_datetime(df.index).tz_convert(tz)
     except Exception as e:
         logging.error(f"Timezone conversion error for {day}: {e}")
         return pd.DataFrame()
-    rth_start = pd.to_datetime(day.strftime('%Y-%m-%d') + ' 08:30:00').tz_localize(TIMEZONE)
-    rth_end = pd.to_datetime(day.strftime('%Y-%m-%d') + ' 15:10:00').tz_localize(TIMEZONE)
+    rth_start = pd.to_datetime(day.strftime('%Y-%m-%d') + f' {start_str}:00').tz_localize(tz)
+    rth_end = pd.to_datetime(day.strftime('%Y-%m-%d') + f' {end_str}:00').tz_localize(tz)
     rth_data = df[(df.index >= rth_start) & (df.index <= rth_end)]
-    expected_rows = 81
     actual_rows = len(rth_data)
     if actual_rows != expected_rows:
         missing_rows = expected_rows - actual_rows
@@ -169,14 +215,15 @@ def acquire_missing_data(max_retries=5, retry_delay=10, fallback_source=None):
 
         gap_dates = pd.date_range(start=start_date, end=target_date, freq='D')
         business_days = remove_weekends(gap_dates.date)
-        valid_days = [day for day in business_days if not is_holiday(day)]
+        sym_cfg = SYMBOL_CATALOG.get(symbol)
+        valid_days = [day for day in business_days if not is_holiday(day, sym_cfg)]
 
         for day in valid_days:
             if is_date_in_csv(csv_path, day):
                 logging.info(f"Data for {day} already exists in {csv_path}. Skipping.")
                 continue
 
-            ticker = get_active_contract(symbol, day)
+            ticker = get_active_contract(symbol, day, SYMBOL_CATALOG.get(symbol))
             # end_day = day + timedelta(days=1)
             for attempt in range(max_retries):
                 try:
@@ -203,7 +250,7 @@ def acquire_missing_data(max_retries=5, retry_delay=10, fallback_source=None):
                                 logging.info(f"Confirmed {day} as holiday for {ticker}.")
                             break
                     else:
-                        validated_df = validate_data(df, day)
+                        validated_df = validate_data(df, day, SYMBOL_CATALOG.get(symbol))
                         if not validated_df.empty:
                             # Reorder columns to match expected order
                             expected_order = ["Open", "High", "Low", "Close", "Adj Close", "Volume"]

@@ -3,7 +3,7 @@
 import { AppShell } from "@/components/layout/app-shell";
 import { Card } from "@/components/ui/card";
 import { CandlesChart } from "@/components/charts/candles-chart";
-import { SymbolSelect, symbols as SYMBOLS } from "@/components/forms/symbol-select";
+import { SymbolSelect } from "@/components/forms/symbol-select";
 import { TimeframeSelect } from "@/components/forms/timeframe-select";
 import { getTradingSession } from "@/lib/api";
 import { resampleCandles } from "@/lib/timeframes";

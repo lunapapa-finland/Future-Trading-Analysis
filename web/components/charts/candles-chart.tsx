@@ -199,7 +199,7 @@ export function CandlesChart({
         const exitSnap = snap(exitTs);
         if (!entrySnap || !exitSnap) return;
         if (entrySnap.ts >= exitSnap.ts) return;
-        const color = t.pnl >= 0 ? "#16a34a" : "#dc2626"; // bold green for wins, bold red for losses
+        const color = t.pnl >= 0 ? "#16a34a" : "#dc2626";
         const entryVal = t.entryPrice ?? entrySnap.price;
         const exitVal = t.exitPrice ?? exitSnap.price;
         points.push(

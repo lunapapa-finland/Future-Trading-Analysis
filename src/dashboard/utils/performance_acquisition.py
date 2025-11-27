@@ -1,17 +1,17 @@
-import pandas as pd
-import yfinance as yf
+import glob
 import logging
+import os
 import time
+from collections import deque
 from datetime import timedelta
 from pathlib import Path
-from dashboard.config.settings import  LOGGING_PATH, PERFORMANCE_DIR, TIMEZONE, PERFORMANCE_CSV, BASE_DIR
-import os
 
 import pandas as pd
-import os
-import glob
-from collections import deque
 import pytz
+import yfinance as yf
+
+from dashboard.config.settings import PERFORMANCE_DIR, TIMEZONE, PERFORMANCE_CSV
+from dashboard.config.env import LOGGING_PATH, BASE_DIR
 
 # Configure logging
 logging.basicConfig(

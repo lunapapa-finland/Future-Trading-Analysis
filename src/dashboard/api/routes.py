@@ -16,7 +16,8 @@ from flask import Blueprint, jsonify, request
 
 from dashboard.analysis import compute
 from dashboard.analysis.plots import get_statistics
-from dashboard.config.settings import DATA_SOURCE_DROPDOWN, PERFORMANCE_CSV
+from dashboard.config.settings import DATA_SOURCE_DROPDOWN, PERFORMANCE_CSV, SYMBOL_ASSET_CLASS, SYMBOL_CATALOG
+from dashboard.config.env import TIMEFRAME_OPTIONS
 from dashboard.data.load_data import load_performance, load_future
 import numpy as np
 
@@ -59,6 +60,25 @@ def register_api(server):
     @api.after_request
     def add_cors(resp):  # type: ignore
         return _cors_headers(resp, allowed_origin)
+
+    @api.route("/config", methods=["GET"])
+    def config():
+        symbols = []
+        for symbol, cfg in SYMBOL_CATALOG.items():
+            if not cfg.get("enabled", True):
+                continue
+            symbols.append(
+                {
+                    "symbol": symbol,
+                    "data_path": cfg.get("data_path"),
+                    "performance_path": cfg.get("performance_path", PERFORMANCE_CSV),
+                    "asset_class": cfg.get("asset_class", "unknown"),
+                    "source": cfg.get("source", {}),
+                    "exchange": cfg.get("exchange"),
+                    "timezone": cfg.get("timezone"),
+                }
+            )
+        return jsonify({"symbols": symbols, "timeframes": TIMEFRAME_OPTIONS})
 
     @api.route("/candles", methods=["GET", "OPTIONS"])
     def candles():
