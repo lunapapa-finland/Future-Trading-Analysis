@@ -5,6 +5,7 @@ import clsx from "clsx";
 const navLinks = [
   { href: "/trading", label: "Trading" },
   { href: "/analysis", label: "Analysis" },
+  { href: "/portfolio", label: "Portfolio" },
   { href: "/config", label: "Config" }
 ];
 

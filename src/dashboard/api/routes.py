@@ -14,11 +14,13 @@ from typing import Any, Dict, Optional, Tuple
 import pandas as pd
 from flask import Blueprint, jsonify, request
 
-from dashboard.analysis import compute
-from dashboard.analysis.plots import get_statistics
+from dashboard.services.analysis import compute
+from dashboard.services.analysis.plots import get_statistics
 from dashboard.config.settings import DATA_SOURCE_DROPDOWN, PERFORMANCE_CSV, SYMBOL_ASSET_CLASS, SYMBOL_CATALOG
-from dashboard.config.env import TIMEFRAME_OPTIONS
-from dashboard.data.load_data import load_performance, load_future
+from dashboard.config.env import TIMEFRAME_OPTIONS, PLAYBACK_SPEEDS
+from dashboard.config.analysis import RISK_FREE_RATE
+from dashboard.services.data.load_data import load_performance, load_future
+from dashboard.services.portfolio import latest_equity, equity_series, append_manual
 import numpy as np
 
 
@@ -78,7 +80,31 @@ def register_api(server):
                     "timezone": cfg.get("timezone"),
                 }
             )
-        return jsonify({"symbols": symbols, "timeframes": TIMEFRAME_OPTIONS})
+        return jsonify({"symbols": symbols, "timeframes": TIMEFRAME_OPTIONS, "playback_speeds": PLAYBACK_SPEEDS})
+
+    @api.route("/portfolio", methods=["GET"])
+    def portfolio():
+        latest = latest_equity()
+        series = equity_series(limit=500)
+        return jsonify({"latest": latest, "series": series, "risk_free_rate": RISK_FREE_RATE})
+
+    @api.route("/portfolio/adjust", methods=["POST"])
+    def portfolio_adjust():
+        payload = request.get_json() or {}
+        reason = payload.get("reason", "").lower()
+        amount = float(payload.get("amount", 0))
+        date_str = payload.get("date")
+        if reason not in {"deposit", "withdraw"}:
+            return jsonify({"error": "reason must be deposit or withdraw"}), 400
+        if reason == "withdraw":
+            amount = -abs(amount)
+        else:
+            amount = abs(amount)
+        try:
+            entry = append_manual(reason=reason, amount=amount, date_override=date_str)
+            return jsonify({"ok": True, "entry": entry})
+        except Exception as e:
+            return jsonify({"error": f"failed to append: {e}"}), 500
 
     @api.route("/candles", methods=["GET", "OPTIONS"])
     def candles():

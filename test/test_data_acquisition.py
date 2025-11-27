@@ -3,7 +3,7 @@ import datetime
 import pandas as pd
 import pytest
 
-from dashboard.utils import data_acquisition as da
+from dashboard.services.utils import data_acquisition as da
 
 
 def test_get_active_contract_rolls_after_wednesday_before_third_friday():

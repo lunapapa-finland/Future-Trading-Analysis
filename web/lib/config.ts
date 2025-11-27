@@ -13,6 +13,7 @@ export type SymbolConfig = {
 export type ConfigResponse = {
   symbols: SymbolConfig[];
   timeframes?: Timeframe[];
+  playback_speeds?: number[];
 };
 
 export async function fetchConfig(): Promise<ConfigResponse> {

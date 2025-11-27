@@ -49,3 +49,6 @@ LOGGING_PATH = LOG_DIR / "app.log"
 
 # UI-facing timeframe options (chart intervals)
 TIMEFRAME_OPTIONS = ["5m", "15m", "30m", "1h", "4h", "1d", "1w"]
+
+# Playback speed presets (seconds per bar)
+PLAYBACK_SPEEDS = [15, 30, 45, 60]

@@ -11,6 +11,9 @@ import { Candle, Timeframe, TradeMarker } from "@/lib/types";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { StatGrid } from "@/components/ui/stat-grid";
+import dynamic from "next/dynamic";
+const PlaybackControls = dynamic(() => import("@/components/ui/playback-controls").then((m) => m.PlaybackControls), { ssr: false });
+type PlaybackState = import("@/components/ui/playback-controls").PlaybackState;
 
 export default function TradingPage() {
   const [symbol, setSymbol] = useState("MES");
@@ -23,6 +26,8 @@ export default function TradingPage() {
   const [directionFilter, setDirectionFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [sizeFilter, setSizeFilter] = useState("");
+  const [playbackSlice, setPlaybackSlice] = useState<Candle[]>([]);
+  const [playbackIndex, setPlaybackIndex] = useState(0);
   const today = new Date().toISOString().slice(0, 10);
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
@@ -302,8 +307,17 @@ export default function TradingPage() {
                 Close
               </button>
             </div>
+            <PlaybackControls
+              maxIndex={Math.max(viewData.length - 1, 0)}
+              speeds={undefined}
+              onChange={({ index }: PlaybackState) => {
+                setPlaybackIndex(index);
+                const slice = viewData.slice(0, index + 1);
+                setPlaybackSlice(slice);
+              }}
+            />
             <CandlesChart
-              data={viewData}
+              data={playbackSlice.length ? playbackSlice : viewData}
               trades={tradeMarkers}
               showTrades={showTrades}
               heightClass="h-[80vh]"

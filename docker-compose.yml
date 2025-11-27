@@ -21,6 +21,7 @@ services:
       - ./data/future:/app/data/future
       - ./data/performance:/app/data/performance
       - ./data/temp_performance:/app/data/temp_performance
+      - ./data/portfolio:/app/data/portfolio
       - ./log:/app/log
     ports:
       - "${HOST_PORT:-8050}:8050"
@@ -40,6 +41,7 @@ services:
       - ./data/future:/app/data/future
       - ./data/performance:/app/data/performance
       - ./data/temp_performance:/app/data/temp_performance
+      - ./data/portfolio:/app/data/portfolio
       - ./log:/app/log
     command: ["/bin/bash","-lc","cron -f"]
     ports: []
