@@ -1,7 +1,26 @@
 import { AnalysisPayload, AnalysisSeriesPoint, Candle, PerformanceRecord } from "./types";
 import type { TradingSession } from "./types";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "/api";
+function getApiBase(): string {
+  const envBase = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
+  // Prefer explicit env (absolute URL). If it's a relative path, anchor it to the current origin in the browser.
+  if (envBase) {
+    if (envBase.startsWith("http://") || envBase.startsWith("https://")) {
+      return envBase.replace(/\/+$/, "");
+    }
+    if (typeof window !== "undefined") {
+      return new URL(envBase, window.location.origin).toString().replace(/\/+$/, "");
+    }
+  }
+  // Browser fallback: same-origin
+  if (typeof window !== "undefined") {
+    return window.location.origin;
+  }
+  // SSR/dev fallback
+  return "http://127.0.0.1:5000";
+}
+
+const API_BASE = getApiBase();
 
 const basicUser = process.env.NEXT_PUBLIC_BASIC_AUTH_USER;
 const basicPass = process.env.NEXT_PUBLIC_BASIC_AUTH_PASS;
