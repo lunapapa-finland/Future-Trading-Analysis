@@ -9,8 +9,8 @@ def validate_performance_df(df: pd.DataFrame) -> pd.DataFrame:
     if missing:
         raise ValueError(f"Missing required columns: {missing}")
     df = df.copy()
-    df["EnteredAt"] = pd.to_datetime(df["EnteredAt"], errors="coerce", utc=True)
-    df["ExitedAt"] = pd.to_datetime(df["ExitedAt"], errors="coerce", utc=True)
+    df["EnteredAt"] = pd.to_datetime(df["EnteredAt"], errors="coerce", utc=True).astype("datetime64[ns, UTC]")
+    df["ExitedAt"] = pd.to_datetime(df["ExitedAt"], errors="coerce", utc=True).astype("datetime64[ns, UTC]")
     if df["EnteredAt"].isna().any() or df["ExitedAt"].isna().any():
         raise ValueError("Invalid datetimes in EnteredAt/ExitedAt")
     if df["PnL(Net)"].isna().any():
