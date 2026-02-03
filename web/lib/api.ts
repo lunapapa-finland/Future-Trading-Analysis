@@ -1,7 +1,7 @@
 import { AnalysisPayload, AnalysisSeriesPoint, Candle, PerformanceRecord } from "./types";
 import type { TradingSession } from "./types";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8050";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "/api";
 
 const basicUser = process.env.NEXT_PUBLIC_BASIC_AUTH_USER;
 const basicPass = process.env.NEXT_PUBLIC_BASIC_AUTH_PASS;
