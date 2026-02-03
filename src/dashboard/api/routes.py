@@ -208,6 +208,7 @@ def register_api(server):
         if not os.path.exists(PERFORMANCE_CSV):
             raise FileNotFoundError("performance data not found")
         df = pd.read_csv(PERFORMANCE_CSV)
+        symbol = payload.get("symbol")
         start = _parse_date(payload.get("start_date"))
         end = _parse_date(payload.get("end_date"))
         if start or end:
@@ -223,6 +224,11 @@ def register_api(server):
                     df = df[df["ExitedAt"] >= start]
                 if end:
                     df = df[df["ExitedAt"] <= end]
+        if symbol:
+            if "ContractName" in df.columns:
+                df = df[df["ContractName"].astype(str).str.startswith(symbol)]
+            elif "Symbol" in df.columns:
+                df = df[df["Symbol"] == symbol]
         return df
 
     def _to_records(df: pd.DataFrame) -> list[Dict[str, Any]]:

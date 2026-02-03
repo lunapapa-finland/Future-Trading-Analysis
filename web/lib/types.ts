@@ -17,6 +17,9 @@ export interface AnalysisPayload {
   granularity?: string;
   window?: number;
   params?: Record<string, unknown>;
+  symbol?: string;
+  start_date?: string;
+  end_date?: string;
 }
 
 export interface AnalysisSeriesPoint {

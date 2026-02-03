@@ -3,6 +3,7 @@
 import { AppShell } from "@/components/layout/app-shell";
 import { Card } from "@/components/ui/card";
 import { postAnalysis } from "@/lib/api";
+import { fetchConfig } from "@/lib/config";
 import { AnalysisSeriesPoint } from "@/lib/types";
 import { useMemo, useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -40,23 +41,53 @@ export default function AnalysisPage() {
   const [metric, setMetric] = useState(metricOptions[0].value);
   const [granularity, setGranularity] = useState("1W-MON");
   const [window, setWindow] = useState(7);
+  const [symbol, setSymbol] = useState<string>("");
+  const [startDate, setStartDate] = useState<string>("");
+  const [endDate, setEndDate] = useState<string>("");
+
+  const { data: config, isLoading: configLoading, error: configError } = useQuery({
+    queryKey: ["config"],
+    queryFn: fetchConfig,
+    staleTime: 5 * 60_000
+  });
+
+  useEffect(() => {
+    if (!symbol && config?.symbols?.length) {
+      setSymbol(config.symbols[0].symbol);
+    }
+  }, [config, symbol]);
 
   const { data, isFetching, error } = useQuery({
-    queryKey: ["analysis", metric, granularity, window],
-    queryFn: () => postAnalysis(metric, { granularity, window }),
+    queryKey: ["analysis", metric, granularity, window, symbol, startDate, endDate],
+    queryFn: () => postAnalysis(metric, { granularity, window, symbol, start_date: startDate, end_date: endDate }),
+    enabled: Boolean(symbol),
     staleTime: 60_000,
     refetchOnWindowFocus: false
   });
 
-  const preview = useMemo(() => {
-    return (data ?? []).slice(0, 50);
-  }, [data]);
+  const preview = useMemo(() => data ?? [], [data]);
 
   return (
     <AppShell active="/analysis">
       <div className="grid gap-4 md:grid-cols-[1fr_280px]">
         <Card title="Controls">
           <div className="grid gap-3 sm:grid-cols-2">
+            <label className="flex flex-col gap-1 text-sm text-slate-300">
+              Symbol
+              <select
+                className="rounded-lg border border-white/10 bg-surface px-3 py-2 text-white outline-none focus:border-accent"
+                value={symbol}
+                onChange={(e) => setSymbol(e.target.value)}
+                disabled={configLoading}
+              >
+                {config?.symbols?.map((s) => (
+                  <option key={s.symbol} value={s.symbol}>
+                    {s.symbol}
+                  </option>
+                ))}
+              </select>
+              {configError ? <span className="text-xs text-red-300">Failed to load symbols</span> : null}
+            </label>
             <label className="flex flex-col gap-1 text-sm text-slate-300">
               Metric
               <select
@@ -95,6 +126,24 @@ export default function AnalysisPage() {
                 onChange={(e) => setWindow(Number(e.target.value))}
               />
             </label>
+            <label className="flex flex-col gap-1 text-sm text-slate-300">
+              Start
+              <input
+                type="date"
+                className="rounded-lg border border-white/10 bg-surface px-3 py-2 text-white outline-none focus:border-accent"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-sm text-slate-300">
+              End
+              <input
+                type="date"
+                className="rounded-lg border border-white/10 bg-surface px-3 py-2 text-white outline-none focus:border-accent"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+              />
+            </label>
           </div>
         </Card>
         <Card title="Status">
@@ -102,18 +151,28 @@ export default function AnalysisPage() {
             <p>Metric: {metric}</p>
             <p>Granularity: {granularity}</p>
             <p>Window: {window}</p>
+            <p>Symbol: {symbol || ""}</p>
+            <p>
+              Range: {startDate || "(start)"} → {endDate || "(end)"}
+            </p>
             {isFetching && <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Loading…</p>}
             {error && <p className="text-red-300">Error: {(error as Error).message}</p>}
+            {configLoading && <p className="text-xs text-slate-400">Loading symbols…</p>}
+            {configError && <p className="text-xs text-red-300">Config error: {(configError as Error).message}</p>}
           </div>
         </Card>
       </div>
 
       <Card title="Visualization" className="mt-2">
-        {preview.length === 0 ? (
-          <p className="text-slate-400">No data yet.</p>
-        ) : (
-          <AnalysisChart metric={metric} points={preview} />
-        )}
+        <div className="overflow-x-auto">
+          <div className="min-w-[900px]">
+            {preview.length === 0 ? (
+              <p className="text-slate-400">No data yet.</p>
+            ) : (
+              <AnalysisChart metric={metric} points={preview} />
+            )}
+          </div>
+        </div>
       </Card>
     </AppShell>
   );
