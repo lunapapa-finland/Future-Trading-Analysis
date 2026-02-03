@@ -1,26 +1,26 @@
 # Future Trading Dashboard
 
-An interactive **Dash** app for futures **data acquisition**, **candlestick charts**, and **performance analysis**. Designed for easy local use and simple deployment on a  Server with Docker. Data and logs are kept on your disk so nothing is lost when containers restart.
+An interactive futures dashboard with a Flask API backend and a Next.js frontend. Data and logs stay on disk so containers can be restarted without loss. CI builds multi-arch Docker images (amd64/arm64) and publishes to GHCR on tags.
 
 ---
 
 ## What it does
 
-* **Market data (daily):** Automatically fetches & appends yesterday’s trading data (holiday-aware) from [yfinance](https://pypi.org/project/yfinance/)
-* **Performance data (on demand):** when you drop CSVs into `data/temp_performance/`, they’re detected and processed automatically(every 5mins) into the performace data pool.
-* **Dashboard:** candles, stats, and behavioral insights for instruments like **MES, MNQ, M2K, M6E, M6B, MBT, MET** (and more if you add them in the config.py).
-* **Login & health:** basic login for the whole app; `/health` endpoint for simple status checks.
-* **Logging:** rotating app logs in `log/app.log` + small cron logs for the background jobs.
+- **Market data (daily):** Fetches and appends daily futures data (holiday-aware) from yfinance.
+- **Performance data (on demand):** Drop CSVs into `data/temp_performance/`; they’re auto-processed into the performance pool every few minutes.
+- **Dashboard:** Candles, stats, and behavioral insights for MES, MNQ, M2K, M6E, M6B, MBT, MET (extendable via config).
+- **Login & health:** Basic login; `/health` endpoint.
+- **Logging:** App logs in `log/app.log`; cron logs for background jobs.
+- **CI/CD:** Tests and frontend build run on push/PR; Docker images build and push to GHCR on tag events.
 
 ---
 
 ## TODO
 
-* Wrapped Backtesting Modual based on [Backtrader](https://www.backtrader.com/)
-* CI/CD
-* Abscract codes for better extension
-* Expose the Congigurations out of py persistently
-* Optimize UI
+- Backtesting module (Backtrader) integration
+- More modular abstractions
+- Expose persistent configuration
+- UI refinements
 
 ---
 
@@ -55,20 +55,22 @@ SECRET_KEY=PASTE_GENERATED_SECRET_HERE
 
 ---
 
-## Run locally (conda + Gunicorn)
+## Run locally (venv or conda)
 
 ```bash
-conda activate finance_env
-Serverp install -r requirements.txt
-Serverp install -e .
+python -m venv .venv  # or conda activate finance_env
+. .venv/bin/activate
+
+pip install -r requirements.txt
+pip install -e .
 
 mkdir -p data/{future,performance,temp_performance} log
 
 # load creds into the shell for this session
 set -a; . src/dashboard/config/credentials.env; set +a
 
-gunicorn -b 127.0.0.1:8050 --workers 2 --timeout 120 wsgi:server
-# open: http://127.0.0.1:8050  |  health: http://127.0.0.1:8050/health
+gunicorn -b 127.0.0.1:5000 --workers 2 --timeout 120 wsgi:server
+# open: http://127.0.0.1:8050 (Next.js) | API: http://127.0.0.1:5000 | health: http://127.0.0.1:5000/health
 ```
 
 **Handy make targets (optional):**
@@ -81,42 +83,48 @@ make data         # fetch market data now
 
 ---
 
-## Run with Docker ( Server)
+## Run with Docker (local or server)
 
-1. **Prepare folders on Server (one-time):**
+1) **Prepare folders** (local path or server path):
 
 ```bash
-sudo mkdir -p /srv/trading-dashboard/{data/performance,data/future,data/temp_performance,log}
-sudo chown -R $USER:$USER /srv/trading-dashboard
+mkdir -p data/{future,performance,temp_performance,portfolio} log
+# or use /srv/trading-dashboard/... on a server and chown accordingly
 ```
 
-2. **Get the code & credentials:**
+2) **Get the code & credentials:**
 
 ```bash
 git clone <your repo> Future-Trading-Analysis
 cd Future-Trading-Analysis
-# copy your src/dashboard/config/credentials.env into this same path on the Server
+# copy src/dashboard/config/credentials.env into this path
 ```
 
-3. **(Optional) copy your existing CSVs to the Server:**
+3) **(Optional) copy existing CSVs:**
 
 ```bash
-# from your computer to the Server
-# rsync -avz data/performance/ Server:/srv/trading-dashboard/data/performance/
-# rsync -avz data/future/      Server:/srv/trading-dashboard/data/future/
+# rsync -avz data/performance/ <host>:/path/to/data/performance/
+# rsync -avz data/future/      <host>:/path/to/data/future/
 ```
 
-4. **Start:**
+4) **Start (build locally):**
 
 ```bash
 docker compose build
 docker compose up -d
-# status check
 curl -s http://127.0.0.1:8050/health   # -> ok
 ```
 
-> If you use a **subdomain**, point your reverse proxy to `http://127.0.0.1:8050/`.
-> If you host under HTTPS, you can also add proxy-level basic auth if you like.
+5) **Deploy using prebuilt image on RPI/arm64 (no build on device):**
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.rpi.yml pull
+docker compose -f docker-compose.yml -f docker-compose.rpi.yml up -d
+```
+
+> Set the image tag in docker-compose.rpi.yml (e.g., `v1.0.1` for stability or `latest` to track new builds). If the GHCR image is private, login first: `echo $GHCR_PAT | docker login ghcr.io -u <user> --password-stdin`.
+
+> If you use a subdomain, point your reverse proxy to `http://127.0.0.1:8050/`. For HTTPS, you can add proxy-level basic auth if desired.
 
 ---
 
