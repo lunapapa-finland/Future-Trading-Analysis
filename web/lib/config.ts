@@ -14,6 +14,11 @@ export type ConfigResponse = {
   symbols: SymbolConfig[];
   timeframes?: Timeframe[];
   playback_speeds?: number[];
+  portfolio?: {
+    initial_net_liq: number;
+    start_date: string;
+    risk_free_rate: number;
+  };
 };
 
 export async function fetchConfig(): Promise<ConfigResponse> {

@@ -1,8 +1,10 @@
 import pandas as pd
 from dashboard.config.settings import DEFAULT_GRANULARITY, DEFAULT_ROLLING_WINDOW
 import numpy as np
+from dashboard.services.analysis.schema import validate_performance_df
 
 def pnl_growth(performance_df, granularity=DEFAULT_GRANULARITY, daily_compounding_rate=0.001902, initial_funding=10000):
+    performance_df = validate_performance_df(performance_df)
     # Initialize empty result if performance_df is empty
     if performance_df.empty:
         return pd.DataFrame(columns=['Period', 'NetPnL', 'CumulativePnL', 'PassiveGrowth', 'CumulativePassive'])
@@ -74,6 +76,7 @@ def pnl_growth(performance_df, granularity=DEFAULT_GRANULARITY, daily_compoundin
     
 
 def drawdown(performance_df, granularity=DEFAULT_GRANULARITY):
+    performance_df = validate_performance_df(performance_df)
     if performance_df.empty:
         return pd.DataFrame(columns=['Period', 'Drawdown'])
     
@@ -111,6 +114,7 @@ def drawdown(performance_df, granularity=DEFAULT_GRANULARITY):
     
 
 def pnl_distribution(performance_df):
+    performance_df = validate_performance_df(performance_df)
     if performance_df.empty:
         return pd.DataFrame(columns=['PnL(Net)'])
     
@@ -123,6 +127,7 @@ def pnl_distribution(performance_df):
         raise ValueError(f"Failed to compute PnL distribution: {str(e)}")
     
 def behavioral_patterns(performance_df):
+    performance_df = validate_performance_df(performance_df)
     if performance_df.empty:
         return pd.DataFrame(columns=['Hour', 'DayOfWeek', 'TradeCount', 'AvgPnL'])
     
@@ -171,6 +176,7 @@ def behavioral_patterns(performance_df):
 
 
 def rolling_win_rate(performance_df, window=DEFAULT_ROLLING_WINDOW):
+    performance_df = validate_performance_df(performance_df)
     if performance_df.empty:
         return pd.DataFrame(columns=['TradeIndex', 'WinRate'])
     
@@ -203,6 +209,7 @@ def rolling_win_rate(performance_df, window=DEFAULT_ROLLING_WINDOW):
         raise ValueError(f"Failed to compute rolling win rate: {str(e)}")
 
 def sharpe_ratio(performance_df, window=DEFAULT_ROLLING_WINDOW, risk_free_rate=0.02):
+    performance_df = validate_performance_df(performance_df)
     if performance_df.empty:
         return pd.DataFrame(columns=['Date', 'SharpeRatio'])
     
@@ -323,6 +330,7 @@ def sharpe_ratio(performance_df, window=DEFAULT_ROLLING_WINDOW, risk_free_rate=0
 
 
 def trade_efficiency(performance_df, window=DEFAULT_ROLLING_WINDOW):
+    performance_df = validate_performance_df(performance_df)
     if performance_df.empty:
         return pd.DataFrame(columns=['TradeIndex', 'Efficiency'])
     
@@ -357,6 +365,7 @@ def trade_efficiency(performance_df, window=DEFAULT_ROLLING_WINDOW):
         raise ValueError(f"Failed to compute trade efficiency: {str(e)}")
 
 def hourly_performance(performance_df, window=DEFAULT_ROLLING_WINDOW):
+    performance_df = validate_performance_df(performance_df)
     if performance_df.empty:
         return pd.DataFrame(columns=['HourlyIndex', 'HourlyPnL'])
     

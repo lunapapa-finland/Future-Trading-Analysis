@@ -15,12 +15,14 @@ import pandas as pd
 from flask import Blueprint, jsonify, request
 
 from dashboard.services.analysis import compute
+from dashboard.services.analysis.behavioral import behavior_heatmap
 from dashboard.services.analysis.plots import get_statistics
 from dashboard.config.settings import DATA_SOURCE_DROPDOWN, PERFORMANCE_CSV, SYMBOL_ASSET_CLASS, SYMBOL_CATALOG
 from dashboard.config.env import TIMEFRAME_OPTIONS, PLAYBACK_SPEEDS
-from dashboard.config.analysis import RISK_FREE_RATE
+from dashboard.config.analysis import RISK_FREE_RATE, INITIAL_NET_LIQ, PORTFOLIO_START_DATE
 from dashboard.services.data.load_data import load_performance, load_future
 from dashboard.services.portfolio import latest_equity, equity_series, append_manual
+from dashboard.services.analysis.portfolio_metrics import portfolio_metrics
 import numpy as np
 
 
@@ -80,22 +82,47 @@ def register_api(server):
                     "timezone": cfg.get("timezone"),
                 }
             )
-        return jsonify({"symbols": symbols, "timeframes": TIMEFRAME_OPTIONS, "playback_speeds": PLAYBACK_SPEEDS})
+        return jsonify(
+            {
+                "symbols": symbols,
+                "timeframes": TIMEFRAME_OPTIONS,
+                "playback_speeds": PLAYBACK_SPEEDS,
+                "portfolio": {
+                    "initial_net_liq": INITIAL_NET_LIQ,
+                    "start_date": PORTFOLIO_START_DATE,
+                    "risk_free_rate": RISK_FREE_RATE,
+                },
+            }
+        )
 
     @api.route("/portfolio", methods=["GET"])
     def portfolio():
-        latest = latest_equity()
-        series = equity_series(limit=500)
-        return jsonify({"latest": latest, "series": series, "risk_free_rate": RISK_FREE_RATE})
+        try:
+            latest = latest_equity()
+            series = equity_series(limit=500)
+            metrics = portfolio_metrics()
+            return jsonify({"latest": latest, "series": series, "risk_free_rate": RISK_FREE_RATE, "metrics": metrics})
+        except Exception as exc:
+            return jsonify({"error": f"failed to load portfolio: {exc}"}), 500
 
     @api.route("/portfolio/adjust", methods=["POST"])
     def portfolio_adjust():
         payload = request.get_json() or {}
         reason = payload.get("reason", "").lower()
-        amount = float(payload.get("amount", 0))
+        try:
+            amount = float(payload.get("amount", 0))
+        except Exception:
+            return jsonify({"error": "amount must be a number"}), 400
+        if amount <= 0:
+            return jsonify({"error": "amount must be positive"}), 400
         date_str = payload.get("date")
         if reason not in {"deposit", "withdraw"}:
             return jsonify({"error": "reason must be deposit or withdraw"}), 400
+        if date_str:
+            try:
+                datetime.fromisoformat(date_str)
+            except Exception:
+                return jsonify({"error": "date must be ISO format YYYY-MM-DD"}), 400
         if reason == "withdraw":
             amount = -abs(amount)
         else:
@@ -206,7 +233,10 @@ def register_api(server):
         window = payload.get("window")
         params = payload.get("params") or {}
 
-        if metric == "pnl_growth":
+        if metric == "behavioral_heatmap":
+            out = behavior_heatmap(df)
+            return _to_records(out), 200
+        elif metric == "pnl_growth":
             out = compute.pnl_growth(
                 df,
                 granularity=granularity or compute.DEFAULT_GRANULARITY,
@@ -214,40 +244,40 @@ def register_api(server):
                 initial_funding=params.get("initial_funding", 10000),
             )
             return _to_records(out), 200
-        if metric == "drawdown":
+        elif metric == "drawdown":
             out = compute.drawdown(df, granularity=granularity or compute.DEFAULT_GRANULARITY)
             return _to_records(out), 200
-        if metric == "pnl_distribution":
+        elif metric == "pnl_distribution":
             out = compute.pnl_distribution(df)
             return _to_records(out), 200
-        if metric == "behavioral_patterns":
+        elif metric == "behavioral_patterns":
             out = compute.behavioral_patterns(df)
             return _to_records(out), 200
-        if metric == "rolling_win_rate":
+        elif metric == "rolling_win_rate":
             out = compute.rolling_win_rate(df, window=window or compute.DEFAULT_ROLLING_WINDOW)
             return _to_records(out), 200
-        if metric == "sharpe_ratio":
+        elif metric == "sharpe_ratio":
             out = compute.sharpe_ratio(
                 df, window=window or compute.DEFAULT_ROLLING_WINDOW, risk_free_rate=params.get("risk_free_rate", 0.02)
             )
             return _to_records(out), 200
-        if metric == "trade_efficiency":
+        elif metric == "trade_efficiency":
             out = compute.trade_efficiency(df, window=window or compute.DEFAULT_ROLLING_WINDOW)
             return _to_records(out), 200
-        if metric == "hourly_performance":
+        elif metric == "hourly_performance":
             out = compute.hourly_performance(df, window=window or compute.DEFAULT_ROLLING_WINDOW)
             return _to_records(out), 200
-        if metric == "performance_envelope":
+        elif metric == "performance_envelope":
             theoretical, actual = compute.performance_envelope(df, granularity=granularity or compute.DEFAULT_GRANULARITY)
             return {"theoretical": _to_records(theoretical), "actual": _to_records(actual)}, 200
-        if metric == "overtrading_detection":
+        elif metric == "overtrading_detection":
             daily, trades = compute.overtrading_detection(
                 df,
                 cap_loss_per_trade=params.get("cap_loss_per_trade", 200),
                 cap_trades_after_big_loss=params.get("cap_trades_after_big_loss", 5),
             )
             return {"daily": _to_records(daily), "trades": _to_records(trades)}, 200
-        if metric == "kelly_criterion":
+        elif metric == "kelly_criterion":
             out = compute.kelly_criterion(df)
             data = _to_records(out.get("data", pd.DataFrame()))
             return {"data": data, "metadata": out.get("metadata", {})}, 200

@@ -74,6 +74,93 @@ export default function TradingPage() {
     ];
   }, [data?.performance]);
 
+  const computeStudyLines = useMemo(
+    () =>
+      (source: Candle[]) => {
+        const points = source.map((b) => ({
+          ts: new Date(b.time).getTime(),
+          close: b.close,
+          high: b.high,
+          low: b.low,
+          vol: b.volume ?? 0
+        }));
+
+        const lines: { id: string; color: string; points: { timestamp: number; value: number }[] }[] = [];
+
+        if (showEma && points.length) {
+          const period = 20;
+          let ema = points[0].close;
+          const alpha = 2 / (period + 1);
+          const emaPts: { timestamp: number; value: number }[] = [];
+          points.forEach((p, idx) => {
+            if (idx === 0) {
+              ema = p.close;
+            } else {
+              ema = p.close * alpha + ema * (1 - alpha);
+            }
+            if (idx >= period - 1) {
+              emaPts.push({ timestamp: p.ts, value: ema });
+            }
+          });
+          if (emaPts.length > 1) lines.push({ id: "ema20", color: "#6366f1", points: emaPts });
+        }
+
+        if (showVwap && points.length) {
+          let cumPv = 0;
+          let cumVol = 0;
+          const vwapPts: { timestamp: number; value: number }[] = [];
+          points.forEach((p) => {
+            const v = p.vol || 1;
+            const typical = (p.high + p.low + p.close) / 3;
+            cumPv += typical * v;
+            cumVol += v;
+            if (cumVol > 0) {
+              vwapPts.push({ timestamp: p.ts, value: cumPv / cumVol });
+            }
+          });
+          if (vwapPts.length > 1) lines.push({ id: "vwap", color: "#f59e0b", points: vwapPts });
+        }
+
+        if (showBarCount && points.length) {
+          const bars = points.map((p, idx) => {
+            const cushion = Math.max(p.high - p.low, 0.0001) * 0.02;
+            const price = p.low - cushion;
+            return {
+              timestamp: p.ts,
+              value: price,
+              label: idx + 1
+            };
+          });
+          lines.push({ id: "barcount", color: "#334155", points: bars });
+        }
+
+        return lines;
+      },
+    [showEma, showVwap, showBarCount]
+  );
+
+  const studyLines = useMemo(() => computeStudyLines(viewData), [computeStudyLines, viewData]);
+
+  const fullscreenData = playbackSlice.length ? playbackSlice : viewData;
+  const fullscreenStudyLines = useMemo(
+    () => computeStudyLines(fullscreenData),
+    [computeStudyLines, fullscreenData]
+  );
+
+  const fullscreenTrades = useMemo(() => {
+    if (!fullscreenData.length) return tradeMarkers;
+    const minTs = new Date(fullscreenData[0].time).getTime();
+    const maxTs = new Date(fullscreenData[fullscreenData.length - 1].time).getTime();
+    return tradeMarkers.filter((t) => {
+      const entry = new Date(t.entryTime).getTime();
+      const exit = new Date(t.exitTime).getTime();
+      if (Number.isNaN(entry) && Number.isNaN(exit)) return false;
+      const earliest = Number.isNaN(entry) ? exit : Number.isNaN(exit) ? entry : Math.min(entry, exit);
+      const latest = Number.isNaN(entry) ? exit : Number.isNaN(exit) ? entry : Math.max(entry, exit);
+      return latest >= minTs && earliest <= maxTs;
+    });
+  }, [fullscreenData, tradeMarkers]);
+
   const ohlcRange = useMemo(() => {
     if (!viewData.length) return null;
     const open = viewData[0].open;
@@ -94,66 +181,6 @@ export default function TradingPage() {
     setTypeFilter("");
     setSizeFilter("");
   }, [timeframe]);
-
-  const studyLines = useMemo(() => {
-    const points = viewData.map((b) => ({
-      ts: new Date(b.time).getTime(),
-      close: b.close,
-      high: b.high,
-      low: b.low,
-      vol: b.volume ?? 0
-    }));
-    const lines: { id: string; color: string; points: { timestamp: number; value: number }[] }[] = [];
-
-    if (showEma && points.length) {
-      const period = 20;
-      let ema = points[0].close;
-      const alpha = 2 / (period + 1);
-      const emaPts: { timestamp: number; value: number }[] = [];
-      points.forEach((p, idx) => {
-        if (idx === 0) {
-          ema = p.close;
-        } else {
-          ema = p.close * alpha + ema * (1 - alpha);
-        }
-        if (idx >= period - 1) {
-          emaPts.push({ timestamp: p.ts, value: ema });
-        }
-      });
-      if (emaPts.length > 1) lines.push({ id: "ema20", color: "#6366f1", points: emaPts });
-    }
-
-    if (showVwap && points.length) {
-      let cumPv = 0;
-      let cumVol = 0;
-      const vwapPts: { timestamp: number; value: number }[] = [];
-      points.forEach((p) => {
-        const v = p.vol || 1;
-        const typical = (p.high + p.low + p.close) / 3;
-        cumPv += typical * v;
-        cumVol += v;
-        if (cumVol > 0) {
-          vwapPts.push({ timestamp: p.ts, value: cumPv / cumVol });
-        }
-      });
-      if (vwapPts.length > 1) lines.push({ id: "vwap", color: "#f59e0b", points: vwapPts });
-    }
-
-    if (showBarCount && points.length) {
-      const bars = points.map((p, idx) => {
-        const cushion = Math.max(p.high - p.low, 0.0001) * 0.02;
-        const price = p.low - cushion;
-        return {
-          timestamp: p.ts,
-          value: price,
-          label: idx + 1
-        };
-      });
-      lines.push({ id: "barcount", color: "#334155", points: bars });
-    }
-
-    return lines;
-  }, [viewData, showVwap, showEma, showBarCount]);
 
   return (
     <AppShell active="/trading">
@@ -317,11 +344,11 @@ export default function TradingPage() {
               }}
             />
             <CandlesChart
-              data={playbackSlice.length ? playbackSlice : viewData}
-              trades={tradeMarkers}
+              data={fullscreenData}
+              trades={fullscreenTrades}
               showTrades={showTrades}
               heightClass="h-[80vh]"
-              studyLines={studyLines}
+              studyLines={fullscreenStudyLines}
             />
           </div>
         </div>
@@ -353,9 +380,9 @@ export default function TradingPage() {
                     onChange={(e) => setTypeFilter(e.target.value)}
                   >
                     <option value="">All</option>
-                    <option value="Sc">Sc</option>
-                    <option value="Sc/w">Sc/w</option>
-                    <option value="Sw">Sw</option>
+                    <option value="Scalp">Scalp</option>
+                    <option value="Scalp/Swing">Scalp/Swing</option>
+                    <option value="Swing">Swing</option>
                   </select>
                 </label>
                 <label className="flex items-center gap-2">
@@ -394,10 +421,10 @@ export default function TradingPage() {
                         mins == null
                           ? "N/A"
                           : mins <= 5
-                            ? "Sc"
+                            ? "Scalp"
                             : mins < 30
-                              ? "Sc/w"
-                              : "Sw";
+                              ? "Scalp/Swing"
+                              : "Swing";
                       const direction = String(row["Type"] || "");
                       const sizeVal = Number(row["Size"] || 0);
 

@@ -28,15 +28,13 @@ logging.basicConfig(
 def get_last_row_date(csv_path):
     """Helper function to read the last row of the CSV and extract the date."""
     try:
-        # Read the CSV to determine total number of rows
-        total_rows = sum(1 for _ in open(csv_path)) - 1  # Subtract 1 for header
-        if total_rows < 1:
+        df = pd.read_csv(csv_path, parse_dates=['Datetime'], date_format='%Y-%m-%d %H:%M:%S%z')
+        if df.empty or 'Datetime' not in df:
             return None
-        # Read only the last row
-        df = pd.read_csv(csv_path, parse_dates=['Datetime'], date_format='%Y-%m-%d %H:%M:%S%z', skiprows=range(1, total_rows))
-        if not df.empty:
-            return pd.to_datetime(df['Datetime'].iloc[0]).date()
-        return None
+        dt = pd.to_datetime(df['Datetime'], utc=True, errors='coerce').dropna()
+        if dt.empty:
+            return None
+        return dt.max().date()
     except Exception as e:
         logging.error(f"Error reading last row of {csv_path}: {e}")
         return None

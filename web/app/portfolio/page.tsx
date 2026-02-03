@@ -18,7 +18,13 @@ import {
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
 
 type EquityPoint = { timestamp?: string; date?: string; equity: number; pnl?: number; reason?: string };
-type PortfolioPayload = { latest: EquityPoint; series: EquityPoint[]; risk_free_rate?: number };
+type PortfolioPayload = {
+  latest: EquityPoint;
+  series: EquityPoint[];
+  risk_free_rate?: number;
+  portfolio?: { initial_net_liq: number; start_date: string };
+  metrics?: { latest_equity: number | null; max_drawdown: number | null; cagr: number | null; sharpe: number | null };
+};
 
 export default function PortfolioPage() {
   const [data, setData] = useState<PortfolioPayload | null>(null);
@@ -76,6 +82,22 @@ export default function PortfolioPage() {
 
         {loading && <p className="text-slate-300">Loading…</p>}
         {error && <p className="text-red-400">{error}</p>}
+        {data?.risk_free_rate ? (
+          <p className="text-xs text-slate-400">
+            Config: initial net liq {data.portfolio?.initial_net_liq?.toLocaleString(undefined, { minimumFractionDigits: 2 })} | start{" "}
+            {data.portfolio?.start_date || ""} | risk-free {(data.risk_free_rate * 100).toFixed(2)}%
+          </p>
+        ) : null}
+        {data?.metrics ? (
+          <Card title="Metrics" className="bg-surface/70">
+            <div className="grid grid-cols-2 gap-4 text-white">
+              <Metric label="Latest Equity" value={data.metrics.latest_equity} format="currency" />
+              <Metric label="Max Drawdown" value={data.metrics.max_drawdown} format="percent" />
+              <Metric label="CAGR" value={data.metrics.cagr} format="percent" />
+              <Metric label="Sharpe" value={data.metrics.sharpe} format="number" />
+            </div>
+          </Card>
+        ) : null}
 
         <Card title="Deposit / Withdraw" className="bg-surface/70">
           <div className="flex flex-wrap items-end gap-3">
@@ -135,6 +157,35 @@ export default function PortfolioPage() {
         {series.length ? (
           <Card title="Portfolio Equity" className="bg-surface/70">
             <PortfolioChart points={chartPoints} rfRate={data?.risk_free_rate ?? 0.02} />
+          </Card>
+        ) : null}
+        {series.length ? (
+          <Card title="Cashflow Log" className="bg-surface/70">
+            <div className="max-h-64 overflow-auto text-sm text-slate-200">
+              <table className="w-full border-collapse">
+                <thead className="text-slate-400">
+                  <tr>
+                    <th className="py-2 text-left">Date</th>
+                    <th className="py-2 text-left">Equity</th>
+                    <th className="py-2 text-left">PnL</th>
+                    <th className="py-2 text-left">Reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...series]
+                    .sort((a, b) => new Date((b as any).date || (b as any).timestamp || "").getTime() - new Date((a as any).date || (a as any).timestamp || "").getTime())
+                    .slice(0, 50)
+                    .map((pt, idx) => (
+                      <tr key={`${pt.date || pt.timestamp}-${idx}`} className="border-t border-white/5">
+                        <td className="py-2">{new Date((pt as any).timestamp || (pt as any).date || "").toLocaleDateString()}</td>
+                        <td className="py-2">{Number(pt.equity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                        <td className="py-2">{Number(pt.pnl ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                        <td className="py-2 capitalize text-slate-300">{(pt.reason || "trading").toString()}</td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
           </Card>
         ) : null}
       </div>
@@ -214,6 +265,25 @@ function PortfolioChart({ points, rfRate }: { points: { ts: number; equity: numb
   return (
     <div className="space-y-2">
       <Line data={data} options={options} />
+    </div>
+  );
+}
+
+function Metric({ label, value, format }: { label: string; value: number | null; format: "currency" | "percent" | "number" }) {
+  let display = "—";
+  if (typeof value === "number") {
+    if (format === "currency") {
+      display = value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    } else if (format === "percent") {
+      display = `${(value * 100).toFixed(2)}%`;
+    } else {
+      display = value.toFixed(2);
+    }
+  }
+  return (
+    <div>
+      <p className="text-xs uppercase tracking-[0.2em] text-slate-400">{label}</p>
+      <p className="text-lg font-semibold text-white">{display}</p>
     </div>
   );
 }
