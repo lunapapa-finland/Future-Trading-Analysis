@@ -1,0 +1,8 @@
+services:
+  dash:
+    image: ghcr.io/lunapapa-finland/future-trading-analysis:latest
+    # build removed; use prebuilt multi-arch image
+
+  jobs:
+    image: ghcr.io/lunapapa-finland/future-trading-analysis:latest
+    # shares the same image
