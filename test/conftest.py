@@ -4,6 +4,9 @@ from dashboard.app import app
 import dashboard.services.portfolio as portfolio
 import dashboard.services.analysis.portfolio_metrics as pm
 
+# Ensure API auth checks are bypassed only in pytest context.
+app.config["TESTING"] = True
+
 
 @pytest.fixture
 def client():

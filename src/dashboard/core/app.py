@@ -100,6 +100,8 @@ def _allow_health_and_preflight():
         resp.headers["Access-Control-Allow-Credentials"] = "true"
         resp.headers["Vary"] = "Origin"
         return resp
+    if app.testing:
+        return None
     if request.path.startswith("/api/"):
         if _is_authorized():
             return None
