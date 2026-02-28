@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import logging
 from datetime import datetime, timezone, date
 from pathlib import Path
 from typing import Dict, Any, List
@@ -12,6 +13,7 @@ PORTFOLIO_CSV = BASE_DIR / "data" / "portfolio" / "equity.csv"
 PORTFOLIO_CSV.parent.mkdir(parents=True, exist_ok=True)
 
 CSV_HEADERS = ["date", "equity", "pnl", "reason"]
+log = logging.getLogger(__name__)
 
 
 def _init_if_missing() -> None:
@@ -86,8 +88,8 @@ def append_manual(reason: str, amount: float, ts: datetime | None = None, date_o
     if date_override:
         try:
             ts = datetime.fromisoformat(date_override)
-        except Exception:
-            pass
+        except ValueError:
+            log.warning("Invalid date_override '%s'; using current timestamp instead", date_override)
     new_equity = prev_equity + amount
     new_row = {
         "date": ts.date().isoformat(),

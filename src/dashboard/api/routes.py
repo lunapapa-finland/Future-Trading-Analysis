@@ -54,11 +54,14 @@ def _cors_headers(response, allowed_origin: str):
     response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
     response.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
     response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Vary"] = "Origin"
     return response
 
 
 def register_api(server):
-    allowed_origin = os.environ.get("FRONTEND_ORIGIN", "*")
+    allowed_origin = os.environ.get("FRONTEND_ORIGIN", "http://localhost:8050")
+    if allowed_origin == "*":
+        allowed_origin = "http://localhost:8050"
     api = Blueprint("api", __name__, url_prefix="/api")
 
     @api.after_request
@@ -237,6 +240,7 @@ def register_api(server):
     def _metric_handler(metric: str, df: pd.DataFrame, payload: Dict[str, Any]) -> Tuple[Any, int]:
         granularity = payload.get("granularity")
         window = payload.get("window")
+        resolved_window = compute.DEFAULT_ROLLING_WINDOW if window is None else window
         params = payload.get("params") or {}
 
         if metric == "behavioral_heatmap":
@@ -260,18 +264,21 @@ def register_api(server):
             out = compute.behavioral_patterns(df)
             return _to_records(out), 200
         elif metric == "rolling_win_rate":
-            out = compute.rolling_win_rate(df, window=window or compute.DEFAULT_ROLLING_WINDOW)
+            out = compute.rolling_win_rate(df, window=resolved_window)
             return _to_records(out), 200
         elif metric == "sharpe_ratio":
             out = compute.sharpe_ratio(
-                df, window=window or compute.DEFAULT_ROLLING_WINDOW, risk_free_rate=params.get("risk_free_rate", 0.02)
+                df,
+                window=resolved_window,
+                risk_free_rate=params.get("risk_free_rate", 0.02),
+                initial_capital=params.get("initial_capital", INITIAL_NET_LIQ),
             )
             return _to_records(out), 200
         elif metric == "trade_efficiency":
-            out = compute.trade_efficiency(df, window=window or compute.DEFAULT_ROLLING_WINDOW)
+            out = compute.trade_efficiency(df, window=resolved_window)
             return _to_records(out), 200
         elif metric == "hourly_performance":
-            out = compute.hourly_performance(df, window=window or compute.DEFAULT_ROLLING_WINDOW)
+            out = compute.hourly_performance(df, window=resolved_window)
             return _to_records(out), 200
         elif metric == "performance_envelope":
             theoretical, actual = compute.performance_envelope(df, granularity=granularity or compute.DEFAULT_GRANULARITY)
@@ -302,6 +309,8 @@ def register_api(server):
             return jsonify(body), status
         except FileNotFoundError as exc:
             return jsonify({"error": str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
         except Exception as exc:
             return jsonify({"error": f"analysis failed: {exc}"}), 500
 

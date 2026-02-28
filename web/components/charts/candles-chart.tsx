@@ -72,8 +72,9 @@ export function CandlesChart({
   const studyOverlayIdsRef = useRef<string[]>([]);
 
   useEffect(() => {
-    if (!containerRef.current) return;
-    const chart = init(containerRef.current, {
+    const container = containerRef.current;
+    if (!container) return;
+    const chart = init(container, {
       styles: {
         candle: {
           type: CandleType.CandleSolid,
@@ -83,6 +84,7 @@ export function CandlesChart({
       }
     });
     chartRef.current = chart;
+    chartRef.current?.setPriceVolumePrecision?.(4, 0);
     chartRef.current?.setScrollEnabled?.(true);
     chartRef.current?.setZoomEnabled?.(true);
 
@@ -90,9 +92,7 @@ export function CandlesChart({
     window.addEventListener("resize", handleResize);
     return () => {
       window.removeEventListener("resize", handleResize);
-      if (containerRef.current) {
-        dispose(containerRef.current);
-      }
+      dispose(container);
       chartRef.current = null;
     };
   }, []);

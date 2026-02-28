@@ -97,5 +97,6 @@ Summary.md
 .mypy_cache/
 
 src/dashboard/config/credentials.env
+config/credentials.env
 
 docker-compose.override.yml

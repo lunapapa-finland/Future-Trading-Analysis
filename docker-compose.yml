@@ -44,4 +44,5 @@ services:
       - ./data/portfolio:/app/data/portfolio
       - ./log:/app/log
     command: ["/bin/bash","-lc","cron -f"]
-    ports: []
+    healthcheck:
+      disable: true

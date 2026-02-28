@@ -184,6 +184,10 @@ function AnalysisChart({ metric, points }: { metric: string; points: AnalysisSer
     const hours = Array.from(new Set(points.map((p: any) => p.HourOfDay || 0))).sort((a, b) => a - b);
     const values = points.map((p: any) => Number(p["PnL(Net)"] || 0));
     const maxAbs = Math.max(...values.map((v) => Math.abs(v)), 1);
+    const cellMap = new Map<string, number>();
+    (points as any[]).forEach((p) => {
+      cellMap.set(`${p.HourOfDay}|${p.DayOfWeek}`, Number(p["PnL(Net)"] || 0));
+    });
     return (
       <div className="overflow-auto">
         <div className="grid" style={{ gridTemplateColumns: `100px repeat(${days.length}, minmax(80px,1fr))` }}>
@@ -197,8 +201,7 @@ function AnalysisChart({ metric, points }: { metric: string; points: AnalysisSer
             <React.Fragment key={h}>
               <div className="text-xs text-slate-400">{h}:00</div>
               {days.map((d) => {
-                const row = (points as any).find((p: any) => p.HourOfDay === h && p.DayOfWeek === d);
-                const val = row ? Number(row["PnL(Net)"] || 0) : 0;
+                const val = cellMap.get(`${h}|${d}`) ?? 0;
                 const intensity = Math.min(Math.abs(val) / maxAbs, 1);
                 const color = val >= 0 ? `rgba(34,197,94,${0.1 + 0.5 * intensity})` : `rgba(239,68,68,${0.1 + 0.5 * intensity})`;
                 return (
@@ -219,7 +222,10 @@ function AnalysisChart({ metric, points }: { metric: string; points: AnalysisSer
     );
   }
 
-  const labels = points.map((p) => p.Period ?? p.TradeDay ?? p.Date ?? "");
+  const labels = points.map((p: any) => {
+    const raw = p.Period ?? p.TradeDay ?? p.Date ?? p.DateHour ?? p.TradeIndex ?? p.HourlyIndex ?? "";
+    return String(raw);
+  });
   const values = points.map((p: any) => {
     if (metric === "drawdown") return p.Drawdown ?? 0;
     if (metric === "pnl_growth") return p.CumulativePnL ?? p.NetPnL ?? 0;

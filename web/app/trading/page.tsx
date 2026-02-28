@@ -45,16 +45,19 @@ export default function TradingPage() {
   }, [data, timeframe]);
 
   const lastBar: Candle | undefined = viewData[viewData.length - 1];
-  const tradeMarkers: TradeMarker[] =
-    data?.performance?.map((p) => ({
-      entryTime: String(p["EnteredAt"] || p["TradeDay"] || ""),
-      exitTime: String(p["ExitedAt"] || p["TradeDay"] || ""),
-      entryPrice: Number(p["EntryPrice"] || p["Entry"] || p["Open"] || 0),
-      exitPrice: Number(p["ExitPrice"] || p["Exit"] || p["Close"] || 0),
-      pnl: Number(p["PnL(Net)"] || 0),
-      type: String(p["Type"] || ""),
-      size: Number(p["Size"] || 0)
-    })) || [];
+  const tradeMarkers: TradeMarker[] = useMemo(
+    () =>
+      data?.performance?.map((p) => ({
+        entryTime: String(p["EnteredAt"] || p["TradeDay"] || ""),
+        exitTime: String(p["ExitedAt"] || p["TradeDay"] || ""),
+        entryPrice: Number(p["EntryPrice"] || p["Entry"] || p["Open"] || 0),
+        exitPrice: Number(p["ExitPrice"] || p["Exit"] || p["Close"] || 0),
+        pnl: Number(p["PnL(Net)"] || 0),
+        type: String(p["Type"] || ""),
+        size: Number(p["Size"] || 0)
+      })) || [],
+    [data?.performance]
+  );
 
   const durationBins = useMemo(() => {
     const bins = { scalp: 0, hybrid: 0, swing: 0 };
@@ -275,13 +278,13 @@ export default function TradingPage() {
               <span className="text-slate-400">Range</span>
               <span className="text-right text-white">{startDate} → {endDate}</span>
               <span className="text-slate-400">Open</span>
-              <span className="text-right font-semibold text-white">{ohlcRange.open.toFixed(2)}</span>
+              <span className="text-right font-semibold text-white">{ohlcRange.open.toFixed(4)}</span>
               <span className="text-slate-400">High</span>
-              <span className="text-right">{ohlcRange.high.toFixed(2)}</span>
+              <span className="text-right">{ohlcRange.high.toFixed(4)}</span>
               <span className="text-slate-400">Low</span>
-              <span className="text-right">{ohlcRange.low.toFixed(2)}</span>
+              <span className="text-right">{ohlcRange.low.toFixed(4)}</span>
               <span className="text-slate-400">Close</span>
-              <span className="text-right font-semibold text-white">{ohlcRange.close.toFixed(2)}</span>
+              <span className="text-right font-semibold text-white">{ohlcRange.close.toFixed(4)}</span>
             </div>
           ) : (
             <p className="text-slate-400">No data yet.</p>
@@ -442,7 +445,7 @@ export default function TradingPage() {
                           <td className="px-3 py-2">{String(row["EnteredAt"] || row["TradeDay"] || "")}</td>
                           <td className="px-3 py-2">{String(row["ExitedAt"] || "")}</td>
                           <td className="px-3 py-2 text-right text-emerald-300">
-                            {Number(row["PnL(Net)"] || 0).toFixed(2)}
+                            {Number(row["PnL(Net)"] || 0).toFixed(4)}
                           </td>
                           <td className="px-3 py-2 text-right">{Number(row["Size"] || 0)}</td>
                           <td className="px-3 py-2">{String(row["Type"] || "")}</td>

@@ -3,6 +3,16 @@ from dashboard.config.settings import DEFAULT_GRANULARITY, DEFAULT_ROLLING_WINDO
 import numpy as np
 from dashboard.services.analysis.schema import validate_performance_df
 
+def _coerce_window(window, fallback=DEFAULT_ROLLING_WINDOW):
+    value = fallback if window is None else window
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        raise ValueError("window must be a positive integer")
+    if value < 1:
+        raise ValueError("window must be a positive integer")
+    return value
+
 def pnl_growth(performance_df, granularity=DEFAULT_GRANULARITY, daily_compounding_rate=0.001902, initial_funding=10000):
     performance_df = validate_performance_df(performance_df)
     # Initialize empty result if performance_df is empty
@@ -65,8 +75,10 @@ def pnl_growth(performance_df, granularity=DEFAULT_GRANULARITY, daily_compoundin
         grouped = pd.merge(grouped, passive_grouped[['Period', 'PassiveGrowth', 'CumulativePassive']],
                          on='Period', how='outer').sort_values('Period')
         
-        # Fill NaN for periods with no trades
-        grouped = grouped.fillna({'NetPnL': 0, 'PassiveGrowth': 0, 'CumulativePassive': 0})
+        # Keep passive growth curve continuous across periods with no trades.
+        grouped['PassiveGrowth'] = grouped['PassiveGrowth'].ffill().fillna(0)
+        grouped['CumulativePassive'] = grouped['CumulativePassive'].ffill().fillna(0)
+        grouped['NetPnL'] = grouped['NetPnL'].fillna(0)
         grouped['CumulativePnL'] = grouped['NetPnL'].cumsum()
         
         return grouped[['Period', 'NetPnL', 'CumulativePnL', 'PassiveGrowth', 'CumulativePassive']]
@@ -177,6 +189,7 @@ def behavioral_patterns(performance_df):
 
 def rolling_win_rate(performance_df, window=DEFAULT_ROLLING_WINDOW):
     performance_df = validate_performance_df(performance_df)
+    window = _coerce_window(window)
     if performance_df.empty:
         return pd.DataFrame(columns=['TradeIndex', 'WinRate'])
     
@@ -208,8 +221,9 @@ def rolling_win_rate(performance_df, window=DEFAULT_ROLLING_WINDOW):
     except Exception as e:
         raise ValueError(f"Failed to compute rolling win rate: {str(e)}")
 
-def sharpe_ratio(performance_df, window=DEFAULT_ROLLING_WINDOW, risk_free_rate=0.02):
+def sharpe_ratio(performance_df, window=DEFAULT_ROLLING_WINDOW, risk_free_rate=0.02, initial_capital=10000):
     performance_df = validate_performance_df(performance_df)
+    window = _coerce_window(window)
     if performance_df.empty:
         return pd.DataFrame(columns=['Date', 'SharpeRatio'])
     
@@ -224,9 +238,13 @@ def sharpe_ratio(performance_df, window=DEFAULT_ROLLING_WINDOW, risk_free_rate=0
         daily_pnl['TradeDay'] = pd.to_datetime(daily_pnl['TradeDay'])
         daily_pnl = daily_pnl.sort_values('TradeDay')
         
-        # Calculate daily returns (assuming starting capital is the cumulative sum)
+        # Calculate capital-based daily returns.
         daily_pnl['CumPnL'] = daily_pnl['PnL(Net)'].cumsum()
-        daily_pnl['Returns'] = daily_pnl['PnL(Net)'].pct_change().fillna(0)
+        daily_pnl['Equity'] = initial_capital + daily_pnl['CumPnL']
+        daily_pnl['PrevEquity'] = daily_pnl['Equity'].shift(1).fillna(initial_capital)
+        daily_pnl['Returns'] = (
+            daily_pnl['PnL(Net)'] / daily_pnl['PrevEquity'].replace(0, np.nan)
+        ).replace([np.inf, -np.inf], np.nan).fillna(0)
         
         # Calculate rolling Sharpe Ratio
         trading_days_per_year = 252
@@ -331,6 +349,7 @@ def sharpe_ratio(performance_df, window=DEFAULT_ROLLING_WINDOW, risk_free_rate=0
 
 def trade_efficiency(performance_df, window=DEFAULT_ROLLING_WINDOW):
     performance_df = validate_performance_df(performance_df)
+    window = _coerce_window(window)
     if performance_df.empty:
         return pd.DataFrame(columns=['TradeIndex', 'Efficiency'])
     
@@ -366,6 +385,7 @@ def trade_efficiency(performance_df, window=DEFAULT_ROLLING_WINDOW):
 
 def hourly_performance(performance_df, window=DEFAULT_ROLLING_WINDOW):
     performance_df = validate_performance_df(performance_df)
+    window = _coerce_window(window)
     if performance_df.empty:
         return pd.DataFrame(columns=['HourlyIndex', 'HourlyPnL'])
     

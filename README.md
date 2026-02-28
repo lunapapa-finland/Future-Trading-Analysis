@@ -51,6 +51,7 @@ DASH_PASS=yourstrongpassword
 # Generate once and paste (any long random string is fine):
 # python -c "import secrets; print(secrets.token_urlsafe(32))"
 SECRET_KEY=PASTE_GENERATED_SECRET_HERE
+SESSION_SIGNING_KEY=PASTE_ANOTHER_GENERATED_SECRET_HERE
 ```
 
 ---
@@ -154,4 +155,3 @@ docker exec trading_jobs python /app/jobs/run_perf_if_files.py
 ## License
 
 This project is distributed under the [MIT License](LICENSE). See the LICENSE file for full terms.
-
