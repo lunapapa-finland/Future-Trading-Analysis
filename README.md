@@ -1,157 +1,220 @@
-# Future Trading Dashboard
+# Future Trading Analysis
 
-An interactive futures dashboard with a Flask API backend and a Next.js frontend. Data and logs stay on disk so containers can be restarted without loss. CI builds multi-arch Docker images (amd64/arm64) and publishes to GHCR on tags.
+Production-oriented futures trading analytics platform with a Flask API backend, Next.js frontend, scheduled data ingestion jobs, and CI/CD security gates.
 
----
+## Overview
 
-## What it does
+This project provides:
+- Trading dashboard (candles, overlays, trade markers)
+- Analysis dashboard (drawdown, PnL growth, rolling metrics, behavioral heatmap)
+- Portfolio endpoints and metrics
+- Background jobs for market/performance ingestion
 
-- **Market data (daily):** Fetches and appends daily futures data (holiday-aware) from yfinance.
-- **Performance data (on demand):** Drop CSVs into `data/temp_performance/`; they’re auto-processed into the performance pool every few minutes.
-- **Dashboard:** Candles, stats, and behavioral insights for MES, MNQ, M2K, M6E, M6B, MBT, MET (extendable via config).
-- **Login & health:** Basic login; `/health` endpoint.
-- **Logging:** App logs in `log/app.log`; cron logs for background jobs.
-- **CI/CD:** Tests and frontend build run on push/PR; Docker images build and push to GHCR on tag events.
+Current stack:
+- Backend: Flask + Gunicorn + pandas/numpy
+- Frontend: Next.js (App Router)
+- Jobs: cron-driven Python scripts
+- Containers: Docker Compose (web + jobs)
+- CI: quality + security + tag-based container publishing
 
----
+## Architecture
 
-## TODO
+Key runtime components:
+- `src/dashboard/core/app.py`: Flask app bootstrap, API auth gate, CORS, `/health`
+- `src/dashboard/api/routes.py`: JSON API endpoints (`/api/*`)
+- `src/dashboard/services/analysis/`: analysis calculations
+- `jobs/run_trading_if_ready.py`: market data sync scheduler entry
+- `jobs/run_perf_if_files.py`: performance file ingestion poller
+- `web/`: Next.js frontend
+- `web/proxy.ts`: frontend route protection (`/trading`, `/analysis`)
 
-- Backtesting module (Backtrader) integration
-- More modular abstractions
-- Expose persistent configuration
-- UI refinements
+Data and logs are persisted via mounted folders.
 
----
+## Security Model
 
+Important runtime behavior:
+- `/api/*` requires authentication in production/runtime.
+- API accepts either:
+  - HTTP Basic Auth (`DASH_USER` / `DASH_PASS`), or
+  - signed session cookie from frontend login.
+- Session cookie is HMAC-signed + expiring (not a static value).
+- CORS is restricted by `FRONTEND_ORIGIN` and does not fall back to permissive wildcard.
+- `/health` remains unauthenticated for probes.
 
----
+## Repository Layout
 
-## Folders you’ll use
+```text
+src/dashboard/
+  api/                 # Flask JSON endpoints
+  core/                # app bootstrap/auth/cors
+  config/              # settings/env/symbol catalog
+  services/
+    analysis/          # metric computations
+    data/              # data loading
+    utils/             # acquisition logic
 
+web/                   # Next.js app
+jobs/                  # scheduled job entrypoints
+
+/data                  # runtime data (mounted)
+/log                   # runtime logs (mounted)
 ```
-data/
-  future/           # market CSVs per symbol
-  performance/      # combined performance + daily performance files
-  temp_performance/ # drop your raw performance CSVs here
-log/                # app.log and job logs
+
+## Required Environment
+
+Create `src/dashboard/config/credentials.env` from template:
+
+```bash
+cp src/dashboard/config/credentials.env.example src/dashboard/config/credentials.env
 ```
 
-*(These are mounted both locally and on the Server so files persist.)*
-
----
-
-## Credentials (one file for local & Docker)
-
-Create **`src/dashboard/config/credentials.env`** (don’t commit it):
+Required values:
 
 ```env
 DASH_USER=yourusername
 DASH_PASS=yourstrongpassword
-# Generate once and paste (any long random string is fine):
-# python -c "import secrets; print(secrets.token_urlsafe(32))"
-SECRET_KEY=PASTE_GENERATED_SECRET_HERE
-SESSION_SIGNING_KEY=PASTE_ANOTHER_GENERATED_SECRET_HERE
+SECRET_KEY=long_random_secret
+SESSION_SIGNING_KEY=another_long_random_secret
 ```
 
----
+Do not commit real credentials.
 
-## Run locally (venv or conda)
+## Local Development
+
+### 1) Python backend
 
 ```bash
-python -m venv .venv  # or conda activate finance_env
+python -m venv .venv
 . .venv/bin/activate
-
 pip install -r requirements.txt
 pip install -e .
-
-mkdir -p data/{future,performance,temp_performance} log
-
-# load creds into the shell for this session
 set -a; . src/dashboard/config/credentials.env; set +a
-
 gunicorn -b 127.0.0.1:5000 --workers 2 --timeout 120 wsgi:server
-# open: http://127.0.0.1:8050 (Next.js) | API: http://127.0.0.1:5000 | health: http://127.0.0.1:5000/health
 ```
 
-**Handy make targets (optional):**
+### 2) Frontend (separate terminal)
 
+```bash
+cd web
+npm ci
+npm run dev
 ```
-make run          # gunicorn locally
-make performance  # process temp_performance now
-make data         # fetch market data now
-```
 
----
+Open:
+- Frontend: `http://127.0.0.1:3000`
+- Backend API: `http://127.0.0.1:5000`
+- Health: `http://127.0.0.1:5000/health`
 
-## Run with Docker (local or server)
+Note: `web/next.config.js` rewrites `/api/*` to `http://localhost:5000/api/*` in local frontend dev.
 
-1) **Prepare folders** (local path or server path):
+## Docker (Recommended Runtime)
+
+Prepare persistent folders:
 
 ```bash
 mkdir -p data/{future,performance,temp_performance,portfolio} log
-# or use /srv/trading-dashboard/... on a server and chown accordingly
 ```
 
-2) **Get the code & credentials:**
+Start:
 
 ```bash
-git clone <your repo> Future-Trading-Analysis
-cd Future-Trading-Analysis
-# copy src/dashboard/config/credentials.env into this path
+docker compose up --build -d
 ```
 
-3) **(Optional) copy existing CSVs:**
+Check:
 
 ```bash
-# rsync -avz data/performance/ <host>:/path/to/data/performance/
-# rsync -avz data/future/      <host>:/path/to/data/future/
+curl -s http://127.0.0.1:8050/health
 ```
 
-4) **Start (build locally):**
+Stop:
 
 ```bash
-docker compose build
-docker compose up -d
-curl -s http://127.0.0.1:8050/health   # -> ok
+docker compose down
 ```
 
-5) **Deploy using prebuilt image on RPI/arm64 (no build on device):**
+## Scheduled Jobs
+
+Jobs container runs cron tasks:
+- Market data gate (periodic, once/day after configured delay)
+- Performance ingestion poller (`data/temp_performance/*.csv`)
+
+Manual trigger examples:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.rpi.yml pull
-docker compose -f docker-compose.yml -f docker-compose.rpi.yml up -d
-```
-
-> Set the image tag in docker-compose.rpi.yml (e.g., `v1.0.1` for stability or `latest` to track new builds). If the GHCR image is private, login first: `echo $GHCR_PAT | docker login ghcr.io -u <user> --password-stdin`.
-
-> If you use a subdomain, point your reverse proxy to `http://127.0.0.1:8050/`. For HTTPS, you can add proxy-level basic auth if desired.
-
----
-
-## Background jobs (automatic)
-
-* **Market data:** runs once per day after a small delay (configured in compose).
-* **Performance data:** checks every few minutes; if it finds CSVs in `data/temp_performance/`, it processes them and removes the originals.
-
-You can still trigger them manually:
-
-```bash
-# inside Docker
 docker exec trading_jobs python /app/jobs/run_trading_if_ready.py
 docker exec trading_jobs python /app/jobs/run_perf_if_files.py
 ```
 
----
+## API Quick Checks
 
-## Images (examples)
+Unauthenticated API should fail:
+
+```bash
+curl -i http://localhost:8050/api/config
+```
+
+Authenticated API should succeed:
+
+```bash
+curl -i -u '<user>:<pass>' http://localhost:8050/api/config
+```
+
+## Quality & Security Checks
+
+Backend:
+
+```bash
+pytest -q
+python -m pip check
+bandit -q -r src
+python -m pip_audit -r requirements.txt
+```
+
+Frontend:
+
+```bash
+cd web
+npm run lint
+npm run typecheck
+npm run build
+npm audit --omit=dev --audit-level=high
+```
+
+## CI/CD
+
+GitHub Actions workflow includes:
+- `quality` job: pytest + pip check + frontend lint/typecheck/test/build
+- `security` job: bandit + pip-audit + npm audit
+- `docker` job: tag-triggered multi-arch image publish (depends on quality+security)
+
+## Release Workflow
+
+1. Ensure branch is green in CI.
+2. Create and push annotated tag:
+
+```bash
+git tag -a v1.1 -m "Release v1.1"
+git push origin v1.1
+```
+
+3. Tag pipeline publishes container image.
+4. Deploy by pulling tag in your target environment.
+
+## Troubleshooting
+
+- 401 on `/api/*` in runtime: missing auth headers or invalid session cookie.
+- CI tests returning 401: ensure Flask test mode bypass is active only in tests.
+- Frontend build warnings about baseline data: informational; update related package when convenient.
+- If behavior differs after dependency upgrades: rebuild containers (`docker compose up --build -d`).
+
+## Images (Examples)
 
 ![Sample Candlestick Chart](img/sample1.png)
 ![Performance Metrics Dashboard](img/sample2.png)
 ![Trade Behavior Insights](img/sample3.png)
 ![Rolling Win Rate Visualization](img/sample4.png)
 
-
 ## License
 
-This project is distributed under the [MIT License](LICENSE). See the LICENSE file for full terms.
+MIT. See [LICENSE](LICENSE).
