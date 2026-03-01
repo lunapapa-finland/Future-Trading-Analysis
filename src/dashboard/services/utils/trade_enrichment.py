@@ -57,8 +57,11 @@ def ensure_trade_id(df: pd.DataFrame) -> pd.DataFrame:
     if not missing_mask:
         return out
 
+    # Deterministic row id generation (non-security use).
     computed = out.apply(
-        lambda row: hashlib.sha1(_trade_key_payload(row).encode("utf-8")).hexdigest()[:16],
+        lambda row: hashlib.sha1(
+            _trade_key_payload(row).encode("utf-8"), usedforsecurity=False
+        ).hexdigest()[:16],
         axis=1,
     )
     if "trade_id" in out.columns:

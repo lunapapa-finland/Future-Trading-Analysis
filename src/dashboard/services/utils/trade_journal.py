@@ -133,12 +133,15 @@ def merge_trade_journal(df: pd.DataFrame, journal_df: Optional[pd.DataFrame] = N
 
     merged = base.merge(journal, on=KEY_COLUMNS, how="left", suffixes=("", "__journal"))
     for col in JOURNAL_FIELD_COLUMNS:
+        # If the base dataframe already had this column, pandas keeps it as `col`
+        # and writes journal values into `col__journal`.
+        journal_col = f"{col}__journal" if f"{col}__journal" in merged.columns else col
         if col in out.columns:
             existing = out[col].fillna("").astype(str).str.strip()
-            journal_vals = merged[col].fillna("").astype(str).str.strip()
+            journal_vals = merged[journal_col].fillna("").astype(str).str.strip()
             out[col] = journal_vals.where(journal_vals != "", existing)
         else:
-            out[col] = merged[col].fillna("").astype(str).str.strip()
+            out[col] = merged[journal_col].fillna("").astype(str).str.strip()
     return out
 
 
