@@ -90,7 +90,7 @@ export default function PortfolioPage() {
         ) : null}
         {data?.metrics ? (
           <Card title="Metrics" className="bg-surface/70">
-            <div className="grid grid-cols-2 gap-4 text-white">
+            <div className="grid grid-cols-1 gap-4 text-white sm:grid-cols-2">
               <Metric label="Latest Equity" value={data.metrics.latest_equity} format="currency" />
               <Metric label="Max Drawdown" value={data.metrics.max_drawdown} format="percent" />
               <Metric label="CAGR" value={data.metrics.cagr} format="percent" />
@@ -141,7 +141,7 @@ export default function PortfolioPage() {
 
         {latest ? (
           <Card title="Latest" className="bg-surface/70">
-            <div className="grid grid-cols-2 gap-4 text-white">
+            <div className="grid grid-cols-1 gap-4 text-white sm:grid-cols-2">
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Timestamp</p>
                 <p className="text-lg font-semibold">{new Date(latest.timestamp || latest.date || "").toLocaleString()}</p>

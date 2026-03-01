@@ -4,6 +4,18 @@ import { createHmac, randomBytes } from "crypto";
 const SESSION_COOKIE = "fta_session";
 const SESSION_TTL = 60 * 60 * 24; // 1 day
 
+function isHttpsRequest(request: Request): boolean {
+  const forwardedProto = request.headers.get("x-forwarded-proto");
+  if (forwardedProto) {
+    return forwardedProto.split(",")[0].trim().toLowerCase() === "https";
+  }
+  try {
+    return new URL(request.url).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function getSessionSecret(): string | null {
   return process.env.SESSION_SIGNING_KEY || process.env.SECRET_KEY || null;
 }
@@ -42,6 +54,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "Session signing secret not configured" }, { status: 500 });
   }
   const sessionToken = createSessionToken(username, SESSION_TTL, sessionSecret);
+  const secureCookie = isHttpsRequest(request);
 
   const res = NextResponse.json({ ok: true });
   res.cookies.set({
@@ -49,7 +62,7 @@ export async function POST(request: Request) {
     value: sessionToken,
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: secureCookie,
     path: "/",
     maxAge: SESSION_TTL
   });

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ReactNode } from "react";
+import { ReactNode, useState } from "react";
 import { useRouter } from "next/navigation";
 import clsx from "clsx";
 
@@ -14,6 +14,7 @@ const navLinks = [
 ];
 
 export function AppShell({ children, active }: { children: ReactNode; active?: string }) {
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const title =
     active === "/guide"
       ? "Intraday Guide"
@@ -30,13 +31,34 @@ export function AppShell({ children, active }: { children: ReactNode; active?: s
   }
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-6 px-6 py-6">
-      <header className="flex items-center justify-between rounded-2xl border border-white/5 bg-surface/60 px-5 py-4 shadow-lg">
-        <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-accent">Future Trading</p>
-          <p className="text-lg font-semibold text-white">{title}</p>
+    <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-4 px-3 py-4 sm:gap-6 sm:px-6 sm:py-6">
+      <header className="rounded-2xl border border-white/5 bg-surface/60 px-3 py-3 shadow-lg sm:px-5 sm:py-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.2em] text-accent sm:text-xs">Future Trading</p>
+            <p className="text-base font-semibold text-white sm:text-lg">{title}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="rounded-full border border-white/10 px-3 py-2 text-xs text-slate-200 md:hidden"
+              onClick={() => setMobileNavOpen((v) => !v)}
+              aria-expanded={mobileNavOpen}
+              aria-controls="mobile-nav"
+            >
+              Menu
+            </button>
+            <button
+              type="button"
+              onClick={handleSignOut}
+              className="rounded-full border border-white/10 px-3 py-2 text-xs text-slate-200 transition hover:border-accent hover:bg-accent/10 hover:text-white sm:text-sm"
+            >
+              Sign Out
+            </button>
+          </div>
         </div>
-        <nav className="flex items-center gap-3">
+
+        <nav className="mt-3 hidden flex-wrap items-center gap-2 md:flex">
           {navLinks.map((link) => (
             <Link
               key={link.href}
@@ -51,14 +73,27 @@ export function AppShell({ children, active }: { children: ReactNode; active?: s
               {link.label}
             </Link>
           ))}
-          <button
-            type="button"
-            onClick={handleSignOut}
-            className="rounded-full border border-white/10 px-3 py-2 text-sm text-slate-200 transition hover:-translate-y-0.5 hover:border-accent hover:bg-accent/10 hover:text-white"
-          >
-            Sign Out
-          </button>
         </nav>
+
+        {mobileNavOpen ? (
+          <nav id="mobile-nav" className="mt-3 grid gap-2 md:hidden">
+            {navLinks.map((link) => (
+              <Link
+                key={link.href}
+                href={link.href}
+                onClick={() => setMobileNavOpen(false)}
+                className={clsx(
+                  "rounded-lg border px-3 py-2 text-sm transition",
+                  active === link.href
+                    ? "border-accent/40 bg-accent/20 text-white"
+                    : "border-white/10 text-slate-300 hover:border-white/20 hover:bg-white/5 hover:text-white"
+                )}
+              >
+                {link.label}
+              </Link>
+            ))}
+          </nav>
+        ) : null}
       </header>
       {children}
     </div>

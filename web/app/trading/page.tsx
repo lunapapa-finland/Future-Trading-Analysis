@@ -224,7 +224,7 @@ export default function TradingPage() {
             </div>
 
             <div className="rounded-xl border border-white/10 bg-surface/80 p-3 space-y-3">
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <label className="flex flex-col gap-1 text-sm text-slate-300">
                   Start
                   <input
@@ -249,7 +249,7 @@ export default function TradingPage() {
             </div>
 
             <div className="rounded-xl border border-white/10 bg-surface/80 p-3 space-y-3">
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 {[
                   { label: showTrades ? "Hide Trades" : "Show Trades", active: showTrades, onClick: () => setShowTrades((s) => !s) },
                   { label: "EMA 20", active: showEma, onClick: () => setShowEma((v) => !v) },
@@ -274,7 +274,7 @@ export default function TradingPage() {
         </Card>
         <Card title="Market Snapshot">
           {lastBar && ohlcRange ? (
-            <div className="grid grid-cols-2 gap-2 text-sm text-slate-200">
+            <div className="grid grid-cols-1 gap-2 text-sm text-slate-200 sm:grid-cols-2">
               <span className="text-slate-400">Range</span>
               <span className="text-right text-white">{startDate} → {endDate}</span>
               <span className="text-slate-400">Open</span>

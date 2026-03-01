@@ -10,6 +10,7 @@ body {
   background: #0b132b;
   color: #e6edf3;
   font-family: 'Inter', system-ui, sans-serif;
+  -webkit-text-size-adjust: 100%;
 }
 
 a {

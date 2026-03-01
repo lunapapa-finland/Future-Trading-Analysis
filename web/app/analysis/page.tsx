@@ -378,7 +378,7 @@ export default function AnalysisPage() {
       {mode === "core" ? (
         <Card title="Visualization" className="mt-2">
           <div className="overflow-x-auto">
-            <div className="min-w-[900px]">
+            <div className="min-w-full md:min-w-[900px]">
               {preview.length === 0 ? (
                 <p className="text-slate-400">No data yet.</p>
               ) : (
@@ -493,7 +493,7 @@ function SimpleKv({ kv }: { kv: Record<string, string | number> }) {
   const entries = Object.entries(kv ?? {});
   if (!entries.length) return <p className="text-slate-400">No data.</p>;
   return (
-    <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
+    <div className="grid grid-cols-1 gap-x-3 gap-y-1 text-sm sm:grid-cols-2">
       {entries.map(([k, v]) => (
         <React.Fragment key={k}>
           <div className="text-slate-400">{k}</div>

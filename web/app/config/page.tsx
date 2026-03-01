@@ -57,25 +57,34 @@ export default function ConfigPage() {
 function SymbolTable({ symbols }: { symbols: SymbolConfig[] }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-white/10 bg-surface/60 shadow-lg">
-      <div className="grid grid-cols-4 gap-4 border-b border-white/5 bg-white/5 px-4 py-3 text-xs uppercase tracking-[0.15em] text-slate-400">
-        <span>Symbol</span>
-        <span>Asset Class</span>
-        <span>Data Path</span>
-        <span>Performance Path</span>
+      <div className="border-b border-white/5 bg-white/5 px-4 py-3 text-xs uppercase tracking-[0.15em] text-slate-400">
+        Symbols
       </div>
-      <div className="divide-y divide-white/5">
-        {symbols.map((s) => (
-          <div key={s.symbol} className="grid grid-cols-4 gap-4 px-4 py-3 text-sm text-white">
-            <span className="font-semibold text-accent">{s.symbol}</span>
-            <span className="text-slate-200">{s.asset_class}</span>
-            <span className="truncate text-slate-100" title={s.data_path}>
-              {s.data_path}
-            </span>
-            <span className="truncate text-slate-100" title={s.performance_path}>
-              {s.performance_path}
-            </span>
-          </div>
-        ))}
+      <div className="overflow-x-auto">
+        <table className="min-w-[720px] w-full text-sm text-white">
+          <thead className="text-xs uppercase tracking-[0.15em] text-slate-400">
+            <tr>
+              <th className="px-4 py-3 text-left">Symbol</th>
+              <th className="px-4 py-3 text-left">Asset Class</th>
+              <th className="px-4 py-3 text-left">Data Path</th>
+              <th className="px-4 py-3 text-left">Performance Path</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-white/5">
+            {symbols.map((s) => (
+              <tr key={s.symbol}>
+                <td className="px-4 py-3 font-semibold text-accent">{s.symbol}</td>
+                <td className="px-4 py-3 text-slate-200">{s.asset_class}</td>
+                <td className="px-4 py-3 text-slate-100" title={s.data_path}>
+                  <span className="block max-w-[260px] truncate">{s.data_path}</span>
+                </td>
+                <td className="px-4 py-3 text-slate-100" title={s.performance_path}>
+                  <span className="block max-w-[260px] truncate">{s.performance_path}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );
