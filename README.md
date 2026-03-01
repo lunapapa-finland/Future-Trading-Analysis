@@ -146,6 +146,59 @@ docker exec trading_jobs python /app/jobs/run_trading_if_ready.py
 docker exec trading_jobs python /app/jobs/run_perf_if_files.py
 ```
 
+## Performance Import Workflow (Auto + Manual Steps)
+
+This is the recommended workflow after downloading new IBKR trade CSV files.
+
+### Input and output files
+
+- Raw input folder:
+  - `data/temp_performance/*.csv`
+- Converted per-range files:
+  - `data/performance/Performance_<start>_to_<end>.csv`
+- Aggregated dataset (analysis source):
+  - `data/performance/Combined_performance_for_dash_project.csv`
+- Journal for manual labels:
+  - `data/performance/trade_journal.csv`
+- Optional combo/rule definitions:
+  - `data/performance/trade_journal_metadata.csv`
+
+### What happens automatically
+
+When `jobs/run_perf_if_files.py` runs:
+
+1. Raw IBKR files in `data/temp_performance/` are converted to standardized `Performance_*.csv`.
+2. Converted records are appended/deduplicated into `Combined_performance_for_dash_project.csv`.
+3. `trade_id` is ensured and enrichment merge logic is applied.
+4. `trade_journal.csv` is auto-synced by key (`TradeDay`, `ContractName`, `IntradayIndex`):
+   - Missing key rows are added.
+   - Existing manual fields are preserved.
+   - No duplicate key rows are kept.
+
+### What you must do manually
+
+After new rows are synced, update `trade_journal.csv` for those rows:
+
+- `Phase`
+- `Context`
+- `Setup`
+- `SignalBar`
+- `Comments` (free text)
+
+If you enforce finite combinations, maintain `trade_journal_metadata.csv` with allowed/preferred rules.
+
+### Validation and usage
+
+- Validate journal quality:
+  - `GET /api/journal/validate`
+  - Optional query filters: `symbol`, `start`, `end`
+- Analysis and Advanced Insights endpoints merge journal labels into analysis rows, so setup/context-driven metrics reflect journal values when present.
+
+### Manual edits to avoid
+
+- Do not manually edit `Combined_performance_for_dash_project.csv` in normal workflow.
+- Use `trade_journal.csv` for annotation changes.
+
 ## API Quick Checks
 
 Unauthenticated API should fail:

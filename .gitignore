@@ -100,3 +100,6 @@ src/dashboard/config/credentials.env
 config/credentials.env
 
 docker-compose.override.yml
+
+# frontend build caches
+web/tsconfig.tsbuildinfo

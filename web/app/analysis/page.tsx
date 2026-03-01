@@ -2,9 +2,9 @@
 
 import { AppShell } from "@/components/layout/app-shell";
 import { Card } from "@/components/ui/card";
-import { postAnalysis } from "@/lib/api";
+import { ApiError, postAnalysis, postInsights } from "@/lib/api";
 import { fetchConfig } from "@/lib/config";
-import { AnalysisSeriesPoint } from "@/lib/types";
+import { AnalysisSeriesPoint, InsightsResponse } from "@/lib/types";
 import { useMemo, useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Line } from "react-chartjs-2";
@@ -22,6 +22,13 @@ import {
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
 
+function localYearMonth(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  return `${year}-${month}`;
+}
+
 const metricOptions = [
   { value: "rolling_win_rate", label: "Rolling Win Rate" },
   { value: "drawdown", label: "Drawdown" },
@@ -31,19 +38,24 @@ const metricOptions = [
   { value: "behavioral_heatmap", label: "Behavioral Heatmap" }
 ];
 
-const granularityOptions = [
-  { value: "1D", label: "Daily" },
-  { value: "1W-MON", label: "Weekly" },
-  { value: "1M", label: "Monthly" }
-];
-
 export default function AnalysisPage() {
+  const [mode, setMode] = useState<"core" | "advanced">("core");
   const [metric, setMetric] = useState(metricOptions[0].value);
-  const [granularity, setGranularity] = useState("1W-MON");
   const [window, setWindow] = useState(7);
   const [symbol, setSymbol] = useState<string>("");
-  const [startDate, setStartDate] = useState<string>("");
-  const [endDate, setEndDate] = useState<string>("");
+  const [coreStartDate, setCoreStartDate] = useState<string>("");
+  const [coreEndDate, setCoreEndDate] = useState<string>("");
+  const [insightsMinTrades, setInsightsMinTrades] = useState(3);
+  const [insightsMonth, setInsightsMonth] = useState(localYearMonth());
+  const [showRuleOverrides, setShowRuleOverrides] = useState(false);
+  const [maxTradesPerDay, setMaxTradesPerDay] = useState(8);
+  const [maxConsecutiveLosses, setMaxConsecutiveLosses] = useState(3);
+  const [maxDailyLoss, setMaxDailyLoss] = useState(500);
+  const [bigLossThreshold, setBigLossThreshold] = useState(200);
+  const [maxTradesAfterBigLoss, setMaxTradesAfterBigLoss] = useState(2);
+  const [setupFilter, setSetupFilter] = useState("");
+  const [breachesOnly, setBreachesOnly] = useState(false);
+  const [defaultsHydrated, setDefaultsHydrated] = useState(false);
 
   const { data: config, isLoading: configLoading, error: configError } = useQuery({
     queryKey: ["config"],
@@ -57,15 +69,73 @@ export default function AnalysisPage() {
     }
   }, [config, symbol]);
 
+  useEffect(() => {
+    if (defaultsHydrated || !config?.insights_defaults?.rule_compliance) return;
+    const d = config.insights_defaults.rule_compliance;
+    if (typeof d.max_trades_per_day === "number") setMaxTradesPerDay(d.max_trades_per_day);
+    if (typeof d.max_consecutive_losses === "number") setMaxConsecutiveLosses(d.max_consecutive_losses);
+    if (typeof d.max_daily_loss === "number") setMaxDailyLoss(d.max_daily_loss);
+    if (typeof d.big_loss_threshold === "number") setBigLossThreshold(d.big_loss_threshold);
+    if (typeof d.max_trades_after_big_loss === "number") setMaxTradesAfterBigLoss(d.max_trades_after_big_loss);
+    setDefaultsHydrated(true);
+  }, [config, defaultsHydrated]);
+
   const { data, isFetching, error } = useQuery({
-    queryKey: ["analysis", metric, granularity, window, symbol, startDate, endDate],
-    queryFn: () => postAnalysis(metric, { granularity, window, symbol, start_date: startDate, end_date: endDate }),
-    enabled: Boolean(symbol),
+    queryKey: ["analysis", metric, window, symbol, coreStartDate, coreEndDate, mode],
+    queryFn: () =>
+      postAnalysis(metric, {
+        granularity: "1W-MON",
+        window,
+        symbol,
+        start_date: coreStartDate,
+        end_date: coreEndDate,
+      }),
+    enabled: Boolean(symbol) && mode === "core",
     staleTime: 60_000,
     refetchOnWindowFocus: false
   });
 
   const preview = useMemo(() => data ?? [], [data]);
+
+  const insightsParams = useMemo(() => {
+    const params: Record<string, unknown> = {
+      min_trades: insightsMinTrades,
+    };
+    if (insightsMonth) params.month = insightsMonth;
+    if (showRuleOverrides) {
+      params.max_trades_per_day = maxTradesPerDay;
+      params.max_consecutive_losses = maxConsecutiveLosses;
+      params.max_daily_loss = maxDailyLoss;
+      params.big_loss_threshold = bigLossThreshold;
+      params.max_trades_after_big_loss = maxTradesAfterBigLoss;
+    }
+    return params;
+  }, [
+    insightsMinTrades,
+    insightsMonth,
+    showRuleOverrides,
+    maxTradesPerDay,
+    maxConsecutiveLosses,
+    maxDailyLoss,
+    bigLossThreshold,
+    maxTradesAfterBigLoss,
+  ]);
+
+  const { data: insights, isFetching: insightsFetching, error: insightsError } = useQuery<InsightsResponse>({
+    queryKey: ["insights", symbol, insightsMonth, insightsParams, mode],
+    queryFn: () =>
+      postInsights({
+        symbol,
+        params: insightsParams,
+      }),
+    enabled: Boolean(symbol) && mode === "advanced",
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+
+  const showWindow =
+    metric === "rolling_win_rate" || metric === "sharpe_ratio" || metric === "trade_efficiency";
+  const insightsNoData = insightsError instanceof ApiError && insightsError.code === "EMPTY_DATASET";
 
   return (
     <AppShell active="/analysis">
@@ -86,95 +156,382 @@ export default function AnalysisPage() {
                   </option>
                 ))}
               </select>
-              {configError ? <span className="text-xs text-red-300">Failed to load symbols</span> : null}
-            </label>
-            <label className="flex flex-col gap-1 text-sm text-slate-300">
-              Metric
-              <select
-                className="rounded-lg border border-white/10 bg-surface px-3 py-2 text-white outline-none focus:border-accent"
-                value={metric}
-                onChange={(e) => setMetric(e.target.value)}
-              >
-                {metricOptions.map((m) => (
-                  <option key={m.value} value={m.value}>
-                    {m.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col gap-1 text-sm text-slate-300">
-              Granularity
-              <select
-                className="rounded-lg border border-white/10 bg-surface px-3 py-2 text-white outline-none focus:border-accent"
-                value={granularity}
-                onChange={(e) => setGranularity(e.target.value)}
-              >
-                {granularityOptions.map((g) => (
-                  <option key={g.value} value={g.value}>
-                    {g.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex flex-col gap-1 text-sm text-slate-300">
-              Window
-              <input
-                type="number"
-                min={1}
-                className="rounded-lg border border-white/10 bg-surface px-3 py-2 text-white outline-none focus:border-accent"
-                value={window}
-                onChange={(e) => setWindow(Number(e.target.value))}
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-sm text-slate-300">
-              Start
-              <input
-                type="date"
-                className="rounded-lg border border-white/10 bg-surface px-3 py-2 text-white outline-none focus:border-accent"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-sm text-slate-300">
-              End
-              <input
-                type="date"
-                className="rounded-lg border border-white/10 bg-surface px-3 py-2 text-white outline-none focus:border-accent"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-              />
-            </label>
+                {configError ? <span className="text-xs text-red-300">Failed to load symbols</span> : null}
+              </label>
+
+            <fieldset className="flex flex-col gap-2 rounded-lg border border-white/10 bg-white/5 p-2 sm:col-span-2">
+              <legend className="px-1 text-xs uppercase tracking-[0.14em] text-slate-300">Mode</legend>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className={`rounded-md px-3 py-1.5 text-sm ${
+                    mode === "core"
+                      ? "bg-accent text-white"
+                      : "border border-white/15 bg-transparent text-slate-300"
+                  }`}
+                  onClick={() => setMode("core")}
+                >
+                  Core Analysis
+                </button>
+                <button
+                  type="button"
+                  className={`rounded-md px-3 py-1.5 text-sm ${
+                    mode === "advanced"
+                      ? "bg-accent text-white"
+                      : "border border-white/15 bg-transparent text-slate-300"
+                  }`}
+                  onClick={() => setMode("advanced")}
+                >
+                  Advanced Insights
+                </button>
+              </div>
+            </fieldset>
+
+            {mode === "core" ? (
+              <>
+                <label className="flex flex-col gap-1 text-sm text-slate-300">
+                  Start
+                  <input
+                    type="date"
+                    className="rounded-lg border border-white/10 bg-surface px-3 py-2 text-white outline-none focus:border-accent"
+                    value={coreStartDate}
+                    onChange={(e) => setCoreStartDate(e.target.value)}
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-sm text-slate-300">
+                  End
+                  <input
+                    type="date"
+                    className="rounded-lg border border-white/10 bg-surface px-3 py-2 text-white outline-none focus:border-accent"
+                    value={coreEndDate}
+                    onChange={(e) => setCoreEndDate(e.target.value)}
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-sm text-slate-300">
+                  Metric
+                  <select
+                    className="rounded-lg border border-white/10 bg-surface px-3 py-2 text-white outline-none focus:border-accent"
+                    value={metric}
+                    onChange={(e) => setMetric(e.target.value)}
+                  >
+                    {metricOptions.map((m) => (
+                      <option key={m.value} value={m.value}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {showWindow ? (
+                  <label className="flex flex-col gap-1 text-sm text-slate-300">
+                    Window
+                    <input
+                      type="number"
+                      min={1}
+                      className="rounded-lg border border-white/10 bg-surface px-3 py-2 text-white outline-none focus:border-accent"
+                      value={window}
+                      onChange={(e) => setWindow(Number(e.target.value))}
+                    />
+                  </label>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <label className="flex flex-col gap-1 text-sm text-slate-300">
+                  Min Trades
+                  <input
+                    type="number"
+                    min={1}
+                    className="rounded-lg border border-white/10 bg-surface px-3 py-2 text-white outline-none focus:border-accent"
+                    value={insightsMinTrades}
+                    onChange={(e) => setInsightsMinTrades(Math.max(1, Number(e.target.value) || 1))}
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-sm text-slate-300">
+                  Month (optional)
+                  <input
+                    type="month"
+                    className="rounded-lg border border-white/10 bg-surface px-3 py-2 text-white outline-none focus:border-accent"
+                    value={insightsMonth}
+                    onChange={(e) => setInsightsMonth(e.target.value)}
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-sm text-slate-300">
+                  Setup Filter
+                  <input
+                    type="text"
+                    placeholder="e.g. ORB"
+                    className="rounded-lg border border-white/10 bg-surface px-3 py-2 text-white outline-none focus:border-accent"
+                    value={setupFilter}
+                    onChange={(e) => setSetupFilter(e.target.value)}
+                  />
+                </label>
+                <label className="mt-6 flex items-center gap-2 text-sm text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={breachesOnly}
+                    onChange={(e) => setBreachesOnly(e.target.checked)}
+                  />
+                  Show breached days only
+                </label>
+                <details className="sm:col-span-2">
+                  <summary className="cursor-pointer text-sm text-slate-300">Advanced Options (Rule Overrides)</summary>
+                  <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                    <label className="flex items-center gap-2 text-sm text-slate-300 sm:col-span-2">
+                      <input
+                        type="checkbox"
+                        checked={showRuleOverrides}
+                        onChange={(e) => setShowRuleOverrides(e.target.checked)}
+                      />
+                      Enable custom rule thresholds
+                    </label>
+                    <label className="flex flex-col gap-1 text-sm text-slate-300">
+                      Max Trades / Day
+                      <input
+                        type="number"
+                        min={1}
+                        disabled={!showRuleOverrides}
+                        className="rounded-lg border border-white/10 bg-surface px-3 py-2 text-white outline-none focus:border-accent disabled:opacity-50"
+                        value={maxTradesPerDay}
+                        onChange={(e) => setMaxTradesPerDay(Math.max(1, Number(e.target.value) || 1))}
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1 text-sm text-slate-300">
+                      Max Consecutive Losses
+                      <input
+                        type="number"
+                        min={1}
+                        disabled={!showRuleOverrides}
+                        className="rounded-lg border border-white/10 bg-surface px-3 py-2 text-white outline-none focus:border-accent disabled:opacity-50"
+                        value={maxConsecutiveLosses}
+                        onChange={(e) => setMaxConsecutiveLosses(Math.max(1, Number(e.target.value) || 1))}
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1 text-sm text-slate-300">
+                      Max Daily Loss
+                      <input
+                        type="number"
+                        min={1}
+                        disabled={!showRuleOverrides}
+                        className="rounded-lg border border-white/10 bg-surface px-3 py-2 text-white outline-none focus:border-accent disabled:opacity-50"
+                        value={maxDailyLoss}
+                        onChange={(e) => setMaxDailyLoss(Math.max(1, Number(e.target.value) || 1))}
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1 text-sm text-slate-300">
+                      Big Loss Threshold
+                      <input
+                        type="number"
+                        min={1}
+                        disabled={!showRuleOverrides}
+                        className="rounded-lg border border-white/10 bg-surface px-3 py-2 text-white outline-none focus:border-accent disabled:opacity-50"
+                        value={bigLossThreshold}
+                        onChange={(e) => setBigLossThreshold(Math.max(1, Number(e.target.value) || 1))}
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1 text-sm text-slate-300">
+                      Max Trades After Big Loss
+                      <input
+                        type="number"
+                        min={1}
+                        disabled={!showRuleOverrides}
+                        className="rounded-lg border border-white/10 bg-surface px-3 py-2 text-white outline-none focus:border-accent disabled:opacity-50"
+                        value={maxTradesAfterBigLoss}
+                        onChange={(e) => setMaxTradesAfterBigLoss(Math.max(1, Number(e.target.value) || 1))}
+                      />
+                    </label>
+                  </div>
+                </details>
+              </>
+            )}
           </div>
         </Card>
         <Card title="Status">
           <div className="text-sm text-slate-300">
-            <p>Metric: {metric}</p>
-            <p>Granularity: {granularity}</p>
-            <p>Window: {window}</p>
+            <p>Mode: {mode === "core" ? "Core Analysis" : "Advanced Insights"}</p>
             <p>Symbol: {symbol || ""}</p>
-            <p>
-              Range: {startDate || "(start)"} → {endDate || "(end)"}
-            </p>
-            {isFetching && <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Loading…</p>}
-            {error && <p className="text-red-300">Error: {(error as Error).message}</p>}
+            {mode === "core" ? (
+              <>
+                <p>Metric: {metric}</p>
+                <p>
+                  Range: {coreStartDate || "(start)"} → {coreEndDate || "(end)"}
+                </p>
+                {showWindow ? <p>Window: {window}</p> : null}
+                {isFetching ? <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Loading…</p> : null}
+                {error ? <p className="text-red-300">Error: {(error as Error).message}</p> : null}
+              </>
+            ) : (
+              <>
+                <p>Min Trades: {insightsMinTrades}</p>
+                <p>Month: {insightsMonth}</p>
+                {insightsFetching ? <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Computing insights…</p> : null}
+                {insightsError && !insightsNoData ? (
+                  <p className="text-red-300">Error: {(insightsError as Error).message}</p>
+                ) : null}
+              </>
+            )}
             {configLoading && <p className="text-xs text-slate-400">Loading symbols…</p>}
             {configError && <p className="text-xs text-red-300">Config error: {(configError as Error).message}</p>}
           </div>
         </Card>
       </div>
 
-      <Card title="Visualization" className="mt-2">
-        <div className="overflow-x-auto">
-          <div className="min-w-[900px]">
-            {preview.length === 0 ? (
-              <p className="text-slate-400">No data yet.</p>
-            ) : (
-              <AnalysisChart metric={metric} points={preview} />
-            )}
+      {mode === "core" ? (
+        <Card title="Visualization" className="mt-2">
+          <div className="overflow-x-auto">
+            <div className="min-w-[900px]">
+              {preview.length === 0 ? (
+                <p className="text-slate-400">No data yet.</p>
+              ) : (
+                <AnalysisChart metric={metric} points={preview} />
+              )}
+            </div>
+          </div>
+        </Card>
+      ) : (
+        <Card title="Advanced Insights" className="mt-2">
+          {insightsFetching ? <p className="text-slate-400">Computing insights…</p> : null}
+          {insightsNoData ? <p className="text-slate-400">No data for the selected symbol/month.</p> : null}
+          {insightsError && !insightsNoData ? (
+            <p className="text-red-300">Error: {(insightsError as Error).message}</p>
+          ) : null}
+          {insights ? <InsightsPanel insights={insights} setupFilter={setupFilter} breachesOnly={breachesOnly} /> : null}
+        </Card>
+      )}
+    </AppShell>
+  );
+}
+
+function InsightsPanel({
+  insights,
+  setupFilter,
+  breachesOnly,
+}: {
+  insights: InsightsResponse;
+  setupFilter: string;
+  breachesOnly: boolean;
+}) {
+  const normalizedSetupFilter = setupFilter.trim().toLowerCase();
+  const setupRows = (insights.setup_journal ?? []).filter((row) => {
+    if (!normalizedSetupFilter) return true;
+    const setup = String((row as Record<string, unknown>).Setup ?? "").toLowerCase();
+    return setup.includes(normalizedSetupFilter);
+  });
+  const compliance = insights.rule_compliance?.summary ?? {};
+  const complianceDaily = (insights.rule_compliance?.daily ?? []).filter((row) => {
+    if (!breachesOnly) return true;
+    const count = Number((row as Record<string, unknown>).BreachCount ?? 0);
+    return count > 0;
+  });
+  const maeMfeOverall = insights.mae_mfe?.overall ?? {};
+  const maeMfeBySetup = (insights.mae_mfe?.by_setup ?? []).filter((row) => {
+    if (!normalizedSetupFilter) return true;
+    const setup = String((row as Record<string, unknown>).Setup ?? "").toLowerCase();
+    return setup.includes(normalizedSetupFilter);
+  });
+  const playbookHighlights = insights.playbook?.highlights ?? [];
+  const playbookStop = insights.playbook?.stop_doing ?? [];
+  const playbookActions = insights.playbook?.action_items ?? [];
+  const monthlySummary = insights.monthly_report?.summary ?? {};
+  const monthlyFocus = insights.monthly_report?.focus_points ?? [];
+  const monthlyMarkdown = insights.monthly_report?.markdown ?? "";
+
+  return (
+    <div className="grid gap-4">
+      <div>
+        <h3 className="mb-2 text-sm font-semibold text-slate-200">Setup Journal</h3>
+        <SimpleTable rows={setupRows} />
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <div>
+          <h3 className="mb-2 text-sm font-semibold text-slate-200">Rule Compliance Score</h3>
+          <SimpleKv kv={compliance} />
+          <div className="mt-2">
+            <SimpleTable rows={complianceDaily.slice(-10)} />
           </div>
         </div>
-      </Card>
-    </AppShell>
+        <div>
+          <h3 className="mb-2 text-sm font-semibold text-slate-200">MAE / MFE Analytics</h3>
+          <SimpleKv kv={maeMfeOverall} />
+          <div className="mt-2">
+            <SimpleTable rows={maeMfeBySetup} />
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <div>
+          <h3 className="mb-2 text-sm font-semibold text-slate-200">Playbook Builder</h3>
+          <p className="mb-1 text-xs uppercase tracking-[0.15em] text-slate-400">Highlights</p>
+          <SimpleTable rows={playbookHighlights} />
+          <p className="mb-1 mt-3 text-xs uppercase tracking-[0.15em] text-slate-400">Stop Doing</p>
+          <SimpleTable rows={playbookStop} />
+          <p className="mb-1 mt-3 text-xs uppercase tracking-[0.15em] text-slate-400">Action Items</p>
+          <SimpleTable rows={playbookActions} />
+        </div>
+        <div>
+          <h3 className="mb-2 text-sm font-semibold text-slate-200">Monthly Review Report</h3>
+          <SimpleKv kv={monthlySummary} />
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-slate-300">
+            {monthlyFocus.map((line, idx) => (
+              <li key={`${idx}-${line}`}>{line}</li>
+            ))}
+          </ul>
+          {monthlyMarkdown ? (
+            <details className="mt-3 rounded-lg border border-white/10 bg-white/5 p-2">
+              <summary className="cursor-pointer text-xs uppercase tracking-[0.15em] text-slate-300">Auto Report (Markdown)</summary>
+              <pre className="mt-2 whitespace-pre-wrap text-xs text-slate-300">{monthlyMarkdown}</pre>
+            </details>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SimpleKv({ kv }: { kv: Record<string, string | number> }) {
+  const entries = Object.entries(kv ?? {});
+  if (!entries.length) return <p className="text-slate-400">No data.</p>;
+  return (
+    <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
+      {entries.map(([k, v]) => (
+        <React.Fragment key={k}>
+          <div className="text-slate-400">{k}</div>
+          <div className="text-right text-slate-200">{String(v)}</div>
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+function SimpleTable({ rows }: { rows: AnalysisSeriesPoint[] }) {
+  if (!rows || rows.length === 0) return <p className="text-slate-400">No data.</p>;
+  const headers = Object.keys(rows[0] ?? {});
+  return (
+    <div className="overflow-x-auto rounded-lg border border-white/10">
+      <table className="min-w-full text-xs">
+        <thead className="bg-white/5 text-slate-300">
+          <tr>
+            {headers.map((h) => (
+              <th key={h} className="px-2 py-1 text-left font-medium">
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.slice(0, 12).map((row, idx) => (
+            <tr key={idx} className="border-t border-white/10 text-slate-200">
+              {headers.map((h) => (
+                <td key={h} className="px-2 py-1">
+                  {String((row as any)[h] ?? "")}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

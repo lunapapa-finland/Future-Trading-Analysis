@@ -24,7 +24,7 @@ export default function LoginPage() {
         const data = await res.json().catch(() => ({}));
         throw new Error(data?.message || "Login failed");
       }
-      router.push("/trading");
+      router.push("/guide");
     } catch (err) {
       setError((err as Error).message || "Login failed");
     } finally {

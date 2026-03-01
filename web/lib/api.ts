@@ -1,5 +1,17 @@
-import { AnalysisPayload, AnalysisSeriesPoint, Candle, PerformanceRecord } from "./types";
+import { AnalysisPayload, AnalysisSeriesPoint, Candle, InsightsPayload, InsightsResponse, PerformanceRecord } from "./types";
 import type { TradingSession } from "./types";
+
+export class ApiError extends Error {
+  status: number;
+  code?: string;
+
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+  }
+}
 
 function getApiBase(): string {
   const envBase = process.env.NEXT_PUBLIC_API_BASE_URL?.trim();
@@ -35,7 +47,14 @@ const basicAuthHeader =
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`API ${res.status}: ${text || res.statusText}`);
+    let payload: { error?: string; code?: string; message?: string } | null = null;
+    try {
+      payload = JSON.parse(text) as { error?: string; code?: string; message?: string };
+    } catch {
+      payload = null;
+    }
+    const msg = payload?.error || payload?.message || text || res.statusText;
+    throw new ApiError(msg, res.status, payload?.code);
   }
   return res.json() as Promise<T>;
 }
@@ -71,6 +90,19 @@ export async function postAnalysis(metric: string, payload: AnalysisPayload): Pr
     body: JSON.stringify(payload ?? {})
   }));
   return handleResponse<AnalysisSeriesPoint[]>(res);
+}
+
+export async function postInsights(payload: InsightsPayload): Promise<InsightsResponse> {
+  const url = new URL("/api/insights", API_BASE);
+  const res = await fetch(
+    url.toString(),
+    withAuth({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload ?? {}),
+    })
+  );
+  return handleResponse<InsightsResponse>(res);
 }
 
 export async function getTradingSession(params: { symbol: string; start?: string; end?: string }): Promise<TradingSession> {

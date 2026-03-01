@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import clsx from "clsx";
 
 const navLinks = [
+  { href: "/guide", label: "Guide" },
   { href: "/trading", label: "Trading" },
   { href: "/analysis", label: "Analysis" },
   { href: "/portfolio", label: "Portfolio" },
@@ -13,7 +14,12 @@ const navLinks = [
 ];
 
 export function AppShell({ children, active }: { children: ReactNode; active?: string }) {
-  const title = active === "/analysis" ? "Analytics Dashboard" : "Trade Dashboard";
+  const title =
+    active === "/guide"
+      ? "Intraday Guide"
+      : active === "/analysis"
+        ? "Analytics Dashboard"
+        : "Trade Dashboard";
   const router = useRouter();
 
   async function handleSignOut() {

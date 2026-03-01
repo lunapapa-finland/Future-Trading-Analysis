@@ -13,6 +13,8 @@ import yfinance as yf
 from dashboard.config.settings import PERFORMANCE_DIR, TIMEZONE, PERFORMANCE_CSV
 from dashboard.config.env import LOGGING_PATH, BASE_DIR
 from dashboard.services.portfolio import append_daily_equity
+from dashboard.services.utils.trade_enrichment import ensure_trade_id, merge_trade_labels
+from dashboard.services.utils.trade_journal import sync_trade_journal
 
 # Configure logging
 logging.basicConfig(
@@ -199,6 +201,8 @@ def calculate_streaks(df):
 def generate_aggregated_data(valid_dataframes):
     past_performance_df = pd.read_csv(PERFORMANCE_CSV) if os.path.exists(PERFORMANCE_CSV) else pd.DataFrame()
     if not past_performance_df.empty:
+        past_performance_df = ensure_trade_id(past_performance_df)
+        past_performance_df = merge_trade_labels(past_performance_df)
         past_performance_df['EnteredAt'] = pd.to_datetime(past_performance_df['EnteredAt'], utc=True).dt.tz_convert(TIMEZONE)
         past_performance_df['ExitedAt'] = pd.to_datetime(past_performance_df['ExitedAt'], utc=True).dt.tz_convert(TIMEZONE)
         past_performance_df['TradeDay'] = past_performance_df['EnteredAt'].dt.strftime('%Y-%m-%d')
@@ -218,11 +222,12 @@ def generate_aggregated_data(valid_dataframes):
     combined_df['YearMonth'] = combined_df['EnteredAt'].dt.tz_localize(None).dt.to_period('M')
     combined_df['HourOfDay'] = combined_df['EnteredAt'].dt.hour
     combined_df = combined_df.rename(columns={'Id': 'IntradayIndex'})
+    combined_df = ensure_trade_id(combined_df)
 
     combined_df = combined_df.rename(columns={'PnL': 'PnL(Net)'})
     combined_df['Comment'] = combined_df.get('Comment', '')
     desired_columns = [
-            'YearMonth', 'TradeDay', 'DayOfWeek', 'HourOfDay', 'ContractName', 'IntradayIndex',
+            'trade_id', 'YearMonth', 'TradeDay', 'DayOfWeek', 'HourOfDay', 'ContractName', 'IntradayIndex',
             'EnteredAt', 'ExitedAt', 'EntryPrice', 'ExitPrice', 'Fees', 'PnL(Net)',
             'Size', 'Type', 'TradeDuration', 'WinOrLoss', 'Streak', 'Comment'
         ]
@@ -247,6 +252,8 @@ def generate_aggregated_data(valid_dataframes):
     else:
         new_rows_df = combined_df.copy()
 
+    new_rows_df = merge_trade_labels(new_rows_df)
+
     # Persist portfolio equity by trade day for new rows only
     try:
         if not new_rows_df.empty:
@@ -261,6 +268,13 @@ def generate_aggregated_data(valid_dataframes):
 
     # Concatenate old and new
     final_df = pd.concat([past_performance_df, new_rows_df], ignore_index=True)
+    final_df = ensure_trade_id(final_df)
+    final_df = merge_trade_labels(final_df)
+    try:
+        sync_trade_journal(final_df)
+        logging.info("Trade journal synced with latest combined performance data")
+    except Exception as e:
+        logging.error(f"Failed to sync trade journal: {e}")
     if not new_rows_df.empty:
         print(f"New trades added: {new_rows_df}")
     else:

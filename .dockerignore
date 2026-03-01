@@ -1,13 +1,26 @@
 .git
+.github/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .env
 .venv
+.pytest_cache/
+.mypy_cache/
 build/
 dist/
 *.egg-info/
 log/*.log*
 src/dashboard/config/credentials.env
 docker-compose.override.yml
+.DS_Store
+
+# Frontend build/dev artifacts
+web/node_modules/
+web/.next/
+web/tsconfig.tsbuildinfo
+
+# Local caches/artifacts not needed in image build
+test/
+img/

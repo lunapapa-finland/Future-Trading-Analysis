@@ -14,6 +14,15 @@ export type ConfigResponse = {
   symbols: SymbolConfig[];
   timeframes?: Timeframe[];
   playback_speeds?: number[];
+  insights_defaults?: {
+    rule_compliance?: {
+      max_trades_per_day?: number;
+      max_consecutive_losses?: number;
+      max_daily_loss?: number;
+      big_loss_threshold?: number;
+      max_trades_after_big_loss?: number;
+    };
+  };
   portfolio?: {
     initial_net_liq: number;
     start_date: string;

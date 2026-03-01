@@ -26,6 +26,36 @@ export interface AnalysisSeriesPoint {
   [key: string]: string | number | null;
 }
 
+export interface InsightsPayload {
+  symbol?: string;
+  start_date?: string;
+  end_date?: string;
+  params?: Record<string, unknown>;
+}
+
+export interface InsightsResponse {
+  setup_journal: AnalysisSeriesPoint[];
+  rule_compliance: {
+    summary: Record<string, string | number>;
+    daily: AnalysisSeriesPoint[];
+  };
+  mae_mfe: {
+    overall: Record<string, string | number>;
+    by_setup: AnalysisSeriesPoint[];
+  };
+  playbook: {
+    highlights: AnalysisSeriesPoint[];
+    stop_doing: AnalysisSeriesPoint[];
+    action_items: AnalysisSeriesPoint[];
+  };
+  monthly_report: {
+    summary: Record<string, string | number>;
+    focus_points: string[];
+    setup_summary: AnalysisSeriesPoint[];
+    markdown?: string;
+  };
+}
+
 export interface TradingSession {
   future: Candle[];
   performance: PerformanceRecord[];

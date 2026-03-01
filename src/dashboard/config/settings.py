@@ -58,6 +58,9 @@ class CMEHolidayCalendar(AbstractHolidayCalendar):
 # -----------------------------------
 EXCHANGE = [DEFAULT_EXCHANGE]
 PERFORMANCE_CSV = str(PERFORMANCE_DIR / "Combined_performance_for_dash_project.csv")
+TRADE_LABELS_CSV = str(PERFORMANCE_DIR / "trade_labels.csv")
+TRADE_JOURNAL_CSV = str(PERFORMANCE_DIR / "trade_journal.csv")
+TRADE_JOURNAL_METADATA_CSV = str(PERFORMANCE_DIR / "trade_journal_metadata.csv")
 
 # Resolved symbol catalog (absolute paths, defaults applied)
 SYMBOL_CATALOG = resolve_symbol_catalog(BASE_DIR)

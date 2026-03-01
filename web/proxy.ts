@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 const SESSION_COOKIE = "fta_session";
-const PROTECTED_PATHS = ["/trading", "/analysis"];
+const PROTECTED_PATHS = ["/guide", "/trading", "/analysis", "/portfolio", "/config"];
 
 const encoder = new TextEncoder();
 

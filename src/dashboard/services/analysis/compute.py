@@ -1,5 +1,6 @@
 import pandas as pd
 from dashboard.config.settings import DEFAULT_GRANULARITY, DEFAULT_ROLLING_WINDOW
+from dashboard.config.analysis import RULE_COMPLIANCE_DEFAULTS
 import numpy as np
 from dashboard.services.analysis.schema import validate_performance_df
 
@@ -696,3 +697,346 @@ def kelly_criterion(performance_df):
     
     except Exception as e:
         raise ValueError(f"Failed to compute Kelly Criterion: {str(e)}")
+
+
+def _setup_series(df: pd.DataFrame) -> pd.Series:
+    candidates = ["Setup", "setup", "Tag", "tag", "Strategy", "Pattern", "Playbook", "Type"]
+    for col in candidates:
+        if col in df.columns:
+            return df[col].fillna("Unlabeled").astype(str)
+    return pd.Series(["Unlabeled"] * len(df), index=df.index, dtype="object")
+
+
+def setup_journal(performance_df, min_trades=3):
+    df = validate_performance_df(performance_df).copy()
+    if df.empty:
+        return pd.DataFrame(columns=["Setup", "Trades", "WinRate", "NetPnL", "AvgPnL", "Expectancy"])
+    df["SetupLabel"] = _setup_series(df)
+    grouped = (
+        df.groupby("SetupLabel", observed=True)
+        .agg(
+            Trades=("PnL(Net)", "size"),
+            Wins=("PnL(Net)", lambda x: int((x > 0).sum())),
+            NetPnL=("PnL(Net)", "sum"),
+            AvgPnL=("PnL(Net)", "mean"),
+        )
+        .reset_index()
+        .rename(columns={"SetupLabel": "Setup"})
+    )
+    grouped["WinRate"] = (grouped["Wins"] / grouped["Trades"] * 100).round(2)
+    grouped["Expectancy"] = grouped["AvgPnL"].round(2)
+    grouped["NetPnL"] = grouped["NetPnL"].round(2)
+    grouped["AvgPnL"] = grouped["AvgPnL"].round(2)
+    grouped = grouped[grouped["Trades"] >= int(min_trades)].sort_values(["Expectancy", "NetPnL"], ascending=False)
+    return grouped[["Setup", "Trades", "WinRate", "NetPnL", "AvgPnL", "Expectancy"]]
+
+
+def rule_compliance_score(
+    performance_df,
+    max_trades_per_day=None,
+    max_consecutive_losses=None,
+    max_daily_loss=None,
+    big_loss_threshold=None,
+    max_trades_after_big_loss=None,
+):
+    max_trades_per_day = int(
+        RULE_COMPLIANCE_DEFAULTS["max_trades_per_day"]
+        if max_trades_per_day is None
+        else max_trades_per_day
+    )
+    max_consecutive_losses = int(
+        RULE_COMPLIANCE_DEFAULTS["max_consecutive_losses"]
+        if max_consecutive_losses is None
+        else max_consecutive_losses
+    )
+    max_daily_loss = float(
+        RULE_COMPLIANCE_DEFAULTS["max_daily_loss"] if max_daily_loss is None else max_daily_loss
+    )
+    big_loss_threshold = float(
+        RULE_COMPLIANCE_DEFAULTS["big_loss_threshold"]
+        if big_loss_threshold is None
+        else big_loss_threshold
+    )
+    max_trades_after_big_loss = int(
+        RULE_COMPLIANCE_DEFAULTS["max_trades_after_big_loss"]
+        if max_trades_after_big_loss is None
+        else max_trades_after_big_loss
+    )
+
+    df = validate_performance_df(performance_df).copy()
+    if df.empty:
+        return {
+            "summary": {"OverallScore": 100, "RuleBreaches": 0, "DaysAnalyzed": 0},
+            "daily": pd.DataFrame(columns=["TradeDay", "Trades", "DailyPnL", "BreachCount", "Score", "Breaches"]),
+        }
+    df["TradeDay"] = pd.to_datetime(df["ExitedAt"]).dt.strftime("%Y-%m-%d")
+    df = df.sort_values("ExitedAt")
+    rows = []
+    for day, g in df.groupby("TradeDay", observed=True):
+        trades = int(len(g))
+        daily_pnl = float(g["PnL(Net)"].sum())
+        pnl_sign = (g["PnL(Net)"] < 0).astype(int).tolist()
+        consec = 0
+        max_consec = 0
+        for v in pnl_sign:
+            consec = consec + 1 if v == 1 else 0
+            max_consec = max(max_consec, consec)
+        breaches = []
+        if trades > int(max_trades_per_day):
+            breaches.append(f"trades>{int(max_trades_per_day)}")
+        if max_consec > int(max_consecutive_losses):
+            breaches.append(f"consecutive_losses>{int(max_consecutive_losses)}")
+        if daily_pnl < -abs(float(max_daily_loss)):
+            breaches.append(f"daily_loss>{abs(float(max_daily_loss)):.0f}")
+
+        post_loss_breach = False
+        pnl_values = g["PnL(Net)"].tolist()
+        for idx, pnl in enumerate(pnl_values):
+            if pnl <= -abs(float(big_loss_threshold)):
+                remaining = len(pnl_values) - idx - 1
+                if remaining > int(max_trades_after_big_loss):
+                    post_loss_breach = True
+                    break
+        if post_loss_breach:
+            breaches.append(f"trades_after_big_loss>{int(max_trades_after_big_loss)}")
+
+        rule_count = 4
+        score = round(max(0, 100 - (len(breaches) / rule_count * 100)), 2)
+        rows.append(
+            {
+                "TradeDay": day,
+                "Trades": trades,
+                "DailyPnL": round(daily_pnl, 2),
+                "BreachCount": len(breaches),
+                "Score": score,
+                "Breaches": ", ".join(breaches) if breaches else "none",
+            }
+        )
+    daily = pd.DataFrame(rows).sort_values("TradeDay")
+    summary = {
+        "OverallScore": round(float(daily["Score"].mean()), 2) if not daily.empty else 100,
+        "RuleBreaches": int(daily["BreachCount"].sum()) if not daily.empty else 0,
+        "DaysAnalyzed": int(len(daily)),
+    }
+    return {"summary": summary, "daily": daily}
+
+
+def mae_mfe_analytics(performance_df, min_trades=3):
+    df = validate_performance_df(performance_df).copy()
+    if df.empty:
+        return {"overall": {}, "by_setup": pd.DataFrame(columns=["Setup", "Trades", "AvgMAE", "AvgMFE", "PayoffRatio"])}
+    df["Setup"] = _setup_series(df)
+
+    mfe_candidates = ["MFE", "MaxFavorableExcursion", "FavorableExcursion", "Runup"]
+    mae_candidates = ["MAE", "MaxAdverseExcursion", "AdverseExcursion", "Drawdown"]
+    mfe_col = next((c for c in mfe_candidates if c in df.columns), None)
+    mae_col = next((c for c in mae_candidates if c in df.columns), None)
+
+    derived_mfe = df["PnL(Net)"].clip(lower=0)
+    derived_mae = df["PnL(Net)"].clip(upper=0)
+
+    if mfe_col:
+        mfe_raw = pd.to_numeric(df[mfe_col], errors="coerce")
+        # MFE is a favorable excursion magnitude and should be non-negative.
+        df["MFE_Used"] = mfe_raw.abs().fillna(derived_mfe)
+        mfe_coverage = float(mfe_raw.notna().mean() * 100)
+    else:
+        df["MFE_Used"] = derived_mfe
+        mfe_coverage = 0.0
+    if mae_col:
+        mae_raw = pd.to_numeric(df[mae_col], errors="coerce")
+        # MAE is an adverse excursion and should be non-positive.
+        df["MAE_Used"] = (-mae_raw.abs()).fillna(derived_mae)
+        mae_coverage = float(mae_raw.notna().mean() * 100)
+    else:
+        df["MAE_Used"] = derived_mae
+        mae_coverage = 0.0
+
+    def _payoff(avg_mfe, avg_mae):
+        denom = abs(avg_mae) if abs(avg_mae) > 1e-10 else np.nan
+        return float(avg_mfe / denom) if pd.notna(denom) else 0.0
+
+    overall_avg_mae = float(df["MAE_Used"].mean())
+    overall_avg_mfe = float(df["MFE_Used"].mean())
+    overall = {
+        "Trades": int(len(df)),
+        "AvgMAE": round(overall_avg_mae, 2),
+        "AvgMFE": round(overall_avg_mfe, 2),
+        "PayoffRatio": round(_payoff(overall_avg_mfe, overall_avg_mae), 2),
+        "MFEColumn": mfe_col or "derived_from_pnl",
+        "MAEColumn": mae_col or "derived_from_pnl",
+        "MFERealCoveragePct": round(mfe_coverage, 2),
+        "MAERealCoveragePct": round(mae_coverage, 2),
+    }
+
+    by_setup = (
+        df.groupby("Setup", observed=True)
+        .agg(Trades=("PnL(Net)", "size"), AvgMAE=("MAE_Used", "mean"), AvgMFE=("MFE_Used", "mean"))
+        .reset_index()
+    )
+    by_setup = by_setup[by_setup["Trades"] >= int(min_trades)].copy()
+    by_setup["PayoffRatio"] = by_setup.apply(lambda r: _payoff(r["AvgMFE"], r["AvgMAE"]), axis=1)
+    by_setup["AvgMAE"] = by_setup["AvgMAE"].round(2)
+    by_setup["AvgMFE"] = by_setup["AvgMFE"].round(2)
+    by_setup["PayoffRatio"] = by_setup["PayoffRatio"].round(2)
+    by_setup = by_setup.sort_values(["PayoffRatio", "AvgMFE"], ascending=False)
+    return {"overall": overall, "by_setup": by_setup}
+
+
+def playbook_builder(performance_df, min_trades=5):
+    journal = setup_journal(performance_df, min_trades=min_trades)
+    if journal.empty:
+        return {
+            "highlights": [],
+            "stop_doing": [],
+            "action_items": [
+                {"Priority": "Medium", "Item": "Not enough tagged trades yet. Keep journaling setups consistently."}
+            ],
+        }
+
+    winners = journal[journal["Expectancy"] > 0].head(3)
+    losers = journal[journal["Expectancy"] < 0].sort_values("Expectancy").head(3)
+
+    highlights = [
+        {
+            "Setup": row["Setup"],
+            "Trades": int(row["Trades"]),
+            "WinRate": float(row["WinRate"]),
+            "Expectancy": float(row["Expectancy"]),
+            "Action": "Scale this setup gradually and keep execution consistent.",
+        }
+        for _, row in winners.iterrows()
+    ]
+    stop_doing = [
+        {
+            "Setup": row["Setup"],
+            "Trades": int(row["Trades"]),
+            "WinRate": float(row["WinRate"]),
+            "Expectancy": float(row["Expectancy"]),
+            "Action": "Reduce or pause this setup until rules are adjusted.",
+        }
+        for _, row in losers.iterrows()
+    ]
+
+    action_items = []
+    if highlights:
+        action_items.append(
+            {"Priority": "High", "Item": f"Focus first hour on {highlights[0]['Setup']} executions only."}
+        )
+    if stop_doing:
+        action_items.append(
+            {"Priority": "High", "Item": f"Disable {stop_doing[0]['Setup']} for the next review cycle."}
+        )
+    action_items.append(
+        {"Priority": "Medium", "Item": "Review every trade and assign a setup tag before next session."}
+    )
+    return {"highlights": highlights, "stop_doing": stop_doing, "action_items": action_items}
+
+
+def monthly_review_report(performance_df, month=None, min_trades=3):
+    df = validate_performance_df(performance_df).copy()
+    if df.empty:
+        return {"summary": {}, "focus_points": [], "setup_summary": []}
+
+    df["Month"] = pd.to_datetime(df["ExitedAt"]).dt.tz_localize(None).dt.to_period("M").astype(str)
+    target_month = month or df["Month"].max()
+    mdf = df[df["Month"] == target_month].copy()
+    if mdf.empty:
+        return {"summary": {"Month": target_month, "Trades": 0}, "focus_points": [], "setup_summary": []}
+
+    mdf["TradeDay"] = pd.to_datetime(mdf["ExitedAt"]).dt.strftime("%Y-%m-%d")
+    daily = mdf.groupby("TradeDay", observed=True)["PnL(Net)"].sum().reset_index()
+    daily["Equity"] = daily["PnL(Net)"].cumsum()
+    daily["Peak"] = daily["Equity"].cummax()
+    daily["Drawdown"] = daily["Equity"] - daily["Peak"]
+
+    wins = mdf[mdf["PnL(Net)"] > 0]["PnL(Net)"]
+    losses = mdf[mdf["PnL(Net)"] < 0]["PnL(Net)"]
+
+    setup_summary = setup_journal(mdf, min_trades=min_trades)
+    top_setup = setup_summary.iloc[0]["Setup"] if not setup_summary.empty else "n/a"
+    worst_setup = setup_summary.sort_values("Expectancy").iloc[0]["Setup"] if not setup_summary.empty else "n/a"
+
+    summary = {
+        "Month": target_month,
+        "Trades": int(len(mdf)),
+        "NetPnL": round(float(mdf["PnL(Net)"].sum()), 2),
+        "WinRate": round(float((mdf["PnL(Net)"] > 0).mean() * 100), 2),
+        "AvgWin": round(float(wins.mean() if not wins.empty else 0), 2),
+        "AvgLoss": round(float(losses.mean() if not losses.empty else 0), 2),
+        "MaxDrawdown": round(float(daily["Drawdown"].min() if not daily.empty else 0), 2),
+        "TopSetup": str(top_setup),
+        "WorstSetup": str(worst_setup),
+    }
+
+    focus_points = [
+        f"Top setup: {summary['TopSetup']}. Keep size discipline and preserve entry criteria.",
+        f"Worst setup: {summary['WorstSetup']}. Reduce frequency until positive expectancy returns.",
+        f"Max drawdown this month: {summary['MaxDrawdown']:.2f}. Enforce daily stop rules.",
+    ]
+    setup_lines = []
+    for rec in setup_summary.head(5).to_dict("records"):
+        setup_lines.append(
+            f"- {rec['Setup']}: trades={int(rec['Trades'])}, win_rate={float(rec['WinRate']):.2f}%, expectancy={float(rec['Expectancy']):.2f}"
+        )
+    markdown = (
+        f"# Monthly Review ({summary['Month']})\n\n"
+        f"- Trades: {summary['Trades']}\n"
+        f"- Net PnL: {summary['NetPnL']}\n"
+        f"- Win Rate: {summary['WinRate']}%\n"
+        f"- Avg Win / Avg Loss: {summary['AvgWin']} / {summary['AvgLoss']}\n"
+        f"- Max Drawdown: {summary['MaxDrawdown']}\n"
+        f"- Top Setup: {summary['TopSetup']}\n"
+        f"- Worst Setup: {summary['WorstSetup']}\n\n"
+        "## Focus Points\n"
+        + "\n".join([f"- {p}" for p in focus_points])
+        + "\n\n## Setup Summary\n"
+        + ("\n".join(setup_lines) if setup_lines else "- Not enough setup-tagged trades.")
+    )
+
+    return {
+        "summary": summary,
+        "focus_points": focus_points,
+        "setup_summary": setup_summary.to_dict("records"),
+        "markdown": markdown,
+    }
+
+
+def _filter_by_month(performance_df, month=None):
+    df = validate_performance_df(performance_df).copy()
+    if df.empty or not month:
+        return df
+    period = pd.to_datetime(df["ExitedAt"], errors="coerce").dt.tz_localize(None).dt.to_period("M").astype(str)
+    return df[period == str(month)].copy()
+
+
+def insights_bundle(performance_df, params=None):
+    params = params or {}
+    min_trades = int(params.get("min_trades", 3))
+    scoped_df = _filter_by_month(performance_df, month=params.get("month"))
+    rules = RULE_COMPLIANCE_DEFAULTS
+    setup = setup_journal(scoped_df, min_trades=min_trades)
+    compliance = rule_compliance_score(
+        scoped_df,
+        max_trades_per_day=int(params.get("max_trades_per_day", rules["max_trades_per_day"])),
+        max_consecutive_losses=int(params.get("max_consecutive_losses", rules["max_consecutive_losses"])),
+        max_daily_loss=float(params.get("max_daily_loss", rules["max_daily_loss"])),
+        big_loss_threshold=float(params.get("big_loss_threshold", rules["big_loss_threshold"])),
+        max_trades_after_big_loss=int(params.get("max_trades_after_big_loss", rules["max_trades_after_big_loss"])),
+    )
+    mae_mfe = mae_mfe_analytics(scoped_df, min_trades=min_trades)
+    playbook = playbook_builder(scoped_df, min_trades=max(min_trades, 5))
+    monthly = monthly_review_report(scoped_df, month=params.get("month"), min_trades=min_trades)
+    return {
+        "setup_journal": setup.to_dict("records"),
+        "rule_compliance": {
+            "summary": compliance["summary"],
+            "daily": compliance["daily"].to_dict("records"),
+        },
+        "mae_mfe": {
+            "overall": mae_mfe["overall"],
+            "by_setup": mae_mfe["by_setup"].to_dict("records"),
+        },
+        "playbook": playbook,
+        "monthly_report": monthly,
+    }

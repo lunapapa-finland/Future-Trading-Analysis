@@ -17,12 +17,19 @@ from flask import Blueprint, jsonify, request
 from dashboard.services.analysis import compute
 from dashboard.services.analysis.behavioral import behavior_heatmap
 from dashboard.services.analysis.plots import get_statistics
-from dashboard.config.settings import DATA_SOURCE_DROPDOWN, PERFORMANCE_CSV, SYMBOL_ASSET_CLASS, SYMBOL_CATALOG
+from dashboard.config.settings import DATA_SOURCE_DROPDOWN, PERFORMANCE_CSV, SYMBOL_CATALOG
 from dashboard.config.env import TIMEFRAME_OPTIONS, PLAYBACK_SPEEDS
-from dashboard.config.analysis import RISK_FREE_RATE, INITIAL_NET_LIQ, PORTFOLIO_START_DATE
+from dashboard.config.analysis import (
+    RISK_FREE_RATE,
+    INITIAL_NET_LIQ,
+    PORTFOLIO_START_DATE,
+    RULE_COMPLIANCE_DEFAULTS,
+)
 from dashboard.services.data.load_data import load_performance, load_future
 from dashboard.services.portfolio import latest_equity, equity_series, append_manual
 from dashboard.services.analysis.portfolio_metrics import portfolio_metrics
+from dashboard.services.utils.trade_enrichment import ensure_trade_id, merge_trade_labels
+from dashboard.services.utils.trade_journal import load_trade_journal, merge_trade_journal, validate_trade_journal
 import numpy as np
 
 
@@ -94,6 +101,9 @@ def register_api(server):
                     "initial_net_liq": INITIAL_NET_LIQ,
                     "start_date": PORTFOLIO_START_DATE,
                     "risk_free_rate": RISK_FREE_RATE,
+                },
+                "insights_defaults": {
+                    "rule_compliance": RULE_COMPLIANCE_DEFAULTS,
                 },
             }
         )
@@ -189,6 +199,7 @@ def register_api(server):
         end = _parse_date(request.args.get("end"))
         try:
             df = pd.read_csv(PERFORMANCE_CSV)
+            df = merge_trade_journal(merge_trade_labels(ensure_trade_id(df)))
             if start or end:
                 if "TradeDay" in df.columns:
                     df["TradeDay"] = pd.to_datetime(df["TradeDay"], utc=True, errors="coerce")
@@ -211,6 +222,7 @@ def register_api(server):
         if not os.path.exists(PERFORMANCE_CSV):
             raise FileNotFoundError("performance data not found")
         df = pd.read_csv(PERFORMANCE_CSV)
+        df = merge_trade_journal(merge_trade_labels(ensure_trade_id(df)))
         symbol = payload.get("symbol")
         start = _parse_date(payload.get("start_date"))
         end = _parse_date(payload.get("end_date"))
@@ -304,7 +316,7 @@ def register_api(server):
         try:
             df = _load_performance_df(payload)
             if df.empty:
-                return jsonify({"error": "performance dataset is empty"}), 400
+                return jsonify({"error": "performance dataset is empty", "code": "EMPTY_DATASET"}), 400
             body, status = _metric_handler(metric, df, payload)
             return jsonify(body), status
         except FileNotFoundError as exc:
@@ -313,6 +325,70 @@ def register_api(server):
             return jsonify({"error": str(exc)}), 400
         except Exception as exc:
             return jsonify({"error": f"analysis failed: {exc}"}), 500
+
+    @api.route("/insights", methods=["POST", "OPTIONS"])
+    def insights():
+        if request.method == "OPTIONS":
+            return _cors_headers(jsonify({"ok": True}), allowed_origin)
+        payload: Dict[str, Any] = request.get_json(silent=True) or {}
+        try:
+            df = _load_performance_df(payload)
+            if df.empty:
+                return jsonify({"error": "performance dataset is empty", "code": "EMPTY_DATASET"}), 400
+            params = payload.get("params") or {}
+            out = compute.insights_bundle(df, params=params)
+            return jsonify(out), 200
+        except FileNotFoundError as exc:
+            return jsonify({"error": str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except Exception as exc:
+            return jsonify({"error": f"insights failed: {exc}"}), 500
+
+    @api.route("/journal/validate", methods=["GET", "OPTIONS"])
+    def journal_validate():
+        if request.method == "OPTIONS":
+            return _cors_headers(jsonify({"ok": True}), allowed_origin)
+        payload: Dict[str, Any] = {
+            "symbol": request.args.get("symbol"),
+            "start_date": request.args.get("start"),
+            "end_date": request.args.get("end"),
+        }
+        try:
+            perf_df = _load_performance_df(payload)
+            journal_df = load_trade_journal()
+
+            # Optional scope: if query filters are provided, validate only corresponding key rows.
+            if not perf_df.empty and any(payload.values()):
+                scoped = perf_df.copy()
+                for col in ["TradeDay", "ContractName", "IntradayIndex"]:
+                    if col not in scoped.columns:
+                        scoped[col] = ""
+                keys = scoped[["TradeDay", "ContractName", "IntradayIndex"]].copy()
+                keys["TradeDay"] = keys["TradeDay"].astype(str).str.strip()
+                keys["ContractName"] = keys["ContractName"].astype(str).str.strip()
+                keys["IntradayIndex"] = pd.to_numeric(keys["IntradayIndex"], errors="coerce").fillna(-1).astype(int).astype(str)
+                journal_df = journal_df.copy()
+                journal_df["TradeDay"] = journal_df["TradeDay"].astype(str).str.strip()
+                journal_df["ContractName"] = journal_df["ContractName"].astype(str).str.strip()
+                journal_df["IntradayIndex"] = pd.to_numeric(journal_df["IntradayIndex"], errors="coerce").fillna(-1).astype(int).astype(str)
+                journal_df = journal_df.merge(keys.drop_duplicates(), on=["TradeDay", "ContractName", "IntradayIndex"], how="inner")
+
+            report = validate_trade_journal(journal_df)
+            return (
+                jsonify(
+                    {
+                        "summary": report["summary"],
+                        "violations": report["violations"].to_dict("records"),
+                        "warnings": report["warnings"].to_dict("records"),
+                    }
+                ),
+                200,
+            )
+        except FileNotFoundError as exc:
+            return jsonify({"error": str(exc)}), 404
+        except Exception as exc:
+            return jsonify({"error": f"journal validation failed: {exc}"}), 500
 
     @api.route("/trading/session", methods=["GET", "OPTIONS"])
     def trading_session():
