@@ -100,7 +100,7 @@ export default function PortfolioPage() {
         ) : null}
 
         <Card title="Deposit / Withdraw" className="bg-surface/70">
-          <div className="flex flex-wrap items-end gap-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <div className="flex flex-col">
               <span className="text-xs uppercase tracking-[0.2em] text-slate-400">Type</span>
               <select
@@ -130,12 +130,14 @@ export default function PortfolioPage() {
                 className="rounded-lg border border-white/10 bg-background/60 px-3 py-2 text-sm text-white"
               />
             </div>
-            <button
-              onClick={submitAdjustment}
-              className="rounded-lg border border-accent bg-accent px-4 py-2 text-sm font-semibold text-black shadow hover:-translate-y-0.5 hover:shadow-accent/40"
-            >
-              Submit
-            </button>
+            <div className="flex items-end">
+              <button
+                onClick={submitAdjustment}
+                className="w-full rounded-lg border border-accent bg-accent px-4 py-2 text-sm font-semibold text-black shadow hover:-translate-y-0.5 hover:shadow-accent/40"
+              >
+                Submit
+              </button>
+            </div>
           </div>
         </Card>
 

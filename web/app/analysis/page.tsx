@@ -139,7 +139,7 @@ export default function AnalysisPage() {
 
   return (
     <AppShell active="/analysis">
-      <div className="grid gap-4 md:grid-cols-[1fr_280px]">
+      <div className="grid gap-4 lg:grid-cols-[1fr_280px]">
         <Card title="Controls">
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="flex flex-col gap-1 text-sm text-slate-300">
@@ -265,7 +265,7 @@ export default function AnalysisPage() {
                     onChange={(e) => setSetupFilter(e.target.value)}
                   />
                 </label>
-                <label className="mt-6 flex items-center gap-2 text-sm text-slate-300">
+                <label className="flex items-center gap-2 text-sm text-slate-300 sm:mt-6">
                   <input
                     type="checkbox"
                     checked={breachesOnly}
@@ -442,7 +442,7 @@ function InsightsPanel({
         <SimpleTable rows={setupRows} />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 xl:grid-cols-2">
         <div>
           <h3 className="mb-2 text-sm font-semibold text-slate-200">Rule Compliance Score</h3>
           <SimpleKv kv={compliance} />
@@ -459,7 +459,7 @@ function InsightsPanel({
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 xl:grid-cols-2">
         <div>
           <h3 className="mb-2 text-sm font-semibold text-slate-200">Playbook Builder</h3>
           <p className="mb-1 text-xs uppercase tracking-[0.15em] text-slate-400">Highlights</p>
@@ -497,7 +497,7 @@ function SimpleKv({ kv }: { kv: Record<string, string | number> }) {
       {entries.map(([k, v]) => (
         <React.Fragment key={k}>
           <div className="text-slate-400">{k}</div>
-          <div className="text-right text-slate-200">{String(v)}</div>
+          <div className="text-left text-slate-200 sm:text-right">{String(v)}</div>
         </React.Fragment>
       ))}
     </div>
@@ -507,9 +507,23 @@ function SimpleKv({ kv }: { kv: Record<string, string | number> }) {
 function SimpleTable({ rows }: { rows: AnalysisSeriesPoint[] }) {
   if (!rows || rows.length === 0) return <p className="text-slate-400">No data.</p>;
   const headers = Object.keys(rows[0] ?? {});
+  const visibleRows = rows.slice(0, 12);
   return (
-    <div className="overflow-x-auto rounded-lg border border-white/10">
-      <table className="min-w-full text-xs">
+    <>
+      <div className="space-y-2 md:hidden">
+        {visibleRows.map((row, idx) => (
+          <div key={idx} className="rounded-lg border border-white/10 bg-white/5 p-2">
+            {headers.map((h) => (
+              <div key={h} className="grid grid-cols-[110px_1fr] gap-2 py-0.5 text-xs">
+                <span className="text-slate-400">{h}</span>
+                <span className="break-words text-slate-200">{String((row as any)[h] ?? "")}</span>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+      <div className="hidden overflow-x-auto rounded-lg border border-white/10 md:block">
+        <table className="min-w-full text-xs">
         <thead className="bg-white/5 text-slate-300">
           <tr>
             {headers.map((h) => (
@@ -520,7 +534,7 @@ function SimpleTable({ rows }: { rows: AnalysisSeriesPoint[] }) {
           </tr>
         </thead>
         <tbody>
-          {rows.slice(0, 12).map((row, idx) => (
+          {visibleRows.map((row, idx) => (
             <tr key={idx} className="border-t border-white/10 text-slate-200">
               {headers.map((h) => (
                 <td key={h} className="px-2 py-1">
@@ -530,8 +544,9 @@ function SimpleTable({ rows }: { rows: AnalysisSeriesPoint[] }) {
             </tr>
           ))}
         </tbody>
-      </table>
-    </div>
+        </table>
+      </div>
+    </>
   );
 }
 
@@ -547,7 +562,7 @@ function AnalysisChart({ metric, points }: { metric: string; points: AnalysisSer
     });
     return (
       <div className="overflow-auto">
-        <div className="grid" style={{ gridTemplateColumns: `100px repeat(${days.length}, minmax(80px,1fr))` }}>
+        <div className="grid min-w-[640px]" style={{ gridTemplateColumns: `90px repeat(${days.length}, minmax(70px,1fr))` }}>
           <div className="text-xs text-slate-400">Hour</div>
           {days.map((d) => (
             <div key={d} className="text-center text-xs text-slate-300">

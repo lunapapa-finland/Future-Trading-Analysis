@@ -174,7 +174,7 @@ export default function GuidePage() {
               key={step.step}
               type="button"
               onClick={() => setActiveStep(idx)}
-              className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.12em] transition ${
+              className={`rounded-full border px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.1em] transition sm:px-3 sm:text-xs sm:tracking-[0.12em] ${
                 idx === activeStep
                   ? "border-accent bg-accent/20 text-white"
                   : "border-white/15 bg-white/5 text-slate-300 hover:border-accent/60 hover:text-white"
@@ -193,7 +193,7 @@ export default function GuidePage() {
 
       {activeStep === 0 ? (
         <>
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 lg:grid-cols-2">
             <Card title="Before Session">
               <ul className="list-disc space-y-1 pl-5 text-sm text-slate-200">
                 {beforeSession.map((item) => (
@@ -207,7 +207,7 @@ export default function GuidePage() {
             </Card>
           </div>
 
-          <div className="mt-2 grid gap-4 md:grid-cols-3">
+          <div className="mt-2 grid gap-4 xl:grid-cols-3">
             <Card title="Context">
               <HintChipGroup items={contextItems} tone="cyan" hintLabel="Context hint" />
             </Card>
@@ -231,7 +231,7 @@ export default function GuidePage() {
       ) : null}
 
       {activeStep === 1 ? (
-        <div className="mt-2 grid gap-4 md:grid-cols-2">
+        <div className="mt-2 grid gap-4 xl:grid-cols-2">
           <Card title="Enter Reason: Probability, Risk, Reward">
             <ul className="list-disc space-y-1 pl-5 text-sm text-slate-200">
               <li>Basic gate: what Phase, which Context, what Setup(s), what Signal Bar.</li>
@@ -269,7 +269,7 @@ export default function GuidePage() {
       {activeStep === 2 ? (
         <div className="mt-2 grid gap-4">
           <Card title="Risk Calculator">
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="grid gap-3 lg:grid-cols-2">
               <label className="flex flex-col gap-1 text-sm text-slate-300">
                 Entry Price
                 <input
@@ -353,7 +353,7 @@ export default function GuidePage() {
               ) : "invalidReason" in riskCalc ? (
                 <p className="text-sm text-red-200">{riskCalc.invalidReason}</p>
               ) : (
-                <div className="grid gap-2 text-sm text-slate-200 md:grid-cols-2">
+                <div className="grid gap-2 text-sm text-slate-200 lg:grid-cols-2">
                   <p>
                     Price/Point: <span className="font-semibold text-white">${contractValuePerPoint.toFixed(2)}</span>
                   </p>
@@ -402,7 +402,7 @@ export default function GuidePage() {
       ) : null}
 
       {activeStep === 3 ? (
-        <div className="mt-2 grid gap-4 md:grid-cols-2">
+        <div className="mt-2 grid gap-4 xl:grid-cols-2">
           <Card title="Before Exit Checklist">
             <ul className="list-disc space-y-1 pl-5 text-sm text-slate-200">
               <li>Time decay: after entry, if expectation is stale beyond 6 bars, decide exit path.</li>

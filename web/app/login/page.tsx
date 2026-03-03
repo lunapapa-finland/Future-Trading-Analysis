@@ -33,14 +33,14 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-xl flex-col justify-center px-6 py-10">
+    <main className="mx-auto flex min-h-screen max-w-xl flex-col justify-center px-4 py-6 sm:px-6 sm:py-10">
       <div className="mb-6">
-        <p className="text-sm uppercase tracking-[0.2em] text-accent">LUNAPAPA TRADING ANALYSIS</p>
-        <h1 className="text-3xl font-semibold text-white">Sign In</h1>
+        <p className="text-xs uppercase tracking-[0.2em] text-accent sm:text-sm">LUNAPAPA TRADING ANALYSIS</p>
+        <h1 className="text-2xl font-semibold text-white sm:text-3xl">Sign In</h1>
       </div>
       <form
         onSubmit={handleSubmit}
-        className="space-y-4 rounded-2xl border border-white/10 bg-surface/60 p-6 shadow-lg backdrop-blur"
+        className="space-y-4 rounded-2xl border border-white/10 bg-surface/60 p-4 shadow-lg backdrop-blur sm:p-6"
       >
         <div className="space-y-2">
           <label htmlFor="username" className="block text-sm text-slate-200">

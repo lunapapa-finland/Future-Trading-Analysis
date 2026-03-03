@@ -34,9 +34,9 @@ export default function ConfigPage() {
     <AppShell active="/config">
       <div className="space-y-4">
         <div className="flex flex-col gap-1">
-          <p className="text-sm uppercase tracking-[0.2em] text-accent">Configuration</p>
-          <h1 className="text-2xl font-semibold text-white">Symbol data paths</h1>
-          <p className="text-slate-300">Read-only view of symbols and their CSV sources. Editing coming later.</p>
+          <p className="text-xs uppercase tracking-[0.2em] text-accent sm:text-sm">Configuration</p>
+          <h1 className="text-xl font-semibold text-white sm:text-2xl">Symbol data paths</h1>
+          <p className="text-sm text-slate-300">Read-only view of symbols and their CSV sources. Editing coming later.</p>
         </div>
 
         {loading && <p className="text-slate-300">Loading...</p>}

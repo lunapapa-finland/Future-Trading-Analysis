@@ -187,11 +187,11 @@ export default function TradingPage() {
 
   return (
     <AppShell active="/trading">
-      <div className="grid gap-4 md:grid-cols-[1fr_280px]">
+      <div className="grid gap-4 xl:grid-cols-[1fr_300px]">
         <Card title="Controls">
           <div className="space-y-3">
             <div className="rounded-xl border border-white/10 bg-surface/80 p-3">
-              <div className="flex flex-wrap items-center gap-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
                 <SymbolSelect value={symbol} onChange={setSymbol} />
                 <TimeframeSelect value={timeframe} onChange={setTimeframe} />
                 {[
@@ -201,7 +201,7 @@ export default function TradingPage() {
                 ].map((preset) => (
                   <button
                     key={preset.label}
-                    className="h-[38px] rounded-lg border border-white/10 px-3 text-sm font-semibold text-slate-200 transition hover:border-accent/60"
+                    className="h-[38px] rounded-lg border border-white/10 px-3 text-sm font-semibold text-slate-200 transition hover:border-accent/60 sm:w-auto"
                     onClick={() => {
                       const now = new Date();
                       const start = new Date(now);
@@ -321,12 +321,12 @@ export default function TradingPage() {
       </Card>
 
       {isFullscreen && (
-        <div className="fixed inset-0 z-50 bg-black/80 p-4">
-          <div className="mx-auto flex max-w-6xl flex-col gap-3 rounded-2xl border border-white/10 bg-surface/90 p-4 shadow-2xl">
+        <div className="fixed inset-0 z-50 overflow-auto bg-black/80 p-2 sm:p-4">
+          <div className="mx-auto flex max-w-6xl flex-col gap-3 rounded-2xl border border-white/10 bg-surface/90 p-3 shadow-2xl sm:p-4">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.2em] text-accent">Price Action</p>
-                <p className="text-lg font-semibold text-white">
+                <p className="text-sm font-semibold text-white sm:text-lg">
                   {symbol} — {startDate} → {endDate}
                 </p>
               </div>
@@ -350,7 +350,7 @@ export default function TradingPage() {
               data={fullscreenData}
               trades={fullscreenTrades}
               showTrades={showTrades}
-              heightClass="h-[80vh]"
+              heightClass="h-[70vh] sm:h-[80vh]"
               studyLines={fullscreenStudyLines}
             />
           </div>
@@ -362,11 +362,11 @@ export default function TradingPage() {
           <div className="space-y-4">
             <StatGrid stats={{ ...(data.stats || {}), duration_bins: durationBins }} />
               <div className="space-y-2 rounded-lg border border-white/5 p-3">
-              <div className="flex flex-wrap gap-3 text-sm text-slate-200">
-                <label className="flex items-center gap-2">
+              <div className="grid gap-2 text-sm text-slate-200 sm:flex sm:flex-wrap sm:gap-3">
+                <label className="flex items-center justify-between gap-2 sm:justify-start">
                   <span className="text-xs uppercase tracking-[0.2em] text-slate-400">Direction</span>
                   <select
-                    className="h-[38px] rounded-lg border border-white/10 bg-surface px-3 text-sm text-white outline-none focus:border-accent"
+                    className="h-[38px] min-w-[130px] rounded-lg border border-white/10 bg-surface px-3 text-sm text-white outline-none focus:border-accent"
                     value={directionFilter}
                     onChange={(e) => setDirectionFilter(e.target.value)}
                   >
@@ -375,10 +375,10 @@ export default function TradingPage() {
                     <option value="Short">Short</option>
                   </select>
                 </label>
-                <label className="flex items-center gap-2">
+                <label className="flex items-center justify-between gap-2 sm:justify-start">
                   <span className="text-xs uppercase tracking-[0.2em] text-slate-400">Type</span>
                   <select
-                    className="h-[38px] rounded-lg border border-white/10 bg-surface px-3 text-sm text-white outline-none focus:border-accent"
+                    className="h-[38px] min-w-[130px] rounded-lg border border-white/10 bg-surface px-3 text-sm text-white outline-none focus:border-accent"
                     value={typeFilter}
                     onChange={(e) => setTypeFilter(e.target.value)}
                   >
@@ -388,10 +388,10 @@ export default function TradingPage() {
                     <option value="Swing">Swing</option>
                   </select>
                 </label>
-                <label className="flex items-center gap-2">
+                <label className="flex items-center justify-between gap-2 sm:justify-start">
                   <span className="text-xs uppercase tracking-[0.2em] text-slate-400">Size</span>
                   <select
-                    className="h-[38px] rounded-lg border border-white/10 bg-surface px-3 text-sm text-white outline-none focus:border-accent"
+                    className="h-[38px] min-w-[130px] rounded-lg border border-white/10 bg-surface px-3 text-sm text-white outline-none focus:border-accent"
                     value={sizeFilter}
                     onChange={(e) => setSizeFilter(e.target.value)}
                   >
@@ -402,7 +402,38 @@ export default function TradingPage() {
                   </select>
                 </label>
               </div>
-              <div className="overflow-x-auto">
+              <div className="space-y-2 md:hidden">
+                {(data.performance || []).map((row, idx) => {
+                  const enter = new Date(String(row["EnteredAt"] || "")).getTime();
+                  const exit = new Date(String(row["ExitedAt"] || "")).getTime();
+                  const mins = !Number.isNaN(enter) && !Number.isNaN(exit) ? (exit - enter) / 60000 : null;
+                  const holdType =
+                    mins == null ? "N/A" : mins <= 5 ? "Scalp" : mins < 30 ? "Scalp/Swing" : "Swing";
+                  const direction = String(row["Type"] || "");
+                  const sizeVal = Number(row["Size"] || 0);
+
+                  const dirOk = !directionFilter || direction === directionFilter;
+                  const typeOk = !typeFilter || holdType === typeFilter;
+                  const sizeOk =
+                    !sizeFilter ||
+                    (sizeFilter === "S" && sizeVal <= 2) ||
+                    (sizeFilter === "M" && sizeVal > 2 && sizeVal <= 5) ||
+                    (sizeFilter === "L" && sizeVal > 5);
+                  if (!dirOk || !typeOk || !sizeOk) return null;
+                  return (
+                    <div key={idx} className="rounded-lg border border-white/10 bg-white/5 p-2 text-xs text-slate-200">
+                      <div className="grid grid-cols-[96px_1fr] gap-2 py-0.5"><span className="text-slate-400">#</span><span>{idx + 1}</span></div>
+                      <div className="grid grid-cols-[96px_1fr] gap-2 py-0.5"><span className="text-slate-400">Entry</span><span className="break-words">{String(row["EnteredAt"] || row["TradeDay"] || "")}</span></div>
+                      <div className="grid grid-cols-[96px_1fr] gap-2 py-0.5"><span className="text-slate-400">Exit</span><span className="break-words">{String(row["ExitedAt"] || "")}</span></div>
+                      <div className="grid grid-cols-[96px_1fr] gap-2 py-0.5"><span className="text-slate-400">PnL(Net)</span><span className="text-emerald-300">{Number(row["PnL(Net)"] || 0).toFixed(4)}</span></div>
+                      <div className="grid grid-cols-[96px_1fr] gap-2 py-0.5"><span className="text-slate-400">Size</span><span>{sizeVal}</span></div>
+                      <div className="grid grid-cols-[96px_1fr] gap-2 py-0.5"><span className="text-slate-400">Direction</span><span>{direction}</span></div>
+                      <div className="grid grid-cols-[96px_1fr] gap-2 py-0.5"><span className="text-slate-400">Type</span><span>{holdType}</span></div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="hidden overflow-x-auto md:block">
                 <table className="min-w-full divide-y divide-white/5 text-sm text-slate-200">
                   <thead className="bg-white/5 text-xs uppercase tracking-wide text-slate-400">
                     <tr>
