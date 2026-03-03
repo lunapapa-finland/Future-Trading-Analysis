@@ -1,6 +1,7 @@
 import pandas as pd
 from dashboard.config.settings import DEFAULT_GRANULARITY, DEFAULT_ROLLING_WINDOW
 from dashboard.config.analysis import RULE_COMPLIANCE_DEFAULTS
+from dashboard.config.env import TIMEZONE
 import numpy as np
 from dashboard.services.analysis.schema import validate_performance_df
 
@@ -14,6 +15,14 @@ def _coerce_window(window, fallback=DEFAULT_ROLLING_WINDOW):
         raise ValueError("window must be a positive integer")
     return value
 
+
+def _to_cme(series: pd.Series, column_name: str) -> pd.Series:
+    ts = pd.to_datetime(series, utc=True, errors="coerce")
+    if ts.isna().any():
+        raise ValueError(f"Invalid datetime values in '{column_name}' column")
+    return ts.dt.tz_convert(TIMEZONE)
+
+
 def pnl_growth(performance_df, granularity=DEFAULT_GRANULARITY, daily_compounding_rate=0.001902, initial_funding=10000):
     performance_df = validate_performance_df(performance_df)
     # Initialize empty result if performance_df is empty
@@ -21,12 +30,8 @@ def pnl_growth(performance_df, granularity=DEFAULT_GRANULARITY, daily_compoundin
         return pd.DataFrame(columns=['Period', 'NetPnL', 'CumulativePnL', 'PassiveGrowth', 'CumulativePassive'])
     
     performance_df = performance_df.copy()
-    # Convert ExitedAt to datetime and remove timezone
-    performance_df['ExitedAt'] = pd.to_datetime(performance_df['ExitedAt'], errors='coerce').dt.tz_localize(None)
-    
-    # Check for invalid ExitedAt values
-    if performance_df['ExitedAt'].isna().any():
-        raise ValueError("Invalid datetime values in 'ExitedAt' column")
+    # Normalize to CME and then remove tz for period bucketing.
+    performance_df['ExitedAt'] = _to_cme(performance_df['ExitedAt'], 'ExitedAt').dt.tz_localize(None)
     
     performance_df = performance_df.sort_values('ExitedAt')
     
@@ -54,10 +59,11 @@ def pnl_growth(performance_df, granularity=DEFAULT_GRANULARITY, daily_compoundin
         start_date = pd.Timestamp(performance_df['ExitedAt'].dt.date.min())
         end_date = pd.Timestamp(performance_df['ExitedAt'].dt.date.max())
         
-        # Create daily date range (all calendar days)
-        date_range = pd.date_range(start=start_date, end=end_date, freq='D')
+        # Use business days for trader-centric passive baseline.
+        date_range = pd.bdate_range(start=start_date, end=end_date)
         passive_df = pd.DataFrame({'Date': date_range})
-        passive_df['Days'] = (passive_df['Date'] - start_date).dt.days + 1  # Include start date
+        # Day-0 baseline: passive curve starts at 0 growth on the first date.
+        passive_df['Days'] = (passive_df['Date'] - start_date).dt.days
         passive_df['PassiveGrowth'] = (1 + daily_compounding_rate) ** passive_df['Days'] * initial_funding - initial_funding
         passive_df['Period'] = passive_df['Date']
         
@@ -94,8 +100,8 @@ def drawdown(performance_df, granularity=DEFAULT_GRANULARITY):
         return pd.DataFrame(columns=['Period', 'Drawdown'])
     
     performance_df = performance_df.copy()
-    # Convert ExitedAt to datetime and remove timezone
-    performance_df['ExitedAt'] = pd.to_datetime(performance_df['ExitedAt'], errors='coerce').dt.tz_localize(None)
+    # Normalize to CME and then remove tz for period bucketing.
+    performance_df['ExitedAt'] = _to_cme(performance_df['ExitedAt'], 'ExitedAt').dt.tz_localize(None)
     performance_df = performance_df.sort_values('ExitedAt')
     
     try:
@@ -118,7 +124,9 @@ def drawdown(performance_df, granularity=DEFAULT_GRANULARITY):
         
         # Calculate cumulative PnL and drawdown
         grouped['CumulativePnL'] = grouped['PnL(Net)'].cumsum()
-        grouped['PeakPnL'] = grouped['CumulativePnL'].cummax()
+        # Anchor drawdown to starting equity (0). Otherwise an initial losing period
+        # incorrectly reports drawdown as 0 instead of a negative value.
+        grouped['PeakPnL'] = grouped['CumulativePnL'].cummax().clip(lower=0)
         grouped['Drawdown'] = grouped['CumulativePnL'] - grouped['PeakPnL']
         
         return grouped[['Period', 'Drawdown']]
@@ -146,11 +154,15 @@ def behavioral_patterns(performance_df):
     
     performance_df = performance_df.copy()
     try:
-        if 'HourOfDay' not in performance_df or 'DayOfWeek' not in performance_df or 'PnL(Net)' not in performance_df or 'Size' not in performance_df:
-            raise ValueError("Required columns missing: HourOfDay, DayOfWeek, PnL(Net), Size")
+        if 'PnL(Net)' not in performance_df or 'Size' not in performance_df or 'EnteredAt' not in performance_df:
+            raise ValueError("Required columns missing: EnteredAt, PnL(Net), Size")
+
+        performance_df['EnteredAt'] = _to_cme(performance_df['EnteredAt'], 'EnteredAt')
+        performance_df['HourOfDay'] = performance_df['EnteredAt'].dt.hour.astype(int)
+        performance_df['DayOfWeek'] = performance_df['EnteredAt'].dt.day_name()
         
         # Use HourOfDay directly and define weekday order
-        weekday_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+        weekday_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
         performance_df['DayOfWeek'] = pd.Categorical(performance_df['DayOfWeek'], categories=weekday_order, ordered=True)
         
         # Group by and aggregate with multi-index
@@ -168,9 +180,9 @@ def behavioral_patterns(performance_df):
         # Drop intermediate columns
         grouped = grouped[['Hour', 'DayOfWeek', 'TradeCount', 'AvgPnL']]
         
-        # Create a full matrix of hours (0-23) and days (Monday to Friday)
+        # Create a full matrix of hours (0-23) and all weekdays.
         all_hours = np.arange(0, 24)  # Hours 0 to 23
-        all_days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+        all_days = weekday_order
         # Create a MultiIndex with all combinations of Hour and DayOfWeek
         full_index = pd.MultiIndex.from_product([all_hours, all_days], names=['Hour', 'DayOfWeek'])
         full_df = pd.DataFrame(index=full_index).reset_index()
@@ -203,7 +215,7 @@ def rolling_win_rate(performance_df, window=DEFAULT_ROLLING_WINDOW):
         performance_df['WinOrLoss'] = np.where(performance_df['PnL(Net)'] > 0, 1, -1)
         
         # Sort by ExitedAt to ensure trade order
-        performance_df['ExitedAt'] = pd.to_datetime(performance_df['ExitedAt'])
+        performance_df['ExitedAt'] = _to_cme(performance_df['ExitedAt'], 'ExitedAt')
         performance_df = performance_df.sort_values('ExitedAt').reset_index(drop=True)
         
         # Calculate rolling win rate per trade
@@ -234,7 +246,7 @@ def sharpe_ratio(performance_df, window=DEFAULT_ROLLING_WINDOW, risk_free_rate=0
             raise ValueError("Required columns missing: PnL(Net), ExitedAt")
         
         # Aggregate PnL by TradeDay
-        performance_df['TradeDay'] = pd.to_datetime(performance_df['ExitedAt']).dt.date
+        performance_df['TradeDay'] = _to_cme(performance_df['ExitedAt'], 'ExitedAt').dt.tz_localize(None).dt.date
         daily_pnl = performance_df.groupby('TradeDay')['PnL(Net)'].sum().reset_index()
         daily_pnl['TradeDay'] = pd.to_datetime(daily_pnl['TradeDay'])
         daily_pnl = daily_pnl.sort_values('TradeDay')
@@ -360,8 +372,8 @@ def trade_efficiency(performance_df, window=DEFAULT_ROLLING_WINDOW):
             raise ValueError("Required columns missing: PnL(Net), EnteredAt, ExitedAt")
         
         # Calculate trade duration in hours
-        performance_df['EnteredAt'] = pd.to_datetime(performance_df['EnteredAt'])
-        performance_df['ExitedAt'] = pd.to_datetime(performance_df['ExitedAt'])
+        performance_df['EnteredAt'] = _to_cme(performance_df['EnteredAt'], 'EnteredAt')
+        performance_df['ExitedAt'] = _to_cme(performance_df['ExitedAt'], 'ExitedAt')
         performance_df['Duration'] = (performance_df['ExitedAt'] - performance_df['EnteredAt']).dt.total_seconds() / 3600  # Hours
         performance_df['Efficiency'] = performance_df['PnL(Net)'] / performance_df['Duration'].replace(0, np.nan)
         
@@ -384,54 +396,28 @@ def trade_efficiency(performance_df, window=DEFAULT_ROLLING_WINDOW):
     except Exception as e:
         raise ValueError(f"Failed to compute trade efficiency: {str(e)}")
 
-def hourly_performance(performance_df, window=DEFAULT_ROLLING_WINDOW):
+def hourly_performance(performance_df):
     performance_df = validate_performance_df(performance_df)
-    window = _coerce_window(window)
     if performance_df.empty:
-        return pd.DataFrame(columns=['HourlyIndex', 'HourlyPnL'])
+        return pd.DataFrame(columns=['HourOfDay', 'HourlyPnL', 'TradeCount', 'TotalPnL'])
     
     performance_df = performance_df.copy()
     try:
-        if 'PnL(Net)' not in performance_df or 'TradeDay' not in performance_df or 'HourOfDay' not in performance_df:
-            raise ValueError("Required columns missing: PnL(Net), TradeDay, HourOfDay")
-        
-        # Convert TradeDay to datetime and parse EnteredAt as timezone-aware
-        performance_df['TradeDay'] = pd.to_datetime(performance_df['TradeDay'])
-        performance_df['EnteredAt'] = pd.to_datetime(performance_df['EnteredAt'], utc=True)
-        performance_df['HourOfDay'] = performance_df['HourOfDay'].astype(int)  # Ensure integer
-        
-        # Get timezone from first EnteredAt
-        tz = performance_df['EnteredAt'].iloc[0].tzinfo
-        
-        # Create DateHour using TradeDay, HourOfDay, and timezone
-        performance_df['DateHour'] = performance_df.apply(
-            lambda row: pd.Timestamp(row['TradeDay']).replace(
-                hour=row['HourOfDay'], minute=0, second=0, tzinfo=tz
-            ), axis=1
+        if 'PnL(Net)' not in performance_df or 'EnteredAt' not in performance_df:
+            raise ValueError("Required columns missing: PnL(Net), EnteredAt")
+
+        performance_df['EnteredAt'] = _to_cme(performance_df['EnteredAt'], 'EnteredAt')
+        performance_df['HourOfDay'] = performance_df['EnteredAt'].dt.hour.astype(int)
+
+        # Statistical view across selected lifecycle: aggregate by hour-of-day only.
+        grouped = (
+            performance_df.groupby('HourOfDay', observed=True)
+            .agg(TotalPnL=('PnL(Net)', 'sum'), TradeCount=('PnL(Net)', 'size'))
+            .reset_index()
+            .sort_values('HourOfDay')
         )
-        
-        # Aggregate PnL by DateHour
-        hourly_pnl = performance_df.groupby('DateHour')['PnL(Net)'].sum().reset_index()
-        hourly_pnl = hourly_pnl.sort_values('DateHour')
-        
-        # Assign sequential HourlyIndex
-        hourly_pnl['HourlyIndex'] = range(len(hourly_pnl))
-        
-        # Calculate rolling average PnL over the window
-        hourly_data = []
-        for i in range(window - 1, len(hourly_pnl)):
-            start_idx = i - window + 1
-            end_idx = i + 1
-            if start_idx >= 0:
-                window_pnl = hourly_pnl.iloc[start_idx:end_idx]['PnL(Net)'].values
-                rolling_avg_pnl = np.mean(window_pnl)
-                hourly_data.append({
-                    'HourlyIndex': hourly_pnl['HourlyIndex'].iloc[i],
-                    'HourlyPnL': round(rolling_avg_pnl, 2),
-                    'DateHour': hourly_pnl['DateHour'].iloc[i].strftime('%Y-%m-%d %H:00:00%z')
-                })
-        
-        return pd.DataFrame(hourly_data)
+        grouped['HourlyPnL'] = (grouped['TotalPnL'] / grouped['TradeCount'].replace(0, np.nan)).fillna(0).round(2)
+        return grouped[['HourOfDay', 'HourlyPnL', 'TradeCount', 'TotalPnL']]
     except Exception as e:
         raise ValueError(f"Failed to compute hourly performance: {str(e)}")
     
@@ -451,8 +437,8 @@ def performance_envelope(performance_df, granularity=DEFAULT_GRANULARITY):
         return theoretical_data, pd.DataFrame(columns=['WinningRate', 'AvgWinToAvgLoss', 'PeriodStart', 'PeriodEnd', 'AboveTheoretical'])
 
     performance_df = performance_df.copy()
-    # Convert TradeDay to datetime and remove timezone
-    performance_df['TradeDay'] = pd.to_datetime(performance_df['TradeDay'], errors='coerce').dt.tz_localize(None)
+    # Use CME-local trade day derived from ExitedAt to avoid stale/mismatched source columns.
+    performance_df['TradeDay'] = _to_cme(performance_df['ExitedAt'], 'ExitedAt').dt.tz_localize(None)
     performance_df['WinOrLoss'] = performance_df['WinOrLoss'].astype(int, errors='ignore')
     performance_df['Size'] = performance_df['Size'].astype(int, errors='ignore')
     performance_df = performance_df.sort_values('TradeDay')
@@ -541,18 +527,14 @@ def overtrading_detection(performance_df, cap_loss_per_trade=200, cap_trades_aft
     performance_df = performance_df.copy()
     try:
         # Validate required columns
-        required_cols = ['TradeDay', 'PnL(Net)', 'ExitedAt', 'EnteredAt', 'Size']
+        required_cols = ['PnL(Net)', 'ExitedAt', 'EnteredAt', 'Size']
         if not all(col in performance_df for col in required_cols):
             raise ValueError(f"Required columns missing: {', '.join(set(required_cols) - set(performance_df.columns))}")
         
-        # Ensure datetime columns are timezone-naive
-        performance_df['TradeDay'] = pd.to_datetime(performance_df['TradeDay']).dt.tz_localize(None)
-        performance_df['ExitedAt'] = pd.to_datetime(performance_df['ExitedAt'], errors='coerce').dt.tz_localize(None)
-        performance_df['EnteredAt'] = pd.to_datetime(performance_df['EnteredAt'], errors='coerce').dt.tz_localize(None)
-        
-        # Check for invalid datetimes
-        if performance_df[['ExitedAt', 'EnteredAt']].isna().any().any():
-            raise ValueError("Invalid datetime values in 'ExitedAt' or 'EnteredAt' column")
+        # Normalize all time references to CME local time.
+        performance_df['ExitedAt'] = _to_cme(performance_df['ExitedAt'], 'ExitedAt').dt.tz_localize(None)
+        performance_df['EnteredAt'] = _to_cme(performance_df['EnteredAt'], 'EnteredAt').dt.tz_localize(None)
+        performance_df['TradeDay'] = performance_df['ExitedAt'].dt.floor("D")
         
         # Daily aggregation for existing plots
         grouped = performance_df.groupby('TradeDay').agg({
@@ -590,28 +572,32 @@ def overtrading_detection(performance_df, cap_loss_per_trade=200, cap_trades_aft
         # Analyze post-loss trades for overtrading criteria
         trade_df['TradeTag'] = 'LightBlue'  # Default to Blue
         for idx in trade_df[trade_df['IsPostLoss']].index:
-            loss_idx = trade_df.index[trade_df.index.get_loc(idx) - 1]
-            if loss_idx in trade_df[trade_df['IsLoss']].index:
-                # Get the 5 subsequent trades (including current) for this loss
-                start_idx = loss_idx + 1
-                end_idx = min(loss_idx + cap_trades_after_big_loss + 1, len(trade_df))
-                subset = trade_df.iloc[start_idx:end_idx]
-                
-                # Calculate averages for the 5 subsequent trades
-                avg_size = subset['Size'].mean()
-                avg_duration = subset['Duration'].mean()
-                
-                # Current trade criteria
-                current_trade = trade_df.loc[idx]
-                r_criterion = current_trade['R_multiple'] < 0
-                size_criterion = current_trade['Size'] > avg_size
-                duration_criterion = current_trade['Duration'] < avg_duration
-                
-                # Update TradeTag
-                if r_criterion and size_criterion and duration_criterion:
-                    trade_df.loc[idx, 'TradeTag'] = 'DarkRed'
-                elif r_criterion or size_criterion or duration_criterion:
-                    trade_df.loc[idx, 'TradeTag'] = 'LightCoral'
+            prev_losses = trade_df.index[(trade_df['IsLoss']) & (trade_df.index < idx)]
+            if len(prev_losses) == 0:
+                continue
+            loss_idx = int(prev_losses.max())
+            # Subsequent-trade window after the triggering big loss.
+            start_idx = loss_idx + 1
+            end_idx = min(loss_idx + cap_trades_after_big_loss + 1, len(trade_df))
+            subset = trade_df.iloc[start_idx:end_idx]
+            if subset.empty:
+                continue
+            
+            # Calculate averages for the subsequent trades.
+            avg_size = subset['Size'].mean()
+            avg_duration = subset['Duration'].mean()
+            
+            # Current trade criteria
+            current_trade = trade_df.loc[idx]
+            r_criterion = current_trade['R_multiple'] < 0
+            size_criterion = current_trade['Size'] > avg_size
+            duration_criterion = current_trade['Duration'] < avg_duration
+            
+            # Update TradeTag
+            if r_criterion and size_criterion and duration_criterion:
+                trade_df.loc[idx, 'TradeTag'] = 'DarkRed'
+            elif r_criterion or size_criterion or duration_criterion:
+                trade_df.loc[idx, 'TradeTag'] = 'LightCoral'
         
         # Select relevant columns
         trade_df = trade_df[['TradeIndex', 'R_multiple', 'IsPostLoss', 'TradeDay', 'ExitedAt', 'PnL(Net)', 'Size', 'Duration', 'TradeTag']]
@@ -632,18 +618,21 @@ def kelly_criterion(performance_df):
     
     performance_df = performance_df.copy()
     try:
-        if 'TradeDay' not in performance_df or 'PnL(Net)' not in performance_df:
-            raise ValueError("Required columns missing: TradeDay, PnL(Net)")
-        
-        # Ensure TradeDay is in datetime format
-        performance_df['TradeDay'] = pd.to_datetime(performance_df['TradeDay']).dt.tz_localize(None)
+        if 'PnL(Net)' not in performance_df:
+            raise ValueError("Required columns missing: PnL(Net)")
+        # Use CME-local day from ExitedAt when available; fallback to TradeDay.
+        if 'ExitedAt' in performance_df:
+            performance_df['TradeDay'] = _to_cme(performance_df['ExitedAt'], 'ExitedAt').dt.tz_localize(None).dt.floor("D")
+        elif 'TradeDay' in performance_df:
+            performance_df['TradeDay'] = pd.to_datetime(performance_df['TradeDay']).dt.tz_localize(None)
+        else:
+            raise ValueError("Required columns missing: ExitedAt or TradeDay")
         
         # Ensure PnL(Net) is numeric, converting non-numeric to NaN
         performance_df['PnL(Net)'] = pd.to_numeric(performance_df['PnL(Net)'], errors='coerce')
         
         # Check for NaN values in PnL(Net)
         if performance_df['PnL(Net)'].isna().any():
-            print(f"Warning: {performance_df['PnL(Net)'].isna().sum()} NaN values found in PnL(Net). Dropping these rows.")
             performance_df = performance_df.dropna(subset=['PnL(Net)'])
         
         # Define a trade as a win if PnL(Net) > 0
@@ -769,7 +758,8 @@ def rule_compliance_score(
             "summary": {"OverallScore": 100, "RuleBreaches": 0, "DaysAnalyzed": 0},
             "daily": pd.DataFrame(columns=["TradeDay", "Trades", "DailyPnL", "BreachCount", "Score", "Breaches"]),
         }
-    df["TradeDay"] = pd.to_datetime(df["ExitedAt"]).dt.strftime("%Y-%m-%d")
+    df["ExitedAt"] = _to_cme(df["ExitedAt"], "ExitedAt")
+    df["TradeDay"] = df["ExitedAt"].dt.strftime("%Y-%m-%d")
     df = df.sort_values("ExitedAt")
     rows = []
     for day, g in df.groupby("TradeDay", observed=True):
@@ -938,13 +928,14 @@ def monthly_review_report(performance_df, month=None, min_trades=3):
     if df.empty:
         return {"summary": {}, "focus_points": [], "setup_summary": []}
 
-    df["Month"] = pd.to_datetime(df["ExitedAt"]).dt.tz_localize(None).dt.to_period("M").astype(str)
+    df["ExitedAt"] = _to_cme(df["ExitedAt"], "ExitedAt")
+    df["Month"] = df["ExitedAt"].dt.tz_localize(None).dt.to_period("M").astype(str)
     target_month = month or df["Month"].max()
     mdf = df[df["Month"] == target_month].copy()
     if mdf.empty:
         return {"summary": {"Month": target_month, "Trades": 0}, "focus_points": [], "setup_summary": []}
 
-    mdf["TradeDay"] = pd.to_datetime(mdf["ExitedAt"]).dt.strftime("%Y-%m-%d")
+    mdf["TradeDay"] = mdf["ExitedAt"].dt.strftime("%Y-%m-%d")
     daily = mdf.groupby("TradeDay", observed=True)["PnL(Net)"].sum().reset_index()
     daily["Equity"] = daily["PnL(Net)"].cumsum()
     daily["Peak"] = daily["Equity"].cummax()
@@ -1006,7 +997,7 @@ def _filter_by_month(performance_df, month=None):
     df = validate_performance_df(performance_df).copy()
     if df.empty or not month:
         return df
-    period = pd.to_datetime(df["ExitedAt"], errors="coerce").dt.tz_localize(None).dt.to_period("M").astype(str)
+    period = _to_cme(df["ExitedAt"], "ExitedAt").dt.tz_localize(None).dt.to_period("M").astype(str)
     return df[period == str(month)].copy()
 
 

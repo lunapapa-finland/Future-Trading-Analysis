@@ -1,4 +1,4 @@
-import { AnalysisPayload, AnalysisSeriesPoint, Candle, InsightsPayload, InsightsResponse, PerformanceRecord } from "./types";
+import { AnalysisPayload, AnalysisResponse, Candle, InsightsPayload, InsightsResponse, PerformanceRecord } from "./types";
 import type { TradingSession } from "./types";
 
 export class ApiError extends Error {
@@ -82,14 +82,14 @@ export async function getCombinedPerformance(): Promise<PerformanceRecord[]> {
   return handleResponse<PerformanceRecord[]>(res);
 }
 
-export async function postAnalysis(metric: string, payload: AnalysisPayload): Promise<AnalysisSeriesPoint[]> {
+export async function postAnalysis(metric: string, payload: AnalysisPayload): Promise<AnalysisResponse> {
   const url = new URL(`/api/analysis/${metric}`, API_BASE);
   const res = await fetch(url.toString(), withAuth({
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload ?? {})
   }));
-  return handleResponse<AnalysisSeriesPoint[]>(res);
+  return handleResponse<AnalysisResponse>(res);
 }
 
 export async function postInsights(payload: InsightsPayload): Promise<InsightsResponse> {

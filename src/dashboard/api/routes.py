@@ -290,7 +290,7 @@ def register_api(server):
             out = compute.trade_efficiency(df, window=resolved_window)
             return _to_records(out), 200
         elif metric == "hourly_performance":
-            out = compute.hourly_performance(df, window=resolved_window)
+            out = compute.hourly_performance(df)
             return _to_records(out), 200
         elif metric == "performance_envelope":
             theoretical, actual = compute.performance_envelope(df, granularity=granularity or compute.DEFAULT_GRANULARITY)

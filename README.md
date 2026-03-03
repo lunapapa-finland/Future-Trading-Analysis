@@ -121,6 +121,14 @@ Start:
 docker compose up --build -d
 ```
 
+Start(RPI):
+```bash
+docker compose -f docker-compose.yml -f docker-compose.rpi.yml down
+docker compose -f docker-compose.yml -f docker-compose.rpi.yml pull
+docker compose -f docker-compose.yml -f docker-compose.rpi.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.rpi.yml ps
+```
+
 Check:
 
 ```bash

@@ -26,6 +26,13 @@ export interface AnalysisSeriesPoint {
   [key: string]: string | number | null;
 }
 
+export type AnalysisResponse =
+  | AnalysisSeriesPoint[]
+  | {
+      theoretical: AnalysisSeriesPoint[];
+      actual: AnalysisSeriesPoint[];
+    };
+
 export interface InsightsPayload {
   symbol?: string;
   start_date?: string;

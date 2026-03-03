@@ -7,7 +7,7 @@ import { fetchConfig } from "@/lib/config";
 import { AnalysisSeriesPoint, InsightsResponse } from "@/lib/types";
 import { useMemo, useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Line } from "react-chartjs-2";
+import { Bar, Chart, Line, Scatter } from "react-chartjs-2";
 import React from "react";
 import {
   Chart as ChartJS,
@@ -15,12 +15,13 @@ import {
   LinearScale,
   PointElement,
   LineElement,
+  BarElement,
   Title,
   Tooltip,
   Legend,
 } from "chart.js";
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend);
 
 function localYearMonth(): string {
   const now = new Date();
@@ -29,22 +30,129 @@ function localYearMonth(): string {
   return `${year}-${month}`;
 }
 
+function localDateYmd(d: Date): string {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function localMonthStartYmd(): string {
+  const now = new Date();
+  return localDateYmd(new Date(now.getFullYear(), now.getMonth(), 1));
+}
+
+function localTodayYmd(): string {
+  return localDateYmd(new Date());
+}
+
 const metricOptions = [
   { value: "rolling_win_rate", label: "Rolling Win Rate" },
   { value: "drawdown", label: "Drawdown" },
   { value: "pnl_growth", label: "PnL Growth" },
+  { value: "pnl_distribution", label: "PnL Distribution" },
+  { value: "behavioral_patterns", label: "Behavioral Patterns (AvgPnL/Size)" },
+  { value: "hourly_performance", label: "Hourly Performance" },
+  { value: "overtrading_detection", label: "Overtrading Detection" },
+  { value: "kelly_criterion", label: "Kelly Criterion" },
+  { value: "performance_envelope", label: "Performance Envelope" },
   { value: "sharpe_ratio", label: "Sharpe Ratio" },
   { value: "trade_efficiency", label: "Trade Efficiency" },
-  { value: "behavioral_heatmap", label: "Behavioral Heatmap" }
+  { value: "behavioral_heatmap", label: "Behavioral Heatmap (Total PnL)" }
 ];
+
+const granularityOptions = [
+  { value: "1D", label: "Daily (1D)" },
+  { value: "1W-MON", label: "Weekly (1W-MON)" },
+  { value: "1M", label: "Monthly (1M)" },
+];
+
+const metricHelp: Record<
+  string,
+  { x: string; y: string; calc: string; usage: string }
+> = {
+  rolling_win_rate: {
+    x: "Trade index (time-ordered exits)",
+    y: "Rolling win rate (%)",
+    calc: "Wins / trades inside the selected window.",
+    usage: "Use for short-term consistency drift.",
+  },
+  drawdown: {
+    x: "Period (by selected granularity)",
+    y: "Drawdown from running peak PnL",
+    calc: "CumulativePnL - max(CumulativePnL, baseline 0).",
+    usage: "Use to monitor pain depth and recovery.",
+  },
+  pnl_growth: {
+    x: "Period (by selected granularity)",
+    y: "Cumulative strategy PnL and passive benchmark",
+    calc: "Strategy cumulative net PnL vs passive compounded growth.",
+    usage: "Use to compare active edge vs passive baseline.",
+  },
+  pnl_distribution: {
+    x: "PnL bins (ranges)",
+    y: "Trade count per bin",
+    calc: "Histogram of per-trade PnL(Net).",
+    usage: "Use to inspect fat tails and skew.",
+  },
+  behavioral_patterns: {
+    x: "Hour + weekday matrix",
+    y: "AvgPnL normalized by total size",
+    calc: "AvgPnL = TotalPnL / TotalSize per cell; includes TradeCount.",
+    usage: "Use for efficiency by session timing.",
+  },
+  behavioral_heatmap: {
+    x: "Hour + weekday matrix",
+    y: "Total PnL(Net) per cell",
+    calc: "Summed PnL(Net) by HourOfDay and DayOfWeek.",
+    usage: "Use for gross contribution hotspots.",
+  },
+  hourly_performance: {
+    x: "Hour of day (0-23)",
+    y: "Average PnL per trade in each hour bucket",
+    calc: "Group all selected trades by EnteredAt hour; HourlyPnL = TotalPnL / TradeCount.",
+    usage: "Use to find statistically stronger/weaker intraday hours.",
+  },
+  overtrading_detection: {
+    x: "Daily and trade-level views",
+    y: "Trades/day, DailyPnL, and trade R-multiple",
+    calc: "Applies big-loss and post-loss overtrading tagging rules.",
+    usage: "Use to diagnose revenge/overtrading behavior.",
+  },
+  kelly_criterion: {
+    x: "TradeDay",
+    y: "Kelly value",
+    calc: "Uses daily win rate and reward/risk estimates.",
+    usage: "Use as sizing sanity signal, not a standalone trigger.",
+  },
+  performance_envelope: {
+    x: "Winning Rate (%)",
+    y: "Win/Loss ratio",
+    calc: "Actual period points vs theoretical break-even envelope.",
+    usage: "Use to see if your win/loss mix is above theoretical line.",
+  },
+  sharpe_ratio: {
+    x: "TradeDay",
+    y: "Rolling Sharpe ratio",
+    calc: "Annualized mean excess return / annualized return std.",
+    usage: "Use for risk-adjusted stability.",
+  },
+  trade_efficiency: {
+    x: "Trade index (time-ordered exits)",
+    y: "Rolling PnL per hour held",
+    calc: "Per-trade efficiency = PnL / duration hours, then rolling mean.",
+    usage: "Use to check execution quality vs holding time.",
+  },
+};
 
 export default function AnalysisPage() {
   const [mode, setMode] = useState<"core" | "advanced">("core");
   const [metric, setMetric] = useState(metricOptions[0].value);
+  const [coreGranularity, setCoreGranularity] = useState("1D");
   const [window, setWindow] = useState(7);
   const [symbol, setSymbol] = useState<string>("");
-  const [coreStartDate, setCoreStartDate] = useState<string>("");
-  const [coreEndDate, setCoreEndDate] = useState<string>("");
+  const [coreStartDate, setCoreStartDate] = useState<string>(localMonthStartYmd());
+  const [coreEndDate, setCoreEndDate] = useState<string>(localTodayYmd());
   const [insightsMinTrades, setInsightsMinTrades] = useState(3);
   const [insightsMonth, setInsightsMonth] = useState(localYearMonth());
   const [showRuleOverrides, setShowRuleOverrides] = useState(false);
@@ -53,6 +161,8 @@ export default function AnalysisPage() {
   const [maxDailyLoss, setMaxDailyLoss] = useState(500);
   const [bigLossThreshold, setBigLossThreshold] = useState(200);
   const [maxTradesAfterBigLoss, setMaxTradesAfterBigLoss] = useState(2);
+  const [capLossPerTrade, setCapLossPerTrade] = useState(200);
+  const [capTradesAfterBigLoss, setCapTradesAfterBigLoss] = useState(5);
   const [setupFilter, setSetupFilter] = useState("");
   const [breachesOnly, setBreachesOnly] = useState(false);
   const [defaultsHydrated, setDefaultsHydrated] = useState(false);
@@ -80,22 +190,47 @@ export default function AnalysisPage() {
     setDefaultsHydrated(true);
   }, [config, defaultsHydrated]);
 
-  const { data, isFetching, error } = useQuery({
-    queryKey: ["analysis", metric, window, symbol, coreStartDate, coreEndDate, mode],
+  const { data: analysisRaw, isFetching, error } = useQuery({
+    queryKey: [
+      "analysis",
+      metric,
+      window,
+      coreGranularity,
+      capLossPerTrade,
+      capTradesAfterBigLoss,
+      symbol,
+      coreStartDate,
+      coreEndDate,
+      mode,
+    ],
     queryFn: () =>
       postAnalysis(metric, {
-        granularity: "1W-MON",
+        granularity: coreGranularity,
         window,
         symbol,
         start_date: coreStartDate,
         end_date: coreEndDate,
+        params:
+          metric === "overtrading_detection"
+            ? {
+                cap_loss_per_trade: capLossPerTrade,
+                cap_trades_after_big_loss: capTradesAfterBigLoss,
+              }
+            : undefined,
       }),
     enabled: Boolean(symbol) && mode === "core",
     staleTime: 60_000,
     refetchOnWindowFocus: false
   });
 
-  const preview = useMemo(() => data ?? [], [data]);
+  const analysisData = useMemo(() => {
+    const raw = analysisRaw as any;
+    const envelope = raw && !Array.isArray(raw) && raw.theoretical && raw.actual ? raw : null;
+    const overtrading = raw && !Array.isArray(raw) && raw.daily && raw.trades ? raw : null;
+    const kelly = raw && !Array.isArray(raw) && raw.data && raw.metadata ? raw : null;
+    const series = Array.isArray(raw) ? raw : envelope ? envelope.actual ?? [] : kelly ? kelly.data ?? [] : [];
+    return { raw, envelope, overtrading, kelly, series };
+  }, [analysisRaw]);
 
   const insightsParams = useMemo(() => {
     const params: Record<string, unknown> = {
@@ -134,7 +269,16 @@ export default function AnalysisPage() {
   });
 
   const showWindow =
-    metric === "rolling_win_rate" || metric === "sharpe_ratio" || metric === "trade_efficiency";
+    metric === "rolling_win_rate" ||
+    metric === "sharpe_ratio" ||
+    metric === "trade_efficiency";
+  const showGranularity = metric === "pnl_growth" || metric === "drawdown" || metric === "performance_envelope";
+  const hasCoreData =
+    metric === "performance_envelope"
+      ? Boolean((analysisData.envelope?.theoretical?.length ?? 0) > 0 || (analysisData.envelope?.actual?.length ?? 0) > 0)
+      : metric === "overtrading_detection"
+        ? Boolean((analysisData.overtrading?.daily?.length ?? 0) > 0 || (analysisData.overtrading?.trades?.length ?? 0) > 0)
+        : analysisData.series.length > 0;
   const insightsNoData = insightsError instanceof ApiError && insightsError.code === "EMPTY_DATASET";
 
   return (
@@ -221,6 +365,22 @@ export default function AnalysisPage() {
                     ))}
                   </select>
                 </label>
+                {showGranularity ? (
+                  <label className="flex flex-col gap-1 text-sm text-slate-300">
+                    Granularity
+                    <select
+                      className="rounded-lg border border-white/10 bg-surface px-3 py-2 text-white outline-none focus:border-accent"
+                      value={coreGranularity}
+                      onChange={(e) => setCoreGranularity(e.target.value)}
+                    >
+                      {granularityOptions.map((g) => (
+                        <option key={g.value} value={g.value}>
+                          {g.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
                 {showWindow ? (
                   <label className="flex flex-col gap-1 text-sm text-slate-300">
                     Window
@@ -232,6 +392,30 @@ export default function AnalysisPage() {
                       onChange={(e) => setWindow(Number(e.target.value))}
                     />
                   </label>
+                ) : null}
+                {metric === "overtrading_detection" ? (
+                  <>
+                    <label className="flex flex-col gap-1 text-sm text-slate-300">
+                      Cap Loss / Trade
+                      <input
+                        type="number"
+                        min={1}
+                        className="rounded-lg border border-white/10 bg-surface px-3 py-2 text-white outline-none focus:border-accent"
+                        value={capLossPerTrade}
+                        onChange={(e) => setCapLossPerTrade(Math.max(1, Number(e.target.value) || 1))}
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1 text-sm text-slate-300">
+                      Trades After Big Loss
+                      <input
+                        type="number"
+                        min={1}
+                        className="rounded-lg border border-white/10 bg-surface px-3 py-2 text-white outline-none focus:border-accent"
+                        value={capTradesAfterBigLoss}
+                        onChange={(e) => setCapTradesAfterBigLoss(Math.max(1, Number(e.target.value) || 1))}
+                      />
+                    </label>
+                  </>
                 ) : null}
               </>
             ) : (
@@ -352,10 +536,25 @@ export default function AnalysisPage() {
             {mode === "core" ? (
               <>
                 <p>Metric: {metric}</p>
+                {metricHelp[metric] ? (
+                  <div className="mt-2 space-y-1 rounded-lg border border-white/10 bg-white/5 p-2 text-xs text-slate-300">
+                    <p><span className="text-slate-400">X:</span> {metricHelp[metric].x}</p>
+                    <p><span className="text-slate-400">Y:</span> {metricHelp[metric].y}</p>
+                    <p><span className="text-slate-400">Calc:</span> {metricHelp[metric].calc}</p>
+                    <p><span className="text-slate-400">Use:</span> {metricHelp[metric].usage}</p>
+                  </div>
+                ) : null}
                 <p>
                   Range: {coreStartDate || "(start)"} → {coreEndDate || "(end)"}
                 </p>
+                {showGranularity ? <p>Granularity: {coreGranularity}</p> : null}
                 {showWindow ? <p>Window: {window}</p> : null}
+                {metric === "overtrading_detection" ? (
+                  <>
+                    <p>Cap Loss / Trade: {capLossPerTrade}</p>
+                    <p>Trades After Big Loss: {capTradesAfterBigLoss}</p>
+                  </>
+                ) : null}
                 {isFetching ? <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Loading…</p> : null}
                 {error ? <p className="text-red-300">Error: {(error as Error).message}</p> : null}
               </>
@@ -379,10 +578,15 @@ export default function AnalysisPage() {
         <Card title="Visualization" className="mt-2">
           <div className="overflow-x-auto">
             <div className="min-w-full md:min-w-[900px]">
-              {preview.length === 0 ? (
+              {!hasCoreData ? (
                 <p className="text-slate-400">No data yet.</p>
+              ) : metric === "overtrading_detection" && analysisData.overtrading ? (
+                <OvertradingPanel
+                  daily={(analysisData.overtrading.daily ?? []) as AnalysisSeriesPoint[]}
+                  trades={(analysisData.overtrading.trades ?? []) as AnalysisSeriesPoint[]}
+                />
               ) : (
-                <AnalysisChart metric={metric} points={preview} />
+                <AnalysisChart metric={metric} points={analysisData.series} envelopeData={analysisData.envelope} />
               )}
             </div>
           </div>
@@ -550,7 +754,15 @@ function SimpleTable({ rows }: { rows: AnalysisSeriesPoint[] }) {
   );
 }
 
-function AnalysisChart({ metric, points }: { metric: string; points: AnalysisSeriesPoint[] }) {
+function AnalysisChart({
+  metric,
+  points,
+  envelopeData,
+}: {
+  metric: string;
+  points: AnalysisSeriesPoint[];
+  envelopeData?: { theoretical: AnalysisSeriesPoint[]; actual: AnalysisSeriesPoint[] } | null;
+}) {
   if (metric === "behavioral_heatmap") {
     const days = Array.from(new Set(points.map((p: any) => p.DayOfWeek || "")));
     const hours = Array.from(new Set(points.map((p: any) => p.HourOfDay || 0))).sort((a, b) => a - b);
@@ -594,16 +806,206 @@ function AnalysisChart({ metric, points }: { metric: string; points: AnalysisSer
     );
   }
 
-  const labels = points.map((p: any) => {
-    const raw = p.Period ?? p.TradeDay ?? p.Date ?? p.DateHour ?? p.TradeIndex ?? p.HourlyIndex ?? "";
+  if (metric === "behavioral_patterns") {
+    const days = Array.from(new Set(points.map((p: any) => p.DayOfWeek || "")));
+    const hours = Array.from(new Set(points.map((p: any) => p.Hour || 0))).sort((a, b) => a - b);
+    const values = points.map((p: any) => Number(p.AvgPnL || 0));
+    const maxAbs = Math.max(...values.map((v) => Math.abs(v)), 1);
+    const cellMap = new Map<string, { avg: number; trades: number }>();
+    (points as any[]).forEach((p) => {
+      cellMap.set(`${p.Hour}|${p.DayOfWeek}`, {
+        avg: Number(p.AvgPnL || 0),
+        trades: Number(p.TradeCount || 0),
+      });
+    });
+    return (
+      <div className="overflow-auto">
+        <div className="grid min-w-[640px]" style={{ gridTemplateColumns: `90px repeat(${days.length}, minmax(70px,1fr))` }}>
+          <div className="text-xs text-slate-400">Hour</div>
+          {days.map((d) => (
+            <div key={d} className="text-center text-xs text-slate-300">
+              {d}
+            </div>
+          ))}
+          {hours.map((h) => (
+            <React.Fragment key={h}>
+              <div className="text-xs text-slate-400">{h}:00</div>
+              {days.map((d) => {
+                const cell = cellMap.get(`${h}|${d}`) || { avg: 0, trades: 0 };
+                const intensity = Math.min(Math.abs(cell.avg) / maxAbs, 1);
+                const color =
+                  cell.avg >= 0 ? `rgba(34,197,94,${0.1 + 0.5 * intensity})` : `rgba(239,68,68,${0.1 + 0.5 * intensity})`;
+                return (
+                  <div
+                    key={`${h}-${d}`}
+                    className="flex items-center justify-center text-xs text-white"
+                    style={{ backgroundColor: color, minHeight: "32px" }}
+                    title={`${d} ${h}:00 | AvgPnL ${cell.avg.toFixed(2)} | Trades ${cell.trades}`}
+                  >
+                    {cell.avg.toFixed(1)}
+                  </div>
+                );
+              })}
+            </React.Fragment>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (metric === "performance_envelope" && envelopeData) {
+    const theoretical = envelopeData.theoretical ?? [];
+    const actual = envelopeData.actual ?? [];
+    const theoPts = theoretical.map((p: any) => ({
+      x: Number(p.WinningRate ?? 0),
+      y: Number(p.TheoreticalWinToLoss ?? 0),
+    }));
+    const actualPts = actual.map((p: any) => ({
+      x: Number(p.WinningRate ?? 0),
+      y: Number(p.AvgWinToAvgLoss ?? 0),
+    }));
+    const data = {
+      datasets: [
+        {
+          label: "Theoretical",
+          data: theoPts,
+          borderColor: "#94a3b8",
+          backgroundColor: "rgba(148,163,184,0.15)",
+          pointRadius: 0,
+          showLine: true,
+          tension: 0.1,
+        },
+        {
+          label: "Actual",
+          data: actualPts,
+          borderColor: "#22c55e",
+          backgroundColor: "rgba(34,197,94,0.35)",
+          pointRadius: 4,
+          showLine: false,
+        },
+      ],
+    };
+    const options = {
+      responsive: true,
+      plugins: {
+        legend: { display: true, labels: { color: "#e2e8f0" } },
+      },
+      scales: {
+        x: {
+          type: "linear" as const,
+          title: { display: true, text: "Winning Rate (%)", color: "#e2e8f0" },
+          ticks: { color: "#e2e8f0" },
+          grid: { color: "rgba(226,232,240,0.1)" },
+        },
+        y: {
+          title: { display: true, text: "Win/Loss Ratio", color: "#e2e8f0" },
+          ticks: { color: "#e2e8f0" },
+          grid: { color: "rgba(226,232,240,0.1)" },
+        },
+      },
+    };
+    return <Line data={data} options={options} />;
+  }
+
+  if (metric === "pnl_growth") {
+    const labels = points.map((p: any) => String(p.Period ?? p.Date ?? ""));
+    const strategy = points.map((p: any) => Number(p.CumulativePnL ?? p.NetPnL ?? 0));
+    const passive = points.map((p: any) => Number(p.CumulativePassive ?? 0));
+    const data = {
+      labels,
+      datasets: [
+        {
+          label: "Strategy (CumulativePnL)",
+          data: strategy,
+          borderColor: "#22c55e",
+          backgroundColor: "rgba(34,197,94,0.18)",
+          tension: 0.15,
+        },
+        {
+          label: "Passive (CumulativePassive)",
+          data: passive,
+          borderColor: "#94a3b8",
+          backgroundColor: "rgba(148,163,184,0.18)",
+          tension: 0.15,
+        },
+      ],
+    };
+    const options = {
+      responsive: true,
+      plugins: {
+        legend: { display: true, labels: { color: "#e2e8f0" } },
+      },
+      scales: {
+        x: { ticks: { color: "#e2e8f0" }, grid: { color: "rgba(226,232,240,0.1)" } },
+        y: { ticks: { color: "#e2e8f0" }, grid: { color: "rgba(226,232,240,0.1)" } },
+      },
+    };
+    return <Line data={data} options={options} />;
+  }
+
+  if (metric === "pnl_distribution") {
+    const values = points.map((p: any) => Number(p["PnL(Net)"] ?? 0)).filter((v) => Number.isFinite(v));
+    if (!values.length) return <p className="text-slate-400">No data.</p>;
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const span = Math.max(max - min, 1e-9);
+    const binCount = Math.min(24, Math.max(8, Math.round(Math.sqrt(values.length))));
+    const step = span / binCount;
+    const bins = new Array(binCount).fill(0);
+    values.forEach((v) => {
+      const idx = Math.min(binCount - 1, Math.max(0, Math.floor((v - min) / step)));
+      bins[idx] += 1;
+    });
+    const labels = bins.map((_, i) => {
+      const lo = min + i * step;
+      const hi = min + (i + 1) * step;
+      return `${lo.toFixed(0)}..${hi.toFixed(0)}`;
+    });
+    const colors = bins.map((_, i) => {
+      const center = min + (i + 0.5) * step;
+      return center >= 0 ? "rgba(34,197,94,0.65)" : "rgba(239,68,68,0.65)";
+    });
+    const data = {
+      labels,
+      datasets: [
+        {
+          label: "Trade Count",
+          data: bins,
+          backgroundColor: colors,
+          borderColor: colors,
+          borderWidth: 1,
+        },
+      ],
+    };
+    const options = {
+      responsive: true,
+      plugins: {
+        legend: { display: false },
+      },
+      scales: {
+        x: { ticks: { color: "#e2e8f0", maxRotation: 60, minRotation: 45 }, grid: { color: "rgba(226,232,240,0.08)" } },
+        y: { ticks: { color: "#e2e8f0" }, grid: { color: "rgba(226,232,240,0.1)" } },
+      },
+    };
+    return <Bar data={data} options={options} />;
+  }
+
+  const labels = points.map((p: any, idx: number) => {
+    if (metric === "pnl_distribution") {
+      return String(p.TradeIndex ?? idx + 1);
+    }
+    const raw = p.Period ?? p.TradeDay ?? p.Date ?? p.DateHour ?? p.HourOfDay ?? p.TradeIndex ?? p.HourlyIndex ?? "";
     return String(raw);
   });
   const values = points.map((p: any) => {
     if (metric === "drawdown") return p.Drawdown ?? 0;
     if (metric === "pnl_growth") return p.CumulativePnL ?? p.NetPnL ?? 0;
+    if (metric === "pnl_distribution") return p["PnL(Net)"] ?? 0;
     if (metric === "rolling_win_rate") return p.WinRate ?? 0;
     if (metric === "sharpe_ratio") return p.SharpeRatio ?? 0;
     if (metric === "trade_efficiency") return p.Efficiency ?? 0;
+    if (metric === "hourly_performance") return p.HourlyPnL ?? 0;
+    if (metric === "kelly_criterion") return p.KellyValue ?? 0;
     return 0;
   });
 
@@ -614,7 +1016,7 @@ function AnalysisChart({ metric, points }: { metric: string; points: AnalysisSer
         label: metric,
         data: values,
         borderColor: "#22c55e",
-        backgroundColor: "rgba(34,197,94,0.2)",
+        backgroundColor: "rgba(34,197,94,0.45)",
         tension: 0.1,
       },
     ],
@@ -633,5 +1035,102 @@ function AnalysisChart({ metric, points }: { metric: string; points: AnalysisSer
     },
   };
 
+  if (metric === "hourly_performance") {
+    return <Bar data={data} options={options} />;
+  }
   return <Line data={data} options={options} />;
+}
+
+function OvertradingPanel({ daily, trades }: { daily: AnalysisSeriesPoint[]; trades: AnalysisSeriesPoint[] }) {
+  const dailyLabels = daily.map((r: any) => String(r.TradeDay ?? ""));
+  const dailyTrades = daily.map((r: any) => Number(r.TradesPerDay ?? 0));
+  const dailyPnl = daily.map((r: any) => Number(r.DailyPnL ?? 0));
+  const dailyData = {
+    labels: dailyLabels,
+    datasets: [
+      {
+        type: "bar" as const,
+        label: "Trades/Day",
+        yAxisID: "yTrades",
+        data: dailyTrades,
+        backgroundColor: "rgba(96,165,250,0.5)",
+        borderColor: "rgba(96,165,250,0.9)",
+      },
+      {
+        type: "line" as const,
+        label: "Daily PnL",
+        yAxisID: "yPnl",
+        data: dailyPnl,
+        borderColor: "#22c55e",
+        backgroundColor: "rgba(34,197,94,0.2)",
+        tension: 0.2,
+      },
+    ],
+  };
+  const dailyOptions = {
+    responsive: true,
+    plugins: { legend: { display: true, labels: { color: "#e2e8f0" } } },
+    scales: {
+      x: { ticks: { color: "#e2e8f0", maxRotation: 60, minRotation: 45 }, grid: { color: "rgba(226,232,240,0.08)" } },
+      yTrades: {
+        type: "linear" as const,
+        position: "left" as const,
+        ticks: { color: "#93c5fd" },
+        grid: { color: "rgba(226,232,240,0.08)" },
+      },
+      yPnl: {
+        type: "linear" as const,
+        position: "right" as const,
+        ticks: { color: "#86efac" },
+        grid: { drawOnChartArea: false },
+      },
+    },
+  };
+
+  const scatterData = {
+    datasets: [
+      {
+        label: "R-multiple by trade",
+        data: trades.map((r: any) => ({
+          x: Number(r.TradeIndex ?? 0),
+          y: Number(r.R_multiple ?? 0),
+        })),
+        pointRadius: 4,
+        showLine: false,
+        backgroundColor: trades.map((r: any) => {
+          const tag = String(r.TradeTag ?? "");
+          if (tag === "DarkRed") return "rgba(127,29,29,0.95)";
+          if (tag === "LightCoral") return "rgba(248,113,113,0.9)";
+          return "rgba(96,165,250,0.8)";
+        }),
+        borderColor: trades.map((r: any) => {
+          const tag = String(r.TradeTag ?? "");
+          if (tag === "DarkRed") return "rgba(127,29,29,1)";
+          if (tag === "LightCoral") return "rgba(248,113,113,1)";
+          return "rgba(96,165,250,1)";
+        }),
+      },
+    ],
+  };
+  const scatterOptions = {
+    responsive: true,
+    plugins: { legend: { display: true, labels: { color: "#e2e8f0" } } },
+    scales: {
+      x: { title: { display: true, text: "TradeIndex", color: "#e2e8f0" }, ticks: { color: "#e2e8f0" }, grid: { color: "rgba(226,232,240,0.08)" } },
+      y: { title: { display: true, text: "R-multiple", color: "#e2e8f0" }, ticks: { color: "#e2e8f0" }, grid: { color: "rgba(226,232,240,0.1)" } },
+    },
+  };
+
+  return (
+    <div className="grid gap-4">
+      <div>
+        <h3 className="mb-2 text-sm font-semibold text-slate-200">Daily Overtrading View</h3>
+        <Chart type="bar" data={dailyData} options={dailyOptions} />
+      </div>
+      <div>
+        <h3 className="mb-2 text-sm font-semibold text-slate-200">Trade-Level Risk Scatter</h3>
+        <Scatter data={scatterData} options={scatterOptions} />
+      </div>
+    </div>
+  );
 }
