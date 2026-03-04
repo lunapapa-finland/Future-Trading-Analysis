@@ -126,3 +126,39 @@ def test_merge_trade_journal_overrides_and_fills_fields():
     assert row1["Context"] == "TR"
     assert row1["SignalBar"] == "StrongBull"
     assert row2["Setup"] == "LegacySetup2"
+
+
+def test_merge_trade_journal_prefers_trade_id_when_legacy_keys_change():
+    perf = pd.DataFrame(
+        [
+            {
+                "trade_id": "abc123",
+                "TradeDay": "2025-11-02",
+                "ContractName": "MES",
+                "IntradayIndex": 99,
+                "Setup": "LegacySetup",
+                "Type": "Long",
+            }
+        ]
+    )
+    # Same trade_id but different legacy key fields should still merge.
+    journal = pd.DataFrame(
+        [
+            {
+                "trade_id": "abc123",
+                "TradeDay": "2025-11-01",
+                "ContractName": "MES",
+                "IntradayIndex": 1,
+                "Phase": "Open",
+                "Context": "TR",
+                "Setup": "ORB",
+                "SignalBar": "StrongBull",
+                "Comments": "id-linked",
+            }
+        ]
+    )
+    merged = tj.merge_trade_journal(perf, journal_df=journal)
+    row = merged.iloc[0]
+    assert row["Setup"] == "ORB"
+    assert row["Phase"] == "Open"
+    assert row["Comments"] == "id-linked"

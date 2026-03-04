@@ -13,8 +13,12 @@ def validate_performance_df(df: pd.DataFrame) -> pd.DataFrame:
     df["ExitedAt"] = pd.to_datetime(df["ExitedAt"], errors="coerce", utc=True).astype("datetime64[ns, UTC]")
     if df["EnteredAt"].isna().any() or df["ExitedAt"].isna().any():
         raise ValueError("Invalid datetimes in EnteredAt/ExitedAt")
-    if df["PnL(Net)"].isna().any():
-        df["PnL(Net)"] = df["PnL(Net)"].fillna(0)
+    pnl_raw = df["PnL(Net)"]
+    pnl_num = pd.to_numeric(pnl_raw, errors="coerce")
+    invalid_numeric = pnl_num.isna() & pnl_raw.notna() & (pnl_raw.astype(str).str.strip() != "")
+    if invalid_numeric.any():
+        raise ValueError("Invalid numeric values in PnL(Net)")
+    df["PnL(Net)"] = pnl_num.fillna(0.0).astype(float)
     # Optional fields normalization
     if "TradeDay" in df.columns:
         df["TradeDay"] = pd.to_datetime(df["TradeDay"], errors="coerce", utc=True).dt.strftime("%Y-%m-%d")

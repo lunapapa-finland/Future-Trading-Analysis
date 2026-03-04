@@ -8,6 +8,8 @@ INITIAL_NET_LIQ = 10000.0  # USD starting portfolio net liquidation value
 RISK_FREE_RATE = 0.02       # Annual risk-free rate for Sharpe/etc
 # Start date for portfolio (used for baseline calculations)
 PORTFOLIO_START_DATE = "2025-11-01"
+# Analysis is always evaluated on CME local time boundaries.
+ANALYSIS_TIMEZONE = "US/Central"
 
 
 def _int_env(name: str, default: int) -> int:

@@ -12,18 +12,12 @@ from dashboard.config.settings import (
     ACQUISITION_LAST_BUSINESS_DATE,
     CURRENT_DATE,
     DATA_SOURCE_DROPDOWN,
-    LOGGING_PATH,
     SYMBOL_CATALOG,
     TIMEZONE,
     CMEHolidayCalendar,
 )
 
-# Configure logging
-logging.basicConfig(
-    filename=LOGGING_PATH,
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logger = logging.getLogger(__name__)
 
 def get_last_row_date(csv_path):
     """Helper function to read the last row of the CSV and extract the date."""
@@ -35,8 +29,8 @@ def get_last_row_date(csv_path):
         if dt.empty:
             return None
         return dt.max().date()
-    except Exception as e:
-        logging.error(f"Error reading last row of {csv_path}: {e}")
+    except (FileNotFoundError, OSError, pd.errors.ParserError, ValueError, KeyError) as e:
+        logger.error(f"Error reading last row of {csv_path}: {e}")
         return None
 
 def is_date_in_csv(csv_path, target_date):
@@ -69,8 +63,8 @@ def _get_calendar(symbol_cfg=None):
         cal = get_calendar("CME") if name == "cme" else get_calendar(name.upper())
         _CALENDAR_CACHE[name] = cal
         return cal
-    except Exception as e:
-        logging.warning(f"Falling back to holiday list for calendar {name}: {e}")
+    except (ValueError, KeyError, TypeError) as e:
+        logger.warning(f"Falling back to holiday list for calendar {name}: {e}")
         _CALENDAR_CACHE[name] = None
         return None
 
@@ -81,8 +75,8 @@ def is_holiday(date, symbol_cfg=None):
     if cal is not None:
         try:
             return not cal.is_session(pd.Timestamp(date))
-        except Exception as e:
-            logging.warning(f"Calendar check failed for {date}: {e}. Falling back to static holidays.")
+        except (ValueError, TypeError, AttributeError) as e:
+            logger.warning(f"Calendar check failed for {date}: {e}. Falling back to static holidays.")
     # Fallback: static CME holiday list
     holidays = CMEHolidayCalendar().holidays(start=date, end=date)
     return date in holidays
@@ -155,8 +149,8 @@ def get_active_contract(symbol, current_date=None, symbol_cfg=None):
 
         return ticker_format.format(symbol=symbol, month_code=month_code, yy=contract_year_str, exchange=exchange)
 
-    except Exception as e:
-        logging.error(f"Error determining active contract for {symbol}: {e}")
+    except (ValueError, KeyError, TypeError) as e:
+        logger.error(f"Error determining active contract for {symbol}: {e}")
         fallback_exchange = symbol_cfg.get("exchange", "CME") if symbol_cfg else "CME"
         fallback_year = (current_date.year if current_date else datetime.date.today().year) % 100
         return f"{symbol}M{fallback_year}.{fallback_exchange}"
@@ -175,8 +169,8 @@ def validate_data(df, day, symbol_cfg=None):
         expected_rows = symbol_cfg.get("expected_rows", expected_rows)
     try:
         df.index = pd.to_datetime(df.index).tz_convert(tz)
-    except Exception as e:
-        logging.error(f"Timezone conversion error for {day}: {e}")
+    except (TypeError, ValueError) as e:
+        logger.error(f"Timezone conversion error for {day}: {e}")
         return pd.DataFrame()
     rth_start = pd.to_datetime(day.strftime('%Y-%m-%d') + f' {start_str}:00').tz_localize(tz)
     rth_end = pd.to_datetime(day.strftime('%Y-%m-%d') + f' {end_str}:00').tz_localize(tz)
@@ -186,12 +180,12 @@ def validate_data(df, day, symbol_cfg=None):
         missing_rows = expected_rows - actual_rows
         if 0 < missing_rows <= 6:
             rth_data = rth_data.resample('5min').mean().interpolate()
-            logging.info(f"Interpolated {missing_rows} missing rows for {day}")
+            logger.info(f"Interpolated {missing_rows} missing rows for {day}")
         elif missing_rows < 0:
-            logging.warning(f"Excess rows ({actual_rows}) for {day}. Trimming to {expected_rows}.")
+            logger.warning(f"Excess rows ({actual_rows}) for {day}. Trimming to {expected_rows}.")
             rth_data = rth_data.iloc[:expected_rows]
         else:
-            logging.warning(f"Excessive missing rows ({missing_rows}) for {day}. Data retained but flagged.")
+            logger.warning(f"Excessive missing rows ({missing_rows}) for {day}. Data retained but flagged.")
     return rth_data
 
 def acquire_missing_data(max_retries=5, retry_delay=10, fallback_source=None):
@@ -201,14 +195,14 @@ def acquire_missing_data(max_retries=5, retry_delay=10, fallback_source=None):
     for symbol, csv_path in DATA_SOURCE_DROPDOWN.items():
         last_date = get_last_date_in_csv(csv_path)
         if last_date is None:
-            logging.info(f"No valid data in {csv_path}. Initializing last_date to 30 days before current_date.")
+            logger.info(f"No valid data in {csv_path}. Initializing last_date to 30 days before current_date.")
             last_date = (current_date - pd.Timedelta(days=20)).date()
             # continue
 
         # Find gap days from the day after the last date to target_date
         start_date = last_date + timedelta(days=1)
         if start_date > target_date:
-            logging.info(f"Data for {symbol} up to {target_date} exists in {csv_path}. Skipping.")
+            logger.info(f"Data for {symbol} up to {target_date} exists in {csv_path}. Skipping.")
             continue
 
         gap_dates = pd.date_range(start=start_date, end=target_date, freq='D')
@@ -218,7 +212,7 @@ def acquire_missing_data(max_retries=5, retry_delay=10, fallback_source=None):
 
         for day in valid_days:
             if is_date_in_csv(csv_path, day):
-                logging.info(f"Data for {day} already exists in {csv_path}. Skipping.")
+                logger.info(f"Data for {day} already exists in {csv_path}. Skipping.")
                 continue
 
             ticker = get_active_contract(symbol, day, SYMBOL_CATALOG.get(symbol))
@@ -239,13 +233,13 @@ def acquire_missing_data(max_retries=5, retry_delay=10, fallback_source=None):
                     )
                     if df.empty:
                         if attempt < max_retries - 1:
-                            logging.warning(f"Empty DataFrame for {ticker} on {day}. Retrying ({attempt + 1}/{max_retries})...")
+                            logger.warning(f"Empty DataFrame for {ticker} on {day}. Retrying ({attempt + 1}/{max_retries})...")
                             time.sleep(retry_delay)
                             continue
                         else:
-                            logging.error(f"Failed to fetch {ticker} on {day} after {max_retries} retries. Possible holiday or unavailability.")
+                            logger.error(f"Failed to fetch {ticker} on {day} after {max_retries} retries. Possible holiday or unavailability.")
                             if is_holiday(day):
-                                logging.info(f"Confirmed {day} as holiday for {ticker}.")
+                                logger.info(f"Confirmed {day} as holiday for {ticker}.")
                             break
                     else:
                         validated_df = validate_data(df, day, SYMBOL_CATALOG.get(symbol))
@@ -269,16 +263,16 @@ def acquire_missing_data(max_retries=5, retry_delay=10, fallback_source=None):
                                 # Append data without extra newline
                                 with open(csv_path, 'a', newline='') as f:
                                     validated_df.to_csv(f, header=False, index_label='Datetime')
-                            logging.info(f"Data for {ticker} on {day} validated and saved to {csv_path}")
+                            logger.info(f"Data for {ticker} on {day} validated and saved to {csv_path}")
                         break
-                except Exception as e:
+                except (RuntimeError, ValueError, OSError, KeyError) as e:
                     if attempt < max_retries - 1:
-                        logging.warning(f"Error fetching {ticker} on {day}: {e}. Retrying ({attempt + 1}/{max_retries})...")
+                        logger.warning(f"Error fetching {ticker} on {day}: {e}. Retrying ({attempt + 1}/{max_retries})...")
                         time.sleep(retry_delay)
                     else:
-                        logging.error(f"Failed after {max_retries} retries for {ticker} on {day}: {e}")
+                        logger.error(f"Failed after {max_retries} retries for {ticker} on {day}: {e}")
                         if fallback_source:
-                            logging.info(f"Attempting fallback source for {ticker} on {day}")
+                            logger.info(f"Attempting fallback source for {ticker} on {day}")
                             # Implement fallback logic here
 
 if __name__ == "__main__":

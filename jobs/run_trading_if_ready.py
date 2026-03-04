@@ -1,11 +1,19 @@
 from datetime import datetime, timedelta
 from pathlib import Path
 import os, sys
+import logging
 
+from dashboard.config.env import LOGGING_PATH
 from dashboard.services.utils.data_acquisition import acquire_missing_data
 
 STAMP_PATH = Path(os.environ.get("TRADING_STAMP_PATH", "/app/log/.trading_last_run"))
 HOURS_DELAY = int(os.environ.get("HOURS_DELAY", "12"))
+
+logging.basicConfig(
+    filename=LOGGING_PATH,
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
 
 def now(): return datetime.now()
 

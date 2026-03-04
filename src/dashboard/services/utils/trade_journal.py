@@ -7,7 +7,8 @@ import pandas as pd
 from dashboard.config.settings import TRADE_JOURNAL_CSV, TRADE_JOURNAL_METADATA_CSV
 
 KEY_COLUMNS = ["TradeDay", "ContractName", "IntradayIndex"]
-JOURNAL_COLUMNS = KEY_COLUMNS + ["Phase", "Context", "Setup", "SignalBar", "Comments"]
+TRADE_ID_COLUMN = "trade_id"
+JOURNAL_COLUMNS = [TRADE_ID_COLUMN] + KEY_COLUMNS + ["Phase", "Context", "Setup", "SignalBar", "Comments"]
 JOURNAL_FIELD_COLUMNS = ["Phase", "Context", "Setup", "SignalBar", "Comments"]
 
 
@@ -24,6 +25,9 @@ def _empty_journal_df() -> pd.DataFrame:
 
 def _normalize_key_columns(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
+    if TRADE_ID_COLUMN not in out.columns:
+        out[TRADE_ID_COLUMN] = ""
+    out[TRADE_ID_COLUMN] = out[TRADE_ID_COLUMN].fillna("").astype(str).str.strip()
     for col in KEY_COLUMNS:
         if col not in out.columns:
             out[col] = ""
@@ -33,11 +37,28 @@ def _normalize_key_columns(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def effective_key(df: pd.DataFrame) -> pd.Series:
+    out = _normalize_key_columns(df)
+    legacy = (
+        out["TradeDay"].astype(str).str.strip()
+        + "|"
+        + out["ContractName"].astype(str).str.strip()
+        + "|"
+        + out["IntradayIndex"].astype(str).str.strip()
+    )
+    tid = out[TRADE_ID_COLUMN].astype(str).str.strip()
+    return tid.where(tid != "", legacy)
+
+
+# Backward-compatible alias for internal callers.
+_effective_key = effective_key
+
+
 def build_journal_scaffold(performance_df: pd.DataFrame) -> pd.DataFrame:
     if performance_df.empty:
         return _empty_journal_df()
     src = _normalize_key_columns(performance_df)
-    scaffold = src[KEY_COLUMNS].drop_duplicates(keep="last").copy()
+    scaffold = src[[TRADE_ID_COLUMN] + KEY_COLUMNS].drop_duplicates(keep="last").copy()
     scaffold["Phase"] = ""
     scaffold["Context"] = ""
     scaffold["Setup"] = ""
@@ -78,20 +99,36 @@ def sync_trade_journal(performance_df: pd.DataFrame, path: Optional[str] = None)
     elif scaffold.empty:
         final_df = existing.copy()
     else:
-        merged = scaffold.merge(existing, on=KEY_COLUMNS, how="left", suffixes=("", "__existing"))
+        scaffold = scaffold.copy()
+        existing = existing.copy()
+        scaffold["__effective_key"] = effective_key(scaffold)
+        existing["__effective_key"] = effective_key(existing)
+        merged = scaffold.merge(existing, on="__effective_key", how="left", suffixes=("", "__existing"))
+        # Keep current scaffold identity, fallback to existing identity when missing.
+        for col in [TRADE_ID_COLUMN] + KEY_COLUMNS:
+            existing_col = f"{col}__existing"
+            if existing_col in merged.columns:
+                merged[col] = merged[col].where(merged[col].astype(str).str.strip() != "", merged[existing_col])
+                merged.drop(columns=[existing_col], inplace=True)
         for col in JOURNAL_FIELD_COLUMNS:
             merged[col] = merged[f"{col}__existing"].fillna(merged[col]).astype(str).str.strip()
             merged.drop(columns=[f"{col}__existing"], inplace=True)
-        final_df = merged[JOURNAL_COLUMNS]
+        final_df = merged[JOURNAL_COLUMNS + ["__effective_key"]]
 
         # Include legacy journal rows not in current scaffold (do not lose user notes).
-        carry = existing.merge(scaffold[KEY_COLUMNS], on=KEY_COLUMNS, how="left", indicator=True)
+        carry = existing.merge(scaffold[["__effective_key"]], on="__effective_key", how="left", indicator=True)
         carry = carry[carry["_merge"] == "left_only"].drop(columns=["_merge"])
         if not carry.empty:
-            final_df = pd.concat([final_df, carry[JOURNAL_COLUMNS]], ignore_index=True)
+            final_df = pd.concat([final_df, carry[JOURNAL_COLUMNS + ["__effective_key"]]], ignore_index=True)
 
     final_df = _normalize_key_columns(final_df)
-    final_df = final_df.drop_duplicates(subset=KEY_COLUMNS, keep="last").sort_values(KEY_COLUMNS).reset_index(drop=True)
+    final_df["__effective_key"] = effective_key(final_df)
+    final_df = (
+        final_df.drop_duplicates(subset=["__effective_key"], keep="last")
+        .drop(columns=["__effective_key"])
+        .sort_values(KEY_COLUMNS)
+        .reset_index(drop=True)
+    )
     final_df.to_csv(journal_path, index=False)
     return final_df
 
@@ -129,9 +166,24 @@ def merge_trade_journal(df: pd.DataFrame, journal_df: Optional[pd.DataFrame] = N
         if col not in journal.columns:
             journal[col] = ""
         journal[col] = journal[col].fillna("").astype(str).str.strip()
-    journal = journal[KEY_COLUMNS + JOURNAL_FIELD_COLUMNS].drop_duplicates(subset=KEY_COLUMNS, keep="last")
+    base["__effective_key"] = effective_key(base)
+    journal["__effective_key"] = effective_key(journal)
+    journal = journal[[TRADE_ID_COLUMN] + KEY_COLUMNS + JOURNAL_FIELD_COLUMNS + ["__effective_key"]].drop_duplicates(
+        subset=["__effective_key"], keep="last"
+    )
 
-    merged = base.merge(journal, on=KEY_COLUMNS, how="left", suffixes=("", "__journal"))
+    merged = base.merge(journal, on="__effective_key", how="left", suffixes=("", "__journal"))
+    # Keep base identity fields and fill missing trade_id from journal when available.
+    if TRADE_ID_COLUMN in out.columns:
+        journal_tid = merged[f"{TRADE_ID_COLUMN}__journal"] if f"{TRADE_ID_COLUMN}__journal" in merged.columns else pd.Series("", index=merged.index)
+        out[TRADE_ID_COLUMN] = (
+            out[TRADE_ID_COLUMN].fillna("").astype(str).str.strip().where(
+                out[TRADE_ID_COLUMN].fillna("").astype(str).str.strip() != "",
+                journal_tid.fillna("").astype(str).str.strip(),
+            )
+        )
+    elif f"{TRADE_ID_COLUMN}__journal" in merged.columns:
+        out[TRADE_ID_COLUMN] = merged[f"{TRADE_ID_COLUMN}__journal"].fillna("").astype(str).str.strip()
     for col in JOURNAL_FIELD_COLUMNS:
         # If the base dataframe already had this column, pandas keeps it as `col`
         # and writes journal values into `col__journal`.
@@ -188,7 +240,7 @@ def validate_trade_journal(
     preferred_rules = metadata[metadata["Validity"] == "preferred"] if not metadata.empty else pd.DataFrame()
 
     for _, row in journal.iterrows():
-        key = {k: row[k] for k in KEY_COLUMNS}
+        key = {TRADE_ID_COLUMN: row.get(TRADE_ID_COLUMN, ""), **{k: row[k] for k in KEY_COLUMNS}}
         row_errors = []
         for field in ["Phase", "Context", "Setup", "SignalBar"]:
             val = str(row.get(field, "")).strip()
@@ -212,8 +264,9 @@ def validate_trade_journal(
             if not has_preferred:
                 warnings.append({**key, "Issue": "no_preferred_combination_match"})
 
-    violations_df = pd.DataFrame(violations, columns=KEY_COLUMNS + ["Issue"])
-    warnings_df = pd.DataFrame(warnings, columns=KEY_COLUMNS + ["Issue"])
+    key_cols = [TRADE_ID_COLUMN] + KEY_COLUMNS
+    violations_df = pd.DataFrame(violations, columns=key_cols + ["Issue"])
+    warnings_df = pd.DataFrame(warnings, columns=key_cols + ["Issue"])
     summary = {
         "RowsChecked": int(len(journal)),
         "Violations": int(len(violations_df)),

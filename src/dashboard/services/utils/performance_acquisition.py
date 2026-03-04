@@ -11,17 +11,54 @@ import pytz
 import yfinance as yf
 
 from dashboard.config.settings import PERFORMANCE_DIR, TIMEZONE, PERFORMANCE_CSV
-from dashboard.config.env import LOGGING_PATH, BASE_DIR
+from dashboard.config.env import TEMP_PERF_DIR
 from dashboard.services.portfolio import append_daily_equity
 from dashboard.services.utils.trade_enrichment import ensure_trade_id, merge_trade_labels
 from dashboard.services.utils.trade_journal import sync_trade_journal
 
-# Configure logging
-logging.basicConfig(
-    filename=LOGGING_PATH,
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logger = logging.getLogger(__name__)
+
+TRADE_SIGNATURE_COLUMNS = [
+    "ContractName",
+    "EnteredAt",
+    "ExitedAt",
+    "EntryPrice",
+    "ExitPrice",
+    "Size",
+    "Type",
+]
+
+
+def _sort_combined(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    sort_cols = []
+    if "EnteredAt" in out.columns:
+        out["EnteredAt"] = pd.to_datetime(out["EnteredAt"], utc=True, errors="coerce")
+        sort_cols.append("EnteredAt")
+    if "ExitedAt" in out.columns:
+        out["ExitedAt"] = pd.to_datetime(out["ExitedAt"], utc=True, errors="coerce")
+        sort_cols.append("ExitedAt")
+    if "ContractName" in out.columns:
+        sort_cols.append("ContractName")
+    if "IntradayIndex" in out.columns:
+        sort_cols.append("IntradayIndex")
+    if sort_cols:
+        out = out.sort_values(sort_cols, kind="stable").reset_index(drop=True)
+    return out
+
+
+def _dedupe_by_trade_signature(df: pd.DataFrame, *, label: str) -> pd.DataFrame:
+    out = df.copy()
+    missing = [c for c in TRADE_SIGNATURE_COLUMNS if c not in out.columns]
+    if missing:
+        logger.warning("Skip dedupe for %s: missing signature columns %s", label, missing)
+        return out
+    before = len(out)
+    out = out.drop_duplicates(subset=TRADE_SIGNATURE_COLUMNS, keep="last").reset_index(drop=True)
+    removed = before - len(out)
+    if removed > 0:
+        logger.info("Deduped %s by trade signature: removed %d duplicate row(s)", label, removed)
+    return out
 
 def process_csv(file_path):
     # Read the CSV data
@@ -201,6 +238,7 @@ def calculate_streaks(df):
 def generate_aggregated_data(valid_dataframes):
     past_performance_df = pd.read_csv(PERFORMANCE_CSV) if os.path.exists(PERFORMANCE_CSV) else pd.DataFrame()
     if not past_performance_df.empty:
+        past_performance_df = _dedupe_by_trade_signature(past_performance_df, label="past_performance")
         past_performance_df = ensure_trade_id(past_performance_df)
         past_performance_df = merge_trade_labels(past_performance_df)
         past_performance_df['EnteredAt'] = pd.to_datetime(past_performance_df['EnteredAt'], utc=True).dt.tz_convert(TIMEZONE)
@@ -211,7 +249,7 @@ def generate_aggregated_data(valid_dataframes):
         past_performance_df['HourOfDay'] = past_performance_df['EnteredAt'].dt.hour
 
     combined_df = pd.concat(valid_dataframes, ignore_index=True)
-    logging.info("All valid files have been successfully concatenated.")
+    logger.info("All valid files have been successfully concatenated.")
     combined_df['EnteredAt'] = pd.to_datetime(combined_df['EnteredAt'], utc=True).dt.tz_convert(TIMEZONE)
     combined_df['ExitedAt'] = pd.to_datetime(combined_df['ExitedAt'], utc=True).dt.tz_convert(TIMEZONE)
     combined_df['TradeDay'] = pd.to_datetime(combined_df['EnteredAt'], utc=True).dt.tz_convert(TIMEZONE).dt.strftime('%Y-%m-%d')
@@ -222,6 +260,7 @@ def generate_aggregated_data(valid_dataframes):
     combined_df['YearMonth'] = combined_df['EnteredAt'].dt.tz_localize(None).dt.to_period('M')
     combined_df['HourOfDay'] = combined_df['EnteredAt'].dt.hour
     combined_df = combined_df.rename(columns={'Id': 'IntradayIndex'})
+    combined_df = _dedupe_by_trade_signature(combined_df, label="incoming_combined")
     combined_df = ensure_trade_id(combined_df)
 
     combined_df = combined_df.rename(columns={'PnL': 'PnL(Net)'})
@@ -234,21 +273,36 @@ def generate_aggregated_data(valid_dataframes):
     available_columns = [col for col in desired_columns if col in combined_df.columns]
     combined_df = combined_df[available_columns]
 
-    # Keep all columns except Comment for comparison
-    comparison_columns = [col for col in combined_df.columns if col not in ['Comment', 'Fees', 'PnL(Net)', 'TradeDuration', 'Streak'] and col in past_performance_df.columns]
+    updated_count = 0
+    # Upsert by stable trade_id so broker-corrected financial fields update existing rows.
+    if not past_performance_df.empty and "trade_id" in past_performance_df.columns and "trade_id" in combined_df.columns:
+        incoming_latest = combined_df.drop_duplicates(subset=["trade_id"], keep="last").copy()
+        past_ids = set(past_performance_df["trade_id"].astype(str))
+        incoming_ids = set(incoming_latest["trade_id"].astype(str))
+        shared_ids = incoming_ids.intersection(past_ids)
+        new_ids = incoming_ids.difference(past_ids)
+        update_columns = [c for c in incoming_latest.columns if c != "trade_id" and c in past_performance_df.columns]
 
-    # Drop duplicates: only keep rows in combined_df that are not already in past_performance_df
-    if not past_performance_df.empty:
-        merged = combined_df.merge(
-            past_performance_df[comparison_columns],
-            on=comparison_columns,
-            how='left',
-            indicator=True
-        )
-        new_rows_df = merged[merged['_merge'] == 'left_only'].drop(columns=['_merge'])
-        # Restore 'Comment' column, which may be dropped by merge
-        if 'Comment' not in new_rows_df.columns:
-            new_rows_df['Comment'] = ''
+        if shared_ids and update_columns:
+            before = past_performance_df[past_performance_df["trade_id"].astype(str).isin(shared_ids)].copy()
+            incoming_map_df = incoming_latest[incoming_latest["trade_id"].astype(str).isin(shared_ids)][
+                ["trade_id"] + update_columns
+            ].copy()
+            incoming_map_df["trade_id"] = incoming_map_df["trade_id"].astype(str)
+            for col in update_columns:
+                mapping = incoming_map_df.set_index("trade_id")[col]
+                past_performance_df[col] = (
+                    past_performance_df["trade_id"].astype(str).map(mapping).combine_first(past_performance_df[col])
+                )
+            after = past_performance_df[past_performance_df["trade_id"].astype(str).isin(shared_ids)][
+                ["trade_id"] + update_columns
+            ].copy()
+            before_norm = before[["trade_id"] + update_columns].fillna("__NA__").astype(str).sort_values("trade_id").reset_index(drop=True)
+            after_norm = after.fillna("__NA__").astype(str).sort_values("trade_id").reset_index(drop=True)
+            updated_count = int((before_norm[update_columns] != after_norm[update_columns]).any(axis=1).sum())
+
+        new_rows_df = incoming_latest[incoming_latest["trade_id"].astype(str).isin(new_ids)].copy()
+        logger.info("Performance upsert completed: %d updated, %d inserted", updated_count, len(new_rows_df))
     else:
         new_rows_df = combined_df.copy()
 
@@ -262,77 +316,81 @@ def generate_aggregated_data(valid_dataframes):
                 trade_date = pd.to_datetime(row['TradeDay']).date()
                 pnl = float(row['PnL(Net)'])
                 append_daily_equity(trade_date, pnl)
-            logging.info(f"Appended portfolio equity for {len(daily_pnl)} days (new rows only)")
-    except Exception as e:
-        logging.error(f"Failed to append portfolio equity: {e}")
+            logger.info(f"Appended portfolio equity for {len(daily_pnl)} days (new rows only)")
+    except (TypeError, ValueError, OSError, KeyError) as e:
+        logger.error(f"Failed to append portfolio equity: {e}")
 
     # Concatenate old and new
     final_df = pd.concat([past_performance_df, new_rows_df], ignore_index=True)
+    final_df = _dedupe_by_trade_signature(final_df, label="final_combined")
     final_df = ensure_trade_id(final_df)
     final_df = merge_trade_labels(final_df)
+    final_df = _sort_combined(final_df)
     try:
         sync_trade_journal(final_df)
-        logging.info("Trade journal synced with latest combined performance data")
-    except Exception as e:
-        logging.error(f"Failed to sync trade journal: {e}")
+        logger.info("Trade journal synced with latest combined performance data")
+    except (TypeError, ValueError, OSError, KeyError) as e:
+        logger.error(f"Failed to sync trade journal: {e}")
     if not new_rows_df.empty:
         print(f"New trades added: {new_rows_df}")
     else:
-        logging.info("No new trades to add.")
+        logger.info("No new trades to add.")
     # Save and return
     final_df.to_csv(PERFORMANCE_CSV, index=False)
-    logging.info(f"Processed data saved to {PERFORMANCE_CSV}")
+    logger.info(f"Processed data saved to {PERFORMANCE_CSV}")
     return final_df
 
 def round_trip_converter():
-    # Define the performance directory
-    root_dir = os.path.join(BASE_DIR, 'data', 'temp_performance')
-    target_dir = os.path.join(BASE_DIR, 'data', 'performance')
-    # Find all CSV files starting with 'Raw_' in the root directory
-    csv_files = glob.glob(os.path.join(root_dir, '*.csv'))
+    root_dir = TEMP_PERF_DIR
+    target_dir = PERFORMANCE_DIR
+    Path(target_dir).mkdir(parents=True, exist_ok=True)
+    csv_files = glob.glob(str(Path(root_dir) / "*.csv"))
+    if not csv_files:
+        logger.info("No temp files to convert in %s", root_dir)
+        return
 
     # Process each CSV file
     for file_path in csv_files:
-        print(f"Processing {file_path}...")
-        
-        # Generate round trips
-        round_trips_df = process_csv(file_path)
-        round_trips_df['TradeDay'] = pd.to_datetime(round_trips_df['TradeDay'])
-        startdate=round_trips_df['TradeDay'].min().date()
-        enddate=round_trips_df['TradeDay'].max().date()
-        # Extract date range from the file name
-        # Generate output filename in the same directory, removing 'Raw_' prefix
-        output_filename = os.path.join(
-            target_dir,
-            f'Performance_{startdate}_to_{enddate}.csv'
-            )
-        
-        # Save the output CSV
-        round_trips_df.to_csv(output_filename, index=False)
-        
-        print(f"Saved output to {output_filename}\n")
-        os.remove(file_path)  # Remove the original file after processing
+        logger.info("Processing temp performance file: %s", file_path)
+        try:
+            round_trips_df = process_csv(file_path)
+            if round_trips_df.empty:
+                logger.warning("No round-trip rows generated from %s; leaving file in place", file_path)
+                continue
+            round_trips_df["TradeDay"] = pd.to_datetime(round_trips_df["TradeDay"], errors="raise")
+            startdate = round_trips_df["TradeDay"].min().date()
+            enddate = round_trips_df["TradeDay"].max().date()
+            output_filename = os.path.join(target_dir, f"Performance_{startdate}_to_{enddate}.csv")
+            round_trips_df.to_csv(output_filename, index=False)
+            logger.info("Saved converted performance file: %s", output_filename)
+            os.remove(file_path)
+        except (pd.errors.ParserError, ValueError, OSError, KeyError) as exc:
+            logger.error("Failed to convert temp performance file %s: %s", file_path, exc)
 
 
 def acquire_missing_performance():
     round_trip_converter()
     """Acquire missing performace data"""
-    all_dataframes = []
-    for filename in os.listdir(PERFORMANCE_DIR):
-        if filename.startswith('Performance_') and filename.endswith('.csv'):
-            file_path = os.path.join(PERFORMANCE_DIR, filename)
-            try:
-                df = pd.read_csv(file_path)
-                if not df.empty:
-                    all_dataframes.append(df)
-            except Exception as e:
-                logging.error(f"Failed to read {filename}: {e}")
-    # Concatenate all dataframes
-    valid_dataframes = [df for df in all_dataframes if not df.empty]
-    if valid_dataframes:
-        generate_aggregated_data(valid_dataframes)
-    else:
-        logging.warning("No valid data was found to concatenate.")
+    try:
+        all_dataframes = []
+        for filename in os.listdir(PERFORMANCE_DIR):
+            if filename.startswith('Performance_') and filename.endswith('.csv'):
+                file_path = os.path.join(PERFORMANCE_DIR, filename)
+                try:
+                    df = pd.read_csv(file_path)
+                    if not df.empty:
+                        all_dataframes.append(df)
+                except (pd.errors.ParserError, OSError, ValueError) as e:
+                    logger.error(f"Failed to read {filename}: {e}")
+        # Concatenate all dataframes
+        valid_dataframes = [df for df in all_dataframes if not df.empty]
+        if valid_dataframes:
+            generate_aggregated_data(valid_dataframes)
+        else:
+            logger.warning("No valid data was found to concatenate.")
+    except Exception:
+        logger.exception("Performance merge pipeline failed unexpectedly")
+        raise
 
 
 if __name__ == "__main__":

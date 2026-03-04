@@ -24,36 +24,40 @@ from dashboard.config.analysis import (
     INITIAL_NET_LIQ,
     PORTFOLIO_START_DATE,
     RULE_COMPLIANCE_DEFAULTS,
+    ANALYSIS_TIMEZONE,
 )
 from dashboard.services.data.load_data import load_performance, load_future
 from dashboard.services.portfolio import latest_equity, equity_series, append_manual
 from dashboard.services.analysis.portfolio_metrics import portfolio_metrics
 from dashboard.services.utils.trade_enrichment import ensure_trade_id, merge_trade_labels
 from dashboard.services.utils.trade_journal import load_trade_journal, merge_trade_journal, validate_trade_journal
+from dashboard.services.utils import trade_journal as tj
+from dashboard.services.utils.datetime_utils import (
+    parse_optional_timestamp_utc,
+    parse_optional_date_in_timezone,
+    ensure_valid_range,
+    normalize_series_utc,
+    normalize_series_to_timezone,
+    iso_utc,
+)
 import numpy as np
 
 
-def _iso(dt: pd.Timestamp) -> str:
-    if pd.isna(dt):
-        return ""
-    if dt.tzinfo:
-        return dt.isoformat()
-    return dt.tz_localize("UTC").isoformat()
-
-
-def _parse_date(val: Optional[str]) -> Optional[pd.Timestamp]:
-    if not val:
-        return None
-    try:
-        ts = pd.to_datetime(val)
-        # Ensure tz-aware (default to UTC for naive inputs)
-        if ts.tzinfo is None or ts.tzinfo.utcoffset(ts) is None:
-            ts = ts.tz_localize("UTC")
-        else:
-            ts = ts.tz_convert("UTC")
-        return ts
-    except Exception:
-        return None
+VALID_GRANULARITIES = {"1D", "1W-MON", "1M"}
+VALID_METRICS = {
+    "behavioral_heatmap",
+    "pnl_growth",
+    "drawdown",
+    "pnl_distribution",
+    "behavioral_patterns",
+    "rolling_win_rate",
+    "sharpe_ratio",
+    "trade_efficiency",
+    "hourly_performance",
+    "performance_envelope",
+    "overtrading_detection",
+    "kelly_criterion",
+}
 
 
 def _cors_headers(response, allowed_origin: str):
@@ -63,6 +67,69 @@ def _cors_headers(response, allowed_origin: str):
     response.headers["Access-Control-Allow-Credentials"] = "true"
     response.headers["Vary"] = "Origin"
     return response
+
+
+def _iso_in_timezone(value: object, tz_name: str) -> str:
+    ts = pd.to_datetime(value, utc=True, errors="coerce")
+    if pd.isna(ts):
+        return ""
+    return ts.tz_convert(tz_name).isoformat()
+
+
+def _require_json_object() -> Dict[str, Any]:
+    payload = request.get_json(silent=True)
+    if payload is None:
+        return {}
+    if not isinstance(payload, dict):
+        raise ValueError("request body must be a JSON object")
+    return payload
+
+
+def _validate_symbol(symbol: Optional[str], *, required: bool = False) -> Optional[str]:
+    if symbol is None or str(symbol).strip() == "":
+        if required:
+            raise ValueError("symbol is required")
+        return None
+    symbol = str(symbol).strip()
+    if symbol not in SYMBOL_CATALOG:
+        raise ValueError(f"unknown symbol {symbol}")
+    return symbol
+
+
+def _parse_range(start_raw: Optional[str], end_raw: Optional[str], *, normalize_date: bool = False) -> tuple[Optional[pd.Timestamp], Optional[pd.Timestamp]]:
+    if normalize_date:
+        start = parse_optional_date_in_timezone(start_raw, "start", ANALYSIS_TIMEZONE)
+        end = parse_optional_date_in_timezone(end_raw, "end", ANALYSIS_TIMEZONE)
+    else:
+        start = parse_optional_timestamp_utc(start_raw, "start")
+        end = parse_optional_timestamp_utc(end_raw, "end")
+    ensure_valid_range(start, end)
+    return start, end
+
+
+def _validate_metric_payload(metric: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    if metric not in VALID_METRICS:
+        raise ValueError(f"unknown metric {metric}")
+    if "granularity" in payload and payload.get("granularity") is not None:
+        granularity = str(payload["granularity"])
+        if granularity not in VALID_GRANULARITIES:
+            raise ValueError(f"granularity must be one of {sorted(VALID_GRANULARITIES)}")
+    if "window" in payload and payload.get("window") is not None:
+        try:
+            payload["window"] = int(payload["window"])
+        except (TypeError, ValueError):
+            raise ValueError("window must be a positive integer")
+        if int(payload["window"]) < 1:
+            raise ValueError("window must be a positive integer")
+    params = payload.get("params")
+    if params is not None and not isinstance(params, dict):
+        raise ValueError("params must be an object")
+    payload["params"] = params or {}
+    payload["symbol"] = _validate_symbol(payload.get("symbol"), required=False)
+    start, end = _parse_range(payload.get("start_date"), payload.get("end_date"), normalize_date=True)
+    payload["start_date"] = start
+    payload["end_date"] = end
+    return payload
 
 
 def register_api(server):
@@ -115,16 +182,19 @@ def register_api(server):
             series = equity_series(limit=500)
             metrics = portfolio_metrics()
             return jsonify({"latest": latest, "series": series, "risk_free_rate": RISK_FREE_RATE, "metrics": metrics})
-        except Exception as exc:
+        except (ValueError, OSError) as exc:
             return jsonify({"error": f"failed to load portfolio: {exc}"}), 500
 
     @api.route("/portfolio/adjust", methods=["POST"])
     def portfolio_adjust():
-        payload = request.get_json() or {}
-        reason = payload.get("reason", "").lower()
+        try:
+            payload = _require_json_object()
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        reason = str(payload.get("reason", "")).lower().strip()
         try:
             amount = float(payload.get("amount", 0))
-        except Exception:
+        except (TypeError, ValueError):
             return jsonify({"error": "amount must be a number"}), 400
         if amount <= 0:
             return jsonify({"error": "amount must be positive"}), 400
@@ -134,7 +204,7 @@ def register_api(server):
         if date_str:
             try:
                 datetime.fromisoformat(date_str)
-            except Exception:
+            except ValueError:
                 return jsonify({"error": "date must be ISO format YYYY-MM-DD"}), 400
         if reason == "withdraw":
             amount = -abs(amount)
@@ -143,30 +213,27 @@ def register_api(server):
         try:
             entry = append_manual(reason=reason, amount=amount, date_override=date_str)
             return jsonify({"ok": True, "entry": entry})
-        except Exception as e:
-            return jsonify({"error": f"failed to append: {e}"}), 500
+        except (ValueError, OSError) as exc:
+            return jsonify({"error": f"failed to append: {exc}"}), 500
 
     @api.route("/candles", methods=["GET", "OPTIONS"])
     def candles():
         if request.method == "OPTIONS":
             return _cors_headers(jsonify({"ok": True}), allowed_origin)
 
-        symbol = request.args.get("symbol")
-        if not symbol:
-            return jsonify({"error": "symbol is required"}), 400
+        try:
+            symbol = _validate_symbol(request.args.get("symbol"), required=True)
+            assert symbol is not None
+            start, end = _parse_range(request.args.get("start"), request.args.get("end"), normalize_date=False)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
         csv_path = DATA_SOURCE_DROPDOWN.get(symbol)
-        if not csv_path:
-            return jsonify({"error": f"unknown symbol {symbol}"}), 404
         if not os.path.exists(csv_path):
             return jsonify({"error": f"data not found for {symbol}"}), 404
 
-        start = _parse_date(request.args.get("start"))
-        end = _parse_date(request.args.get("end"))
-
         try:
-            df = pd.read_csv(csv_path, parse_dates=["Datetime"])
-            # Normalize to UTC for consistent comparisons
-            df["Datetime"] = pd.to_datetime(df["Datetime"], utc=True, errors="coerce")
+            df = pd.read_csv(csv_path)
+            df["Datetime"] = normalize_series_utc(df["Datetime"], "Datetime")
             if start:
                 df = df[df["Datetime"] >= start]
             if end:
@@ -177,7 +244,7 @@ def register_api(server):
             for _, row in df.iterrows():
                 records.append(
                     {
-                        "time": _iso(row["Datetime"]),
+                        "time": iso_utc(row["Datetime"]),
                         "open": float(row["Open"]),
                         "high": float(row["High"]),
                         "low": float(row["Low"]),
@@ -186,7 +253,7 @@ def register_api(server):
                     }
                 )
             return jsonify(records)
-        except Exception as exc:  # pragma: no cover - minimal error handling
+        except (KeyError, ValueError, pd.errors.ParserError, OSError) as exc:
             return jsonify({"error": f"failed to read candles: {exc}"}), 500
 
     @api.route("/performance/combined", methods=["GET", "OPTIONS"])
@@ -195,27 +262,29 @@ def register_api(server):
             return _cors_headers(jsonify({"ok": True}), allowed_origin)
         if not os.path.exists(PERFORMANCE_CSV):
             return jsonify({"error": "performance data not found"}), 404
-        start = _parse_date(request.args.get("start"))
-        end = _parse_date(request.args.get("end"))
+        try:
+            start, end = _parse_range(request.args.get("start"), request.args.get("end"), normalize_date=True)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
         try:
             df = pd.read_csv(PERFORMANCE_CSV)
             df = merge_trade_journal(merge_trade_labels(ensure_trade_id(df)))
             if start or end:
                 if "TradeDay" in df.columns:
-                    df["TradeDay"] = pd.to_datetime(df["TradeDay"], utc=True, errors="coerce")
+                    df["TradeDay"] = normalize_series_to_timezone(df["TradeDay"], "TradeDay", ANALYSIS_TIMEZONE).dt.normalize()
                     if start:
                         df = df[df["TradeDay"] >= start]
                     if end:
                         df = df[df["TradeDay"] <= end]
                 elif "ExitedAt" in df.columns:
-                    df["ExitedAt"] = pd.to_datetime(df["ExitedAt"], utc=True, errors="coerce")
+                    df["ExitedAt"] = normalize_series_utc(df["ExitedAt"], "ExitedAt").dt.tz_convert(ANALYSIS_TIMEZONE).dt.normalize()
                     if start:
                         df = df[df["ExitedAt"] >= start]
                     if end:
                         df = df[df["ExitedAt"] <= end]
             records = df.to_dict(orient="records")
             return jsonify(records)
-        except Exception as exc:
+        except (KeyError, ValueError, pd.errors.ParserError, OSError) as exc:
             return jsonify({"error": f"failed to read performance: {exc}"}), 500
 
     def _load_performance_df(payload: Dict[str, Any]) -> pd.DataFrame:
@@ -224,17 +293,17 @@ def register_api(server):
         df = pd.read_csv(PERFORMANCE_CSV)
         df = merge_trade_journal(merge_trade_labels(ensure_trade_id(df)))
         symbol = payload.get("symbol")
-        start = _parse_date(payload.get("start_date"))
-        end = _parse_date(payload.get("end_date"))
+        start = payload.get("start_date")
+        end = payload.get("end_date")
         if start or end:
             if "TradeDay" in df.columns:
-                df["TradeDay"] = pd.to_datetime(df["TradeDay"], utc=True, errors="coerce")
+                df["TradeDay"] = normalize_series_to_timezone(df["TradeDay"], "TradeDay", ANALYSIS_TIMEZONE).dt.normalize()
                 if start:
                     df = df[df["TradeDay"] >= start]
                 if end:
                     df = df[df["TradeDay"] <= end]
             elif "ExitedAt" in df.columns:
-                df["ExitedAt"] = pd.to_datetime(df["ExitedAt"], utc=True, errors="coerce")
+                df["ExitedAt"] = normalize_series_utc(df["ExitedAt"], "ExitedAt").dt.tz_convert(ANALYSIS_TIMEZONE).dt.normalize()
                 if start:
                     df = df[df["ExitedAt"] >= start]
                 if end:
@@ -312,8 +381,8 @@ def register_api(server):
     def analysis(metric: str):
         if request.method == "OPTIONS":
             return _cors_headers(jsonify({"ok": True}), allowed_origin)
-        payload: Dict[str, Any] = request.get_json(silent=True) or {}
         try:
+            payload = _validate_metric_payload(metric, _require_json_object())
             df = _load_performance_df(payload)
             if df.empty:
                 return jsonify({"error": "performance dataset is empty", "code": "EMPTY_DATASET"}), 400
@@ -323,15 +392,23 @@ def register_api(server):
             return jsonify({"error": str(exc)}), 404
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
-        except Exception as exc:
+        except (KeyError, TypeError, pd.errors.ParserError, OSError) as exc:
             return jsonify({"error": f"analysis failed: {exc}"}), 500
 
     @api.route("/insights", methods=["POST", "OPTIONS"])
     def insights():
         if request.method == "OPTIONS":
             return _cors_headers(jsonify({"ok": True}), allowed_origin)
-        payload: Dict[str, Any] = request.get_json(silent=True) or {}
         try:
+            payload = _require_json_object()
+            payload["symbol"] = _validate_symbol(payload.get("symbol"), required=False)
+            params = payload.get("params")
+            if params is not None and not isinstance(params, dict):
+                raise ValueError("params must be an object")
+            payload["params"] = params or {}
+            start, end = _parse_range(payload.get("start_date"), payload.get("end_date"), normalize_date=True)
+            payload["start_date"] = start
+            payload["end_date"] = end
             df = _load_performance_df(payload)
             if df.empty:
                 return jsonify({"error": "performance dataset is empty", "code": "EMPTY_DATASET"}), 400
@@ -342,37 +419,45 @@ def register_api(server):
             return jsonify({"error": str(exc)}), 404
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
-        except Exception as exc:
+        except (KeyError, TypeError, pd.errors.ParserError, OSError) as exc:
             return jsonify({"error": f"insights failed: {exc}"}), 500
 
     @api.route("/journal/validate", methods=["GET", "OPTIONS"])
     def journal_validate():
         if request.method == "OPTIONS":
             return _cors_headers(jsonify({"ok": True}), allowed_origin)
-        payload: Dict[str, Any] = {
-            "symbol": request.args.get("symbol"),
-            "start_date": request.args.get("start"),
-            "end_date": request.args.get("end"),
-        }
         try:
+            start, end = _parse_range(request.args.get("start"), request.args.get("end"), normalize_date=True)
+            payload: Dict[str, Any] = {
+                "symbol": _validate_symbol(request.args.get("symbol"), required=False),
+                "start_date": start,
+                "end_date": end,
+            }
             perf_df = _load_performance_df(payload)
             journal_df = load_trade_journal()
 
             # Optional scope: if query filters are provided, validate only corresponding key rows.
             if not perf_df.empty and any(payload.values()):
                 scoped = perf_df.copy()
-                for col in ["TradeDay", "ContractName", "IntradayIndex"]:
+                for col in ["trade_id", "TradeDay", "ContractName", "IntradayIndex"]:
                     if col not in scoped.columns:
                         scoped[col] = ""
-                keys = scoped[["TradeDay", "ContractName", "IntradayIndex"]].copy()
+                keys = scoped[["trade_id", "TradeDay", "ContractName", "IntradayIndex"]].copy()
+                keys["trade_id"] = keys["trade_id"].fillna("").astype(str).str.strip()
                 keys["TradeDay"] = keys["TradeDay"].astype(str).str.strip()
                 keys["ContractName"] = keys["ContractName"].astype(str).str.strip()
                 keys["IntradayIndex"] = pd.to_numeric(keys["IntradayIndex"], errors="coerce").fillna(-1).astype(int).astype(str)
                 journal_df = journal_df.copy()
+                if "trade_id" not in journal_df.columns:
+                    journal_df["trade_id"] = ""
+                journal_df["trade_id"] = journal_df["trade_id"].fillna("").astype(str).str.strip()
                 journal_df["TradeDay"] = journal_df["TradeDay"].astype(str).str.strip()
                 journal_df["ContractName"] = journal_df["ContractName"].astype(str).str.strip()
                 journal_df["IntradayIndex"] = pd.to_numeric(journal_df["IntradayIndex"], errors="coerce").fillna(-1).astype(int).astype(str)
-                journal_df = journal_df.merge(keys.drop_duplicates(), on=["TradeDay", "ContractName", "IntradayIndex"], how="inner")
+                journal_df["__effective_key"] = tj.effective_key(journal_df)
+                keys["__effective_key"] = tj.effective_key(keys)
+                journal_df = journal_df.merge(keys[["__effective_key"]].drop_duplicates(), on="__effective_key", how="inner")
+                journal_df = journal_df.drop(columns=["__effective_key"])
 
             report = validate_trade_journal(journal_df)
             return (
@@ -387,7 +472,9 @@ def register_api(server):
             )
         except FileNotFoundError as exc:
             return jsonify({"error": str(exc)}), 404
-        except Exception as exc:
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except (KeyError, TypeError, pd.errors.ParserError, OSError) as exc:
             return jsonify({"error": f"journal validation failed: {exc}"}), 500
 
     @api.route("/trading/session", methods=["GET", "OPTIONS"])
@@ -395,14 +482,16 @@ def register_api(server):
         if request.method == "OPTIONS":
             return _cors_headers(jsonify({"ok": True}), allowed_origin)
 
-        symbol = request.args.get("symbol")
-        start_raw = request.args.get("start")
-        end_raw = request.args.get("end")
-        if not symbol:
-            return jsonify({"error": "symbol is required"}), 400
+        try:
+            symbol = _validate_symbol(request.args.get("symbol"), required=True)
+            assert symbol is not None
+            start_raw = request.args.get("start")
+            end_raw = request.args.get("end")
+            _parse_range(start_raw, end_raw, normalize_date=True)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+
         csv_path = DATA_SOURCE_DROPDOWN.get(symbol)
-        if not csv_path:
-            return jsonify({"error": f"unknown symbol {symbol}"}), 404
         if not os.path.exists(PERFORMANCE_CSV):
             return jsonify({"error": "performance data not found"}), 404
         try:
@@ -433,7 +522,7 @@ def register_api(server):
             for _, row in fut_df.iterrows():
                 future_records.append(
                     {
-                        "time": _iso(pd.to_datetime(row["Datetime"], utc=True)),
+                        "time": _iso_in_timezone(row["Datetime"], ANALYSIS_TIMEZONE),
                         "open": float(row["Open"]),
                         "high": float(row["High"]),
                         "low": float(row["Low"]),
@@ -442,9 +531,15 @@ def register_api(server):
                     }
                 )
 
-            perf_records = perf_df.replace({np.nan: None}).to_dict("records")
+            perf_payload = perf_df.copy()
+            for col in ["EnteredAt", "ExitedAt"]:
+                if col in perf_payload.columns:
+                    perf_payload[col] = perf_payload[col].apply(lambda v: _iso_in_timezone(v, ANALYSIS_TIMEZONE))
+            perf_records = perf_payload.replace({np.nan: None}).to_dict("records")
             return jsonify({"future": future_records, "performance": perf_records, "stats": stats_payload})
-        except Exception as exc:
+        except (FileNotFoundError, ValueError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        except (KeyError, TypeError, pd.errors.ParserError, OSError) as exc:
             return jsonify({"error": f"failed to load session: {exc}"}), 500
 
     # Register blueprint after all routes are declared

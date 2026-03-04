@@ -39,6 +39,57 @@ def _write_rows(rows: List[Dict[str, Any]]) -> None:
             writer.writerow(row)
 
 
+def _recalculate_equity(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    normalized: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        raw_date = str(row.get("date", "")).strip()
+        if not raw_date:
+            continue
+        try:
+            parsed_date = datetime.fromisoformat(raw_date).date().isoformat()
+        except ValueError:
+            continue
+        try:
+            pnl = float(row.get("pnl", 0) or 0)
+        except (TypeError, ValueError):
+            pnl = 0.0
+        reason = str(row.get("reason", "")).strip() or "trading"
+        # Keep the last event for a date.
+        normalized[parsed_date] = {"date": parsed_date, "pnl": pnl, "reason": reason}
+
+    ordered = sorted(normalized.values(), key=lambda r: r["date"])
+    running = float(INITIAL_NET_LIQ)
+    out: List[Dict[str, Any]] = []
+    for row in ordered:
+        running += float(row["pnl"])
+        out.append(
+            {
+                "date": row["date"],
+                "equity": f"{running:.2f}",
+                "pnl": f"{float(row['pnl']):.2f}",
+                "reason": row["reason"],
+            }
+        )
+    return out
+
+
+def _upsert_event(event_date: date, pnl: float, reason: str) -> List[Dict[str, Any]]:
+    rows = _read_rows()
+    target = event_date.isoformat()
+    new_row = {"date": target, "equity": "0.00", "pnl": f"{float(pnl):.2f}", "reason": reason}
+    replaced = False
+    for i, row in enumerate(rows):
+        if str(row.get("date", "")).strip() == target:
+            rows[i] = new_row
+            replaced = True
+            break
+    if not replaced:
+        rows.append(new_row)
+    recalculated = _recalculate_equity(rows)
+    _write_rows(recalculated)
+    return recalculated
+
+
 def latest_equity() -> Dict[str, Any]:
     rows = _read_rows()
     return rows[-1] if rows else {"date": "1970-01-01", "equity": f"{INITIAL_NET_LIQ:.2f}", "pnl": "0.00", "reason": "init"}
@@ -55,24 +106,7 @@ def append_daily_equity(trade_date: date, pnl: float) -> None:
     """
     Append a daily equity point using only the pnl for that day and previous equity.
     """
-    rows = _read_rows()
-    # Ensure rows are sorted by date
-    rows = sorted(rows, key=lambda r: r.get("date", ""))
-    last_equity = float(rows[-1].get("equity", INITIAL_NET_LIQ)) if rows else INITIAL_NET_LIQ
-    new_equity = last_equity + pnl
-    updated_row = {"date": trade_date.isoformat(), "equity": f"{new_equity:.2f}", "pnl": f"{pnl:.2f}", "reason": "trading"}
-
-    # Replace existing entry for the same date, otherwise append
-    replaced = False
-    for i, r in enumerate(rows):
-        if r.get("date") == trade_date.isoformat():
-            rows[i] = updated_row
-            replaced = True
-            break
-    if not replaced:
-        rows.append(updated_row)
-    rows = sorted(rows, key=lambda r: r.get("date", ""))
-    _write_rows(rows)
+    _upsert_event(event_date=trade_date, pnl=pnl, reason="trading")
 
 
 def append_manual(reason: str, amount: float, ts: datetime | None = None, date_override: str | None = None) -> Dict[str, Any]:
@@ -80,32 +114,15 @@ def append_manual(reason: str, amount: float, ts: datetime | None = None, date_o
     Append a manual adjustment (deposit/withdraw). amount can be positive (deposit) or negative (withdraw).
     date_override: optional ISO date string (YYYY-MM-DD) to use instead of now().
     """
-    rows = _read_rows()
-    rows = sorted(rows, key=lambda r: r.get("date", ""))
-    last = rows[-1] if rows else {"equity": f"{INITIAL_NET_LIQ:.2f}"}
-    prev_equity = float(last.get("equity", INITIAL_NET_LIQ))
     ts = ts or datetime.now(tz=timezone.utc)
     if date_override:
         try:
             ts = datetime.fromisoformat(date_override)
         except ValueError:
             log.warning("Invalid date_override '%s'; using current timestamp instead", date_override)
-    new_equity = prev_equity + amount
-    new_row = {
-        "date": ts.date().isoformat(),
-        "equity": f"{new_equity:.2f}",
-        "pnl": f"{amount:.2f}",
-        "reason": reason,
-    }
-    # replace same-date entry if exists
-    replaced = False
-    for i, r in enumerate(rows):
-        if r.get("date") == new_row["date"]:
-            rows[i] = new_row
-            replaced = True
-            break
-    if not replaced:
-        rows.append(new_row)
-    rows = sorted(rows, key=lambda r: r.get("date", ""))
-    _write_rows(rows)
+    rows = _upsert_event(event_date=ts.date(), pnl=amount, reason=reason)
+    target = ts.date().isoformat()
+    for row in rows:
+        if row.get("date") == target:
+            return row
     return rows[-1]

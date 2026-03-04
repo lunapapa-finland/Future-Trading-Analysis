@@ -14,6 +14,8 @@ import {
 } from "klinecharts";
 import { useEffect, useRef } from "react";
 
+const CME_TIMEZONE = "America/Chicago";
+
 // Register a lightweight text-only overlay for bar count labels
 const BAR_COUNT_NAME = "barCountText";
 try {
@@ -75,6 +77,7 @@ export function CandlesChart({
     const container = containerRef.current;
     if (!container) return;
     const chart = init(container, {
+      timezone: CME_TIMEZONE,
       styles: {
         candle: {
           type: CandleType.CandleSolid,
@@ -84,6 +87,7 @@ export function CandlesChart({
       }
     });
     chartRef.current = chart;
+    chartRef.current?.setTimezone?.(CME_TIMEZONE);
     chartRef.current?.setPriceVolumePrecision?.(4, 0);
     chartRef.current?.setScrollEnabled?.(true);
     chartRef.current?.setZoomEnabled?.(true);

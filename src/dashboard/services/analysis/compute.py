@@ -1,7 +1,6 @@
 import pandas as pd
 from dashboard.config.settings import DEFAULT_GRANULARITY, DEFAULT_ROLLING_WINDOW
-from dashboard.config.analysis import RULE_COMPLIANCE_DEFAULTS
-from dashboard.config.env import TIMEZONE
+from dashboard.config.analysis import RULE_COMPLIANCE_DEFAULTS, ANALYSIS_TIMEZONE
 import numpy as np
 from dashboard.services.analysis.schema import validate_performance_df
 
@@ -20,7 +19,7 @@ def _to_cme(series: pd.Series, column_name: str) -> pd.Series:
     ts = pd.to_datetime(series, utc=True, errors="coerce")
     if ts.isna().any():
         raise ValueError(f"Invalid datetime values in '{column_name}' column")
-    return ts.dt.tz_convert(TIMEZONE)
+    return ts.dt.tz_convert(ANALYSIS_TIMEZONE)
 
 
 def pnl_growth(performance_df, granularity=DEFAULT_GRANULARITY, daily_compounding_rate=0.001902, initial_funding=10000):
