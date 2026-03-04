@@ -223,7 +223,8 @@ def register_api(server):
 
         try:
             symbol = _validate_symbol(request.args.get("symbol"), required=True)
-            assert symbol is not None
+            if symbol is None:
+                return jsonify({"error": "symbol is required"}), 400
             start, end = _parse_range(request.args.get("start"), request.args.get("end"), normalize_date=False)
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
@@ -484,7 +485,8 @@ def register_api(server):
 
         try:
             symbol = _validate_symbol(request.args.get("symbol"), required=True)
-            assert symbol is not None
+            if symbol is None:
+                return jsonify({"error": "symbol is required"}), 400
             start_raw = request.args.get("start")
             end_raw = request.args.get("end")
             _parse_range(start_raw, end_raw, normalize_date=True)
