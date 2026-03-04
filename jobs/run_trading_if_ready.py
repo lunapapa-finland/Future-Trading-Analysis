@@ -8,6 +8,8 @@ from dashboard.services.utils.data_acquisition import acquire_missing_data
 
 STAMP_PATH = Path(os.environ.get("TRADING_STAMP_PATH", "/app/log/.trading_last_run"))
 HOURS_DELAY = int(os.environ.get("HOURS_DELAY", "12"))
+FETCH_MAX_RETRIES = int(os.environ.get("FETCH_MAX_RETRIES", "5"))
+FETCH_RETRY_DELAY_SECONDS = int(os.environ.get("FETCH_RETRY_DELAY_SECONDS", "300"))
 
 logging.basicConfig(
     filename=LOGGING_PATH,
@@ -32,7 +34,10 @@ def main():
         return 0
     if ran_today():
         return 0
-    acquire_missing_data()
+    acquire_missing_data(
+        max_retries=FETCH_MAX_RETRIES,
+        retry_delay=FETCH_RETRY_DELAY_SECONDS,
+    )
     mark_ran()
     return 0
 

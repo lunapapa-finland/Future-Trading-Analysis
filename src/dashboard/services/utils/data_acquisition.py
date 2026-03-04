@@ -188,7 +188,7 @@ def validate_data(df, day, symbol_cfg=None):
             logger.warning(f"Excessive missing rows ({missing_rows}) for {day}. Data retained but flagged.")
     return rth_data
 
-def acquire_missing_data(max_retries=5, retry_delay=10, fallback_source=None):
+def acquire_missing_data(max_retries=5, retry_delay=300, fallback_source=None):
     """Acquire missing data with robust error handling and validation."""
     current_date = pd.to_datetime(CURRENT_DATE)
     target_date = pd.to_datetime(ACQUISITION_LAST_BUSINESS_DATE).date()

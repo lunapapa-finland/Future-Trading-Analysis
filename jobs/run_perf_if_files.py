@@ -8,7 +8,7 @@ from dashboard.services.utils.performance_acquisition import acquire_missing_per
 
 logging.basicConfig(
     filename=LOGGING_PATH,
-    level=logging.INFO,
+    level=logging.WARNING,
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
