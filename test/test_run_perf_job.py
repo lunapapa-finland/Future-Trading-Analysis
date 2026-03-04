@@ -1,5 +1,12 @@
-from jobs import run_perf_if_files as job
+from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+
+
+_JOB_PATH = Path(__file__).resolve().parents[1] / "jobs" / "run_perf_if_files.py"
+_SPEC = spec_from_file_location("run_perf_if_files", _JOB_PATH)
+assert _SPEC is not None and _SPEC.loader is not None
+job = module_from_spec(_SPEC)
+_SPEC.loader.exec_module(job)
 
 
 def test_run_perf_job_triggers_when_temp_files_exist(monkeypatch):
