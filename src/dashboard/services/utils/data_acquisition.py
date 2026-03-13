@@ -190,9 +190,17 @@ def validate_data(df, day, symbol_cfg=None):
 
 def acquire_missing_data(max_retries=5, retry_delay=300, fallback_source=None):
     """Acquire missing data with robust error handling and validation."""
+    summary = {
+        "symbols": 0,
+        "days_attempted": 0,
+        "saved": 0,
+        "skipped": 0,
+        "failed": 0,
+    }
     current_date = pd.to_datetime(CURRENT_DATE)
     target_date = pd.to_datetime(ACQUISITION_LAST_BUSINESS_DATE).date()
     for symbol, csv_path in DATA_SOURCE_DROPDOWN.items():
+        summary["symbols"] += 1
         last_date = get_last_date_in_csv(csv_path)
         if last_date is None:
             logger.info(f"No valid data in {csv_path}. Initializing last_date to 30 days before current_date.")
@@ -203,6 +211,7 @@ def acquire_missing_data(max_retries=5, retry_delay=300, fallback_source=None):
         start_date = last_date + timedelta(days=1)
         if start_date > target_date:
             logger.info(f"Data for {symbol} up to {target_date} exists in {csv_path}. Skipping.")
+            summary["skipped"] += 1
             continue
 
         gap_dates = pd.date_range(start=start_date, end=target_date, freq='D')
@@ -213,9 +222,13 @@ def acquire_missing_data(max_retries=5, retry_delay=300, fallback_source=None):
         for day in valid_days:
             if is_date_in_csv(csv_path, day):
                 logger.info(f"Data for {day} already exists in {csv_path}. Skipping.")
+                summary["skipped"] += 1
                 continue
 
             ticker = get_active_contract(symbol, day, SYMBOL_CATALOG.get(symbol))
+            summary["days_attempted"] += 1
+            day_saved = False
+            day_failed = False
             # end_day = day + timedelta(days=1)
             for attempt in range(max_retries):
                 try:
@@ -238,32 +251,39 @@ def acquire_missing_data(max_retries=5, retry_delay=300, fallback_source=None):
                             continue
                         else:
                             logger.error(f"Failed to fetch {ticker} on {day} after {max_retries} retries. Possible holiday or unavailability.")
-                            if is_holiday(day):
+                            if is_holiday(day, SYMBOL_CATALOG.get(symbol)):
                                 logger.info(f"Confirmed {day} as holiday for {ticker}.")
+                            else:
+                                day_failed = True
                             break
                     else:
                         validated_df = validate_data(df, day, SYMBOL_CATALOG.get(symbol))
-                        if not validated_df.empty:
-                            # Reorder columns to match expected order
-                            expected_order = ["Open", "High", "Low", "Close", "Adj Close", "Volume"]
-                            validated_df = validated_df[expected_order]
-                            
-                            # Format Datetime index with +HH:MM timezone
-                            validated_df.index = validated_df.index.strftime('%Y-%m-%d %H:%M:%S%z').str.replace(r'(\d{2})(\d{2})$', r'\1:\2', regex=True)
-                            
-                            # Write to CSV, appending contiguously for gap days
-                            if not Path(csv_path).exists() or pd.read_csv(csv_path).empty:
-                                validated_df.to_csv(csv_path, index_label='Datetime')
-                            else:
-                                # Ensure file ends with a newline before appending
-                                with open(csv_path, 'rb+') as f:
-                                    f.seek(-1, 2)  # Move to last byte
-                                    if f.read(1) != b'\n':  # Check if file ends with newline
-                                        f.write(b'\n')  # Add newline if missing
-                                # Append data without extra newline
-                                with open(csv_path, 'a', newline='') as f:
-                                    validated_df.to_csv(f, header=False, index_label='Datetime')
-                            logger.info(f"Data for {ticker} on {day} validated and saved to {csv_path}")
+                        if validated_df.empty:
+                            logger.error(f"Validated DataFrame empty for {ticker} on {day}.")
+                            day_failed = True
+                            break
+
+                        # Reorder columns to match expected order
+                        expected_order = ["Open", "High", "Low", "Close", "Adj Close", "Volume"]
+                        validated_df = validated_df[expected_order]
+
+                        # Format Datetime index with +HH:MM timezone
+                        validated_df.index = validated_df.index.strftime('%Y-%m-%d %H:%M:%S%z').str.replace(r'(\d{2})(\d{2})$', r'\1:\2', regex=True)
+
+                        # Write to CSV, appending contiguously for gap days
+                        if not Path(csv_path).exists() or pd.read_csv(csv_path).empty:
+                            validated_df.to_csv(csv_path, index_label='Datetime')
+                        else:
+                            # Ensure file ends with a newline before appending
+                            with open(csv_path, 'rb+') as f:
+                                f.seek(-1, 2)  # Move to last byte
+                                if f.read(1) != b'\n':  # Check if file ends with newline
+                                    f.write(b'\n')  # Add newline if missing
+                            # Append data without extra newline
+                            with open(csv_path, 'a', newline='') as f:
+                                validated_df.to_csv(f, header=False, index_label='Datetime')
+                        logger.info(f"Data for {ticker} on {day} validated and saved to {csv_path}")
+                        day_saved = True
                         break
                 except (RuntimeError, ValueError, OSError, KeyError) as e:
                     if attempt < max_retries - 1:
@@ -271,9 +291,26 @@ def acquire_missing_data(max_retries=5, retry_delay=300, fallback_source=None):
                         time.sleep(retry_delay)
                     else:
                         logger.error(f"Failed after {max_retries} retries for {ticker} on {day}: {e}")
+                        day_failed = True
                         if fallback_source:
                             logger.info(f"Attempting fallback source for {ticker} on {day}")
                             # Implement fallback logic here
+            if day_saved:
+                summary["saved"] += 1
+            elif day_failed:
+                summary["failed"] += 1
+            else:
+                summary["skipped"] += 1
+
+    logger.info(
+        "Data acquisition summary: symbols=%d, days_attempted=%d, saved=%d, skipped=%d, failed=%d",
+        summary["symbols"],
+        summary["days_attempted"],
+        summary["saved"],
+        summary["skipped"],
+        summary["failed"],
+    )
+    return summary
 
 if __name__ == "__main__":
     acquire_missing_data()

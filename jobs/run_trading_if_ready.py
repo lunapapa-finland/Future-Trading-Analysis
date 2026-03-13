@@ -54,11 +54,17 @@ def main():
             return 0
         if ran_today():
             return 0
-        acquire_missing_data(
+        summary = acquire_missing_data(
             max_retries=FETCH_MAX_RETRIES,
             retry_delay=FETCH_RETRY_DELAY_SECONDS,
         )
-        mark_ran()
+        if summary.get("failed", 0) == 0:
+            mark_ran()
+        else:
+            logging.warning(
+                "Trading fetch completed with failures; .trading_last_run not updated. summary=%s",
+                summary,
+            )
         return 0
     finally:
         try:
