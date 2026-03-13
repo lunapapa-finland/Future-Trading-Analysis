@@ -1,5 +1,6 @@
 import datetime
 import logging
+import os
 import time
 from datetime import timedelta
 from pathlib import Path
@@ -18,6 +19,9 @@ from dashboard.config.settings import (
 )
 
 logger = logging.getLogger(__name__)
+
+RATE_LIMIT_COOLDOWN_MINUTES = int(os.environ.get("YF_RATE_LIMIT_COOLDOWN_MINUTES", "60"))
+RATE_LIMIT_UNTIL_FILE = Path(os.environ.get("YF_RATE_LIMIT_UNTIL_FILE", "/app/log/.yf_rate_limited_until"))
 
 def get_last_row_date(csv_path):
     """Helper function to read the last row of the CSV and extract the date."""
@@ -47,6 +51,39 @@ def get_last_date_in_csv(csv_path):
 def remove_weekends(date_list):
     """Remove weekends from a list of dates."""
     return [d for d in date_list if d.weekday() < 5]
+
+
+def _read_rate_limit_until():
+    try:
+        if not RATE_LIMIT_UNTIL_FILE.exists():
+            return None
+        raw = RATE_LIMIT_UNTIL_FILE.read_text(encoding="utf-8").strip()
+        if not raw:
+            return None
+        ts = pd.to_datetime(raw, utc=True, errors="coerce")
+        if pd.isna(ts):
+            return None
+        return ts
+    except OSError:
+        return None
+
+
+def _write_rate_limit_until(ts):
+    RATE_LIMIT_UNTIL_FILE.parent.mkdir(parents=True, exist_ok=True)
+    RATE_LIMIT_UNTIL_FILE.write_text(ts.isoformat(), encoding="utf-8")
+
+
+def _last_download_error_message(ticker):
+    shared = getattr(yf, "shared", None)
+    errors = getattr(shared, "_ERRORS", None)
+    if not isinstance(errors, dict):
+        return ""
+    return str(errors.get(ticker, "") or "")
+
+
+def _is_rate_limit_error_message(message):
+    msg = str(message or "")
+    return ("YFRateLimitError" in msg) or ("Too Many Requests" in msg)
 
 _CALENDAR_CACHE = {}
 
@@ -196,10 +233,27 @@ def acquire_missing_data(max_retries=5, retry_delay=300, fallback_source=None):
         "saved": 0,
         "skipped": 0,
         "failed": 0,
+        "rate_limited": False,
+        "cooldown_until": "",
     }
+    now_utc = pd.Timestamp.utcnow().tz_localize("UTC") if pd.Timestamp.utcnow().tzinfo is None else pd.Timestamp.utcnow().tz_convert("UTC")
+    cooldown_until = _read_rate_limit_until()
+    if cooldown_until is not None and now_utc < cooldown_until:
+        summary["failed"] = 1
+        summary["rate_limited"] = True
+        summary["cooldown_until"] = cooldown_until.isoformat()
+        logger.warning(
+            "Skipping data acquisition due to active yfinance cooldown until %s",
+            cooldown_until.isoformat(),
+        )
+        return summary
+
     current_date = pd.to_datetime(CURRENT_DATE)
     target_date = pd.to_datetime(ACQUISITION_LAST_BUSINESS_DATE).date()
+    stop_all = False
     for symbol, csv_path in DATA_SOURCE_DROPDOWN.items():
+        if stop_all:
+            break
         summary["symbols"] += 1
         last_date = get_last_date_in_csv(csv_path)
         if last_date is None:
@@ -220,6 +274,8 @@ def acquire_missing_data(max_retries=5, retry_delay=300, fallback_source=None):
         valid_days = [day for day in business_days if not is_holiday(day, sym_cfg)]
 
         for day in valid_days:
+            if stop_all:
+                break
             if is_date_in_csv(csv_path, day):
                 logger.info(f"Data for {day} already exists in {csv_path}. Skipping.")
                 summary["skipped"] += 1
@@ -245,6 +301,25 @@ def acquire_missing_data(max_retries=5, retry_delay=300, fallback_source=None):
                         progress=False
                     )
                     if df.empty:
+                        err_msg = _last_download_error_message(ticker)
+                        if _is_rate_limit_error_message(err_msg):
+                            day_failed = True
+                            summary["rate_limited"] = True
+                            cooldown_until = pd.Timestamp.utcnow() + pd.Timedelta(minutes=RATE_LIMIT_COOLDOWN_MINUTES)
+                            if cooldown_until.tzinfo is None:
+                                cooldown_until = cooldown_until.tz_localize("UTC")
+                            else:
+                                cooldown_until = cooldown_until.tz_convert("UTC")
+                            summary["cooldown_until"] = cooldown_until.isoformat()
+                            _write_rate_limit_until(cooldown_until)
+                            logger.error(
+                                "Rate limited by yfinance for %s on %s. Entering cooldown until %s and stopping run.",
+                                ticker,
+                                day,
+                                cooldown_until.isoformat(),
+                            )
+                            stop_all = True
+                            break
                         if attempt < max_retries - 1:
                             logger.warning(f"Empty DataFrame for {ticker} on {day}. Retrying ({attempt + 1}/{max_retries})...")
                             time.sleep(retry_delay)
@@ -286,6 +361,24 @@ def acquire_missing_data(max_retries=5, retry_delay=300, fallback_source=None):
                         day_saved = True
                         break
                 except (RuntimeError, ValueError, OSError, KeyError) as e:
+                    if _is_rate_limit_error_message(e):
+                        day_failed = True
+                        summary["rate_limited"] = True
+                        cooldown_until = pd.Timestamp.utcnow() + pd.Timedelta(minutes=RATE_LIMIT_COOLDOWN_MINUTES)
+                        if cooldown_until.tzinfo is None:
+                            cooldown_until = cooldown_until.tz_localize("UTC")
+                        else:
+                            cooldown_until = cooldown_until.tz_convert("UTC")
+                        summary["cooldown_until"] = cooldown_until.isoformat()
+                        _write_rate_limit_until(cooldown_until)
+                        logger.error(
+                            "Rate limited by yfinance for %s on %s via exception. Entering cooldown until %s and stopping run.",
+                            ticker,
+                            day,
+                            cooldown_until.isoformat(),
+                        )
+                        stop_all = True
+                        break
                     if attempt < max_retries - 1:
                         logger.warning(f"Error fetching {ticker} on {day}: {e}. Retrying ({attempt + 1}/{max_retries})...")
                         time.sleep(retry_delay)
