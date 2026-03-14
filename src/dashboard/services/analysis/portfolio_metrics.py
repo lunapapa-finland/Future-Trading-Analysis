@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import pandas as pd
 import math
-from dashboard.services.portfolio import PORTFOLIO_CSV, _read_rows  # type: ignore
-from dashboard.config.analysis import RISK_FREE_RATE, INITIAL_NET_LIQ, PORTFOLIO_START_DATE
+from dashboard.services.portfolio import equity_series  # type: ignore
+from dashboard.config.analysis import RISK_FREE_RATE
 
 
 def load_portfolio_df() -> pd.DataFrame:
-    rows = _read_rows()
+    rows = equity_series()
     if not rows:
         return pd.DataFrame(columns=["date", "equity", "pnl", "reason"])
     df = pd.DataFrame(rows)
@@ -23,11 +23,15 @@ def portfolio_metrics():
     df = load_portfolio_df()
     if df.empty:
         return {
-            "latest_equity": float(INITIAL_NET_LIQ),
+            "latest_equity": 0.0,
             "max_drawdown": None,
             "cagr": None,
             "sharpe": None,
         }
+    # Multiple events can occur on one day (trade sum + deposits/withdrawals). Use daily close equity.
+    df["day"] = df["date"].dt.normalize()
+    df = df.groupby("day", as_index=False)["equity"].last().rename(columns={"day": "date"})
+    df = df.sort_values("date").reset_index(drop=True)
     df["return"] = df["equity"].pct_change().fillna(0)
     latest_equity = df["equity"].iloc[-1]
 
@@ -48,9 +52,18 @@ def portfolio_metrics():
     std_excess = excess.std(ddof=1) or math.nan
     sharpe = (mean_excess * math.sqrt(252)) / std_excess if std_excess and not math.isnan(std_excess) else None
 
+    def _finite_or_none(value):
+        if value is None:
+            return None
+        try:
+            num = float(value)
+        except (TypeError, ValueError):
+            return None
+        return num if math.isfinite(num) else None
+
     return {
-        "latest_equity": float(latest_equity),
-        "max_drawdown": float(max_drawdown) if max_drawdown is not None else None,
-        "cagr": float(cagr) if cagr is not None else None,
-        "sharpe": float(sharpe) if sharpe is not None else None,
+        "latest_equity": _finite_or_none(latest_equity),
+        "max_drawdown": _finite_or_none(max_drawdown),
+        "cagr": _finite_or_none(cagr),
+        "sharpe": _finite_or_none(sharpe),
     }

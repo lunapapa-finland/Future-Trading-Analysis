@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { Card } from "@/components/ui/card";
+import { getPortfolio, postPortfolioAdjust } from "@/lib/api";
 import { Line } from "react-chartjs-2";
 import {
   Chart as ChartJS,
@@ -17,9 +18,17 @@ import {
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
 
-type EquityPoint = { timestamp?: string; date?: string; equity: number; pnl?: number; reason?: string };
+type EquityPoint = {
+  timestamp?: string;
+  date?: string;
+  equity: number;
+  pnl?: number;
+  reason?: string;
+  source?: string;
+  event_id?: string;
+};
 type PortfolioPayload = {
-  latest: EquityPoint;
+  latest: EquityPoint | null;
   series: EquityPoint[];
   risk_free_rate?: number;
   portfolio?: { initial_net_liq: number; start_date: string };
@@ -33,10 +42,10 @@ export default function PortfolioPage() {
   const [amount, setAmount] = useState("");
   const [reason, setReason] = useState<"deposit" | "withdraw">("deposit");
   const [txDate, setTxDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [logSourceFilter, setLogSourceFilter] = useState<"all" | "cashflow" | "trade_sum">("all");
 
   useEffect(() => {
-    fetch("/api/portfolio")
-      .then((res) => res.json())
+    getPortfolio()
       .then((d) => setData(d))
       .catch((err) => setError(err.message || "Failed to load portfolio"))
       .finally(() => setLoading(false));
@@ -45,15 +54,13 @@ export default function PortfolioPage() {
   const submitAdjustment = async () => {
     setError(null);
     try {
-      const res = await fetch("/api/portfolio/adjust", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reason, amount: Number(amount), date: txDate })
-      });
-      const resp = await res.json();
-      if (!res.ok) throw new Error(resp?.error || "Failed to adjust");
+      const parsedAmount = Number(amount);
+      if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+        throw new Error("Amount must be a positive number");
+      }
+      await postPortfolioAdjust({ reason, amount: parsedAmount, date: txDate });
       // Reload portfolio
-      const p = await fetch("/api/portfolio").then((r) => r.json());
+      const p = await getPortfolio();
       setData(p);
       setAmount("");
     } catch (err) {
@@ -63,13 +70,6 @@ export default function PortfolioPage() {
 
   const latest = data?.latest;
   const series = data?.series || [];
-
-  const chartPoints = series
-    .map((pt) => {
-      const ts = new Date((pt as any).timestamp || (pt as any).date).getTime();
-      return { ts, equity: Number(pt.equity), pnl: Number(pt.pnl), reason: pt.reason || "" };
-    })
-    .sort((a, b) => a.ts - b.ts);
 
   return (
     <AppShell active="/portfolio">
@@ -158,16 +158,30 @@ export default function PortfolioPage() {
 
         {series.length ? (
           <Card title="Portfolio Equity" className="bg-surface/70">
-            <PortfolioChart points={chartPoints} rfRate={data?.risk_free_rate ?? 0.02} />
+            <PortfolioChart points={series} rfRate={data?.risk_free_rate ?? 0.02} />
           </Card>
         ) : null}
         {series.length ? (
           <Card title="Cashflow Log" className="bg-surface/70">
+            <div className="mb-3 flex items-center gap-2">
+              <span className="text-xs uppercase tracking-[0.2em] text-slate-400">Filter</span>
+              <select
+                value={logSourceFilter}
+                onChange={(e) => setLogSourceFilter(e.target.value as "all" | "cashflow" | "trade_sum")}
+                className="rounded-lg border border-white/10 bg-background/60 px-3 py-1.5 text-xs text-white"
+              >
+                <option value="all">All</option>
+                <option value="cashflow">Cashflow</option>
+                <option value="trade_sum">Trade Sum</option>
+              </select>
+            </div>
             <div className="max-h-64 overflow-auto text-sm text-slate-200">
               <table className="w-full border-collapse">
                 <thead className="text-slate-400">
                   <tr>
                     <th className="py-2 text-left">Date</th>
+                    <th className="py-2 text-left">Source</th>
+                    <th className="py-2 text-left">Event ID</th>
                     <th className="py-2 text-left">Equity</th>
                     <th className="py-2 text-left">PnL</th>
                     <th className="py-2 text-left">Reason</th>
@@ -175,11 +189,18 @@ export default function PortfolioPage() {
                 </thead>
                 <tbody>
                   {[...series]
+                    .filter((pt) => {
+                      if (logSourceFilter === "all") return true;
+                      const src = (pt.source || (pt.reason === "trading" ? "trade_sum" : "cashflow")).toString();
+                      return src === logSourceFilter;
+                    })
                     .sort((a, b) => new Date((b as any).date || (b as any).timestamp || "").getTime() - new Date((a as any).date || (a as any).timestamp || "").getTime())
                     .slice(0, 50)
                     .map((pt, idx) => (
                       <tr key={`${pt.date || pt.timestamp}-${idx}`} className="border-t border-white/5">
                         <td className="py-2">{new Date((pt as any).timestamp || (pt as any).date || "").toLocaleDateString()}</td>
+                        <td className="py-2">{(pt.source || (pt.reason === "trading" ? "trade_sum" : "cashflow")).toString()}</td>
+                        <td className="py-2 font-mono text-xs text-slate-400">{(pt.event_id || "—").toString()}</td>
                         <td className="py-2">{Number(pt.equity).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                         <td className="py-2">{Number(pt.pnl ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                         <td className="py-2 capitalize text-slate-300">{(pt.reason || "trading").toString()}</td>
@@ -195,27 +216,51 @@ export default function PortfolioPage() {
   );
 }
 
-function PortfolioChart({ points, rfRate }: { points: { ts: number; equity: number; pnl: number; reason?: string }[]; rfRate: number }) {
+function PortfolioChart({ points, rfRate }: { points: EquityPoint[]; rfRate: number }) {
   if (!points.length) return null;
-  const sorted = [...points].sort((a, b) => a.ts - b.ts);
-  const cashflows = sorted
-    .filter((p) => ["init", "deposit", "withdraw"].includes((p.reason || "").toLowerCase()))
-    .map((p) => {
-      const reason = (p.reason || "").toLowerCase();
-      let amount = 0;
-      if (reason === "init") {
-        amount = p.equity; // initial capital
-      } else if (reason === "deposit") {
-        amount = Math.abs(p.pnl);
-      } else if (reason === "withdraw") {
-        amount = -Math.abs(p.pnl);
-      }
-      return { ts: p.ts, amount };
-    })
-    .sort((a, b) => a.ts - b.ts);
 
-  const rfSeries = sorted.map((pt) => {
-    const value = cashflows.reduce((acc, cf) => {
+  const normalized = points
+    .map((pt, idx) => {
+      const raw = (pt.timestamp || pt.date || "").toString();
+      const ts = new Date(raw).getTime();
+      if (!Number.isFinite(ts)) return null;
+      const dayKey = /^\d{4}-\d{2}-\d{2}/.test(raw) ? raw.slice(0, 10) : new Date(ts).toISOString().slice(0, 10);
+      return {
+        idx,
+        ts,
+        dayKey,
+        equity: Number(pt.equity),
+        pnl: Number(pt.pnl ?? 0),
+        reason: (pt.reason || "").toLowerCase(),
+      };
+    })
+    .filter((v): v is { idx: number; ts: number; dayKey: string; equity: number; pnl: number; reason: string } => v !== null)
+    .sort((a, b) => (a.ts === b.ts ? a.idx - b.idx : a.ts - b.ts));
+
+  const byDay = new Map<string, { ts: number; equity: number; pnl: number; cashflow: number }>();
+  for (const row of normalized) {
+    const existing = byDay.get(row.dayKey);
+    const cash = row.reason === "deposit" || row.reason === "withdraw" ? row.pnl : 0;
+    if (!existing) {
+      byDay.set(row.dayKey, { ts: row.ts, equity: row.equity, pnl: row.pnl, cashflow: cash });
+    } else {
+      existing.ts = row.ts;
+      existing.equity = row.equity; // end-of-day equity
+      existing.pnl += row.pnl; // daily net sum (+ and -)
+      existing.cashflow += cash; // daily net cashflow (+ and -)
+    }
+  }
+
+  const daily = Array.from(byDay.values()).sort((a, b) => a.ts - b.ts);
+  // Use event-level cashflows (not daily net only) so frequent in/out flows are represented more faithfully.
+  const cashflowEvents = normalized
+    .filter((r) => r.reason === "deposit" || r.reason === "withdraw")
+    .map((r) => ({ ts: r.ts, idx: r.idx, amount: r.reason === "withdraw" ? -Math.abs(r.pnl) : Math.abs(r.pnl) }))
+    .filter((r) => Math.abs(r.amount) > 1e-12)
+    .sort((a, b) => (a.ts === b.ts ? a.idx - b.idx : a.ts - b.ts));
+
+  const rfSeries = daily.map((pt) => {
+    const value = cashflowEvents.reduce((acc, cf) => {
       if (cf.ts > pt.ts) return acc;
       const days = (pt.ts - cf.ts) / (1000 * 60 * 60 * 24);
       const growth = cf.amount * ((1 + rfRate) ** (days / 365));
@@ -224,13 +269,13 @@ function PortfolioChart({ points, rfRate }: { points: { ts: number; equity: numb
     return { ts: pt.ts, equity: value };
   });
 
-  const labels = sorted.map((p) => new Date(p.ts).toLocaleDateString());
+  const labels = daily.map((p) => new Date(p.ts).toLocaleDateString());
   const data = {
     labels,
     datasets: [
       {
         label: "Equity",
-        data: sorted.map((p) => p.equity),
+        data: daily.map((p) => p.equity),
         borderColor: "#22c55e",
         backgroundColor: "rgba(34,197,94,0.2)",
         tension: 0.1,

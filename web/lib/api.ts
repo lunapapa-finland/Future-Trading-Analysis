@@ -26,6 +26,10 @@ function getApiBase(): string {
   }
   // Browser fallback: same-origin
   if (typeof window !== "undefined") {
+    // Common local setup: Next on :3000 and Flask API on :8050.
+    if (window.location.port === "3000") {
+      return "http://localhost:8050";
+    }
     return window.location.origin;
   }
   // SSR/dev fallback
@@ -45,8 +49,8 @@ const basicAuthHeader =
     : null;
 
 async function handleResponse<T>(res: Response): Promise<T> {
+  const text = await res.text();
   if (!res.ok) {
-    const text = await res.text();
     let payload: { error?: string; code?: string; message?: string } | null = null;
     try {
       payload = JSON.parse(text) as { error?: string; code?: string; message?: string };
@@ -56,7 +60,15 @@ async function handleResponse<T>(res: Response): Promise<T> {
     const msg = payload?.error || payload?.message || text || res.statusText;
     throw new ApiError(msg, res.status, payload?.code);
   }
-  return res.json() as Promise<T>;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    const snippet = text.slice(0, 140).replace(/\s+/g, " ").trim();
+    throw new ApiError(
+      `Expected JSON but got non-JSON (status ${res.status}) from ${res.url}. Payload starts with: ${snippet}`,
+      res.status
+    );
+  }
 }
 
 function withAuth(init: RequestInit = {}): RequestInit {
@@ -112,4 +124,23 @@ export async function getTradingSession(params: { symbol: string; start?: string
   if (params.end) url.searchParams.set("end", params.end);
   const res = await fetch(url.toString(), withAuth({ cache: "no-store" }));
   return handleResponse<TradingSession>(res);
+}
+
+export async function getPortfolio(): Promise<any> {
+  const url = new URL("/api/portfolio", API_BASE);
+  const res = await fetch(url.toString(), withAuth({ cache: "no-store" }));
+  return handleResponse<any>(res);
+}
+
+export async function postPortfolioAdjust(payload: { reason: "deposit" | "withdraw"; amount: number; date: string }): Promise<any> {
+  const url = new URL("/api/portfolio/adjust", API_BASE);
+  const res = await fetch(
+    url.toString(),
+    withAuth({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+  );
+  return handleResponse<any>(res);
 }

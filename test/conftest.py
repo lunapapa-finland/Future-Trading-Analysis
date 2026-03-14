@@ -16,9 +16,10 @@ def client():
 
 @pytest.fixture(autouse=True)
 def tmp_portfolio_csv(monkeypatch, tmp_path):
-    tmp_file = tmp_path / "equity.csv"
-    tmp_file.parent.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(portfolio, "PORTFOLIO_CSV", tmp_file)
-    monkeypatch.setattr(pm, "PORTFOLIO_CSV", tmp_file)
-    monkeypatch.setattr(pm, "_read_rows", portfolio._read_rows)
+    cashflow_file = tmp_path / "cashflow.csv"
+    trade_sum_file = tmp_path / "trade_sum.csv"
+    cashflow_file.parent.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(portfolio, "CASHFLOW_CSV", cashflow_file)
+    monkeypatch.setattr(portfolio, "TRADE_SUM_CSV", trade_sum_file)
+    monkeypatch.setattr(pm, "equity_series", portfolio.equity_series)
     yield

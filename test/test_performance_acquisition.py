@@ -2,6 +2,7 @@ import pandas as pd
 
 from dashboard.services.utils import performance_acquisition as pa
 from dashboard.services.utils.trade_enrichment import ensure_trade_id
+import dashboard.services.portfolio as portfolio
 
 
 def test_generate_aggregated_data_updates_existing_trade_on_corrections(tmp_path, monkeypatch):
@@ -73,7 +74,7 @@ def test_generate_aggregated_data_updates_existing_trade_on_corrections(tmp_path
     )
 
     monkeypatch.setattr(pa, "PERFORMANCE_CSV", str(perf_csv))
-    monkeypatch.setattr(pa, "append_daily_equity", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pa, "sync_trade_sum_from_performance_rows", lambda *args, **kwargs: None)
     monkeypatch.setattr(pa, "sync_trade_journal", lambda *args, **kwargs: None)
     monkeypatch.setattr(pa, "merge_trade_labels", lambda df: df)
 
@@ -128,7 +129,7 @@ def test_generate_aggregated_data_handles_duplicate_trade_ids_without_crash(tmp_
     )
 
     monkeypatch.setattr(pa, "PERFORMANCE_CSV", str(perf_csv))
-    monkeypatch.setattr(pa, "append_daily_equity", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pa, "sync_trade_sum_from_performance_rows", lambda *args, **kwargs: None)
     monkeypatch.setattr(pa, "sync_trade_journal", lambda *args, **kwargs: None)
     monkeypatch.setattr(pa, "merge_trade_labels", lambda df: df)
 
@@ -179,7 +180,7 @@ def test_generate_aggregated_data_removes_existing_signature_duplicates(tmp_path
         }
     )
     monkeypatch.setattr(pa, "PERFORMANCE_CSV", str(perf_csv))
-    monkeypatch.setattr(pa, "append_daily_equity", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pa, "sync_trade_sum_from_performance_rows", lambda *args, **kwargs: None)
     monkeypatch.setattr(pa, "sync_trade_journal", lambda *args, **kwargs: None)
     monkeypatch.setattr(pa, "merge_trade_labels", lambda df: df)
 
@@ -231,9 +232,104 @@ def test_generate_aggregated_data_sorts_chronologically(tmp_path, monkeypatch):
         }
     )
     monkeypatch.setattr(pa, "PERFORMANCE_CSV", str(perf_csv))
-    monkeypatch.setattr(pa, "append_daily_equity", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pa, "sync_trade_sum_from_performance_rows", lambda *args, **kwargs: None)
     monkeypatch.setattr(pa, "sync_trade_journal", lambda *args, **kwargs: None)
     monkeypatch.setattr(pa, "merge_trade_labels", lambda df: df)
     out = pa.generate_aggregated_data([incoming])
     entered = pd.to_datetime(out["EnteredAt"], utc=True)
     assert entered.is_monotonic_increasing
+
+
+def test_generate_aggregated_data_syncs_trade_sum_for_affected_days_only(tmp_path, monkeypatch):
+    perf_csv = tmp_path / "combined.csv"
+    trade_sum_csv = tmp_path / "trade_sum.csv"
+    cashflow_csv = tmp_path / "cashflow.csv"
+
+    base = pd.DataFrame(
+        {
+            "ContractName": ["MES", "MES"],
+            "EnteredAt": ["2025-01-02T15:00:00Z", "2025-01-01T15:00:00Z"],
+            "ExitedAt": ["2025-01-02T15:10:00Z", "2025-01-01T15:10:00Z"],
+            "EntryPrice": [6000.0, 5999.0],
+            "ExitPrice": [6001.0, 6000.0],
+            "Size": [1, 1],
+            "Type": ["Long", "Long"],
+            "IntradayIndex": [1, 1],
+            "Fees": [2.0, 2.0],
+            "PnL(Net)": [8.0, 6.0],
+        }
+    )
+    base = ensure_trade_id(base)
+    base["YearMonth"] = ["2025-01", "2025-01"]
+    base["TradeDay"] = ["2025-01-02", "2025-01-01"]
+    base["DayOfWeek"] = ["Thursday", "Wednesday"]
+    base["HourOfDay"] = [9, 9]
+    base["TradeDuration"] = ["0 days 00:10:00", "0 days 00:10:00"]
+    base["WinOrLoss"] = [1, 1]
+    base["Streak"] = [1, 1]
+    base["Comment"] = ["", ""]
+    base = base[
+        [
+            "trade_id",
+            "YearMonth",
+            "TradeDay",
+            "DayOfWeek",
+            "HourOfDay",
+            "ContractName",
+            "IntradayIndex",
+            "EnteredAt",
+            "ExitedAt",
+            "EntryPrice",
+            "ExitPrice",
+            "Fees",
+            "PnL(Net)",
+            "Size",
+            "Type",
+            "TradeDuration",
+            "WinOrLoss",
+            "Streak",
+            "Comment",
+        ]
+    ]
+    base.to_csv(perf_csv, index=False)
+
+    # Seed an existing trade_sum row for an unaffected day.
+    trade_sum_seed = pd.DataFrame(
+        [
+            {"date": "2025-01-01", "trade_pnl": 6.0, "updated_at": "2026-01-01T00:00:00+00:00"},
+            {"date": "2025-01-02", "trade_pnl": 8.0, "updated_at": "2026-01-01T00:00:00+00:00"},
+        ]
+    )
+    trade_sum_seed.to_csv(trade_sum_csv, index=False)
+    pd.DataFrame(columns=["event_id", "date", "amount", "reason", "created_at"]).to_csv(cashflow_csv, index=False)
+
+    incoming = pd.DataFrame(
+        {
+            "Id": [1, 1],
+            "ContractName": ["MES", "MES"],
+            "EnteredAt": ["2025-01-02T15:00:00Z", "2025-01-03T15:00:00Z"],
+            "ExitedAt": ["2025-01-02T15:10:00Z", "2025-01-03T15:10:00Z"],
+            "EntryPrice": [6000.0, 6002.0],
+            "ExitPrice": [6001.0, 6003.0],
+            "Fees": [2.5, 2.0],
+            "PnL": [7.5, 8.0],
+            "Size": [1, 1],
+            "Type": ["Long", "Long"],
+            "TradeDay": ["2025-01-02", "2025-01-03"],
+            "TradeDuration": ["0 days 00:10:00", "0 days 00:10:00"],
+        }
+    )
+
+    monkeypatch.setattr(pa, "PERFORMANCE_CSV", str(perf_csv))
+    monkeypatch.setattr(pa, "sync_trade_journal", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pa, "merge_trade_labels", lambda df: df)
+    monkeypatch.setattr(portfolio, "TRADE_SUM_CSV", trade_sum_csv)
+    monkeypatch.setattr(portfolio, "CASHFLOW_CSV", cashflow_csv)
+
+    pa.generate_aggregated_data([incoming])
+    out = pd.read_csv(trade_sum_csv)
+    by_day = {row["date"]: float(row["trade_pnl"]) for _, row in out.iterrows()}
+
+    assert by_day["2025-01-01"] == 6.0  # unaffected day unchanged
+    assert by_day["2025-01-02"] == 7.5  # corrected trade day updated
+    assert by_day["2025-01-03"] == 8.0  # new trade day inserted

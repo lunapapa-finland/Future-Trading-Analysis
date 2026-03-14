@@ -12,7 +12,7 @@ import yfinance as yf
 
 from dashboard.config.settings import PERFORMANCE_DIR, TIMEZONE, PERFORMANCE_CSV
 from dashboard.config.env import TEMP_PERF_DIR
-from dashboard.services.portfolio import append_daily_equity
+from dashboard.services.portfolio import sync_trade_sum_from_performance_rows
 from dashboard.services.utils.trade_enrichment import ensure_trade_id, merge_trade_labels
 from dashboard.services.utils.trade_journal import sync_trade_journal
 
@@ -274,6 +274,7 @@ def generate_aggregated_data(valid_dataframes):
     combined_df = combined_df[available_columns]
 
     updated_count = 0
+    affected_dates: set[str] = set()
     # Upsert by stable trade_id so broker-corrected financial fields update existing rows.
     if not past_performance_df.empty and "trade_id" in past_performance_df.columns and "trade_id" in combined_df.columns:
         incoming_latest = combined_df.drop_duplicates(subset=["trade_id"], keep="last").copy()
@@ -300,25 +301,22 @@ def generate_aggregated_data(valid_dataframes):
             before_norm = before[["trade_id"] + update_columns].fillna("__NA__").astype(str).sort_values("trade_id").reset_index(drop=True)
             after_norm = after.fillna("__NA__").astype(str).sort_values("trade_id").reset_index(drop=True)
             updated_count = int((before_norm[update_columns] != after_norm[update_columns]).any(axis=1).sum())
+            for raw_day in list(before.get("TradeDay", pd.Series(dtype="object"))) + list(after.get("TradeDay", pd.Series(dtype="object"))):
+                if pd.notna(raw_day):
+                    affected_dates.add(str(raw_day))
 
         new_rows_df = incoming_latest[incoming_latest["trade_id"].astype(str).isin(new_ids)].copy()
+        for raw_day in new_rows_df.get("TradeDay", pd.Series(dtype="object")):
+            if pd.notna(raw_day):
+                affected_dates.add(str(raw_day))
         logger.info("Performance upsert completed: %d updated, %d inserted", updated_count, len(new_rows_df))
     else:
         new_rows_df = combined_df.copy()
+        for raw_day in new_rows_df.get("TradeDay", pd.Series(dtype="object")):
+            if pd.notna(raw_day):
+                affected_dates.add(str(raw_day))
 
     new_rows_df = merge_trade_labels(new_rows_df)
-
-    # Persist portfolio equity by trade day for new rows only
-    try:
-        if not new_rows_df.empty:
-            daily_pnl = new_rows_df.groupby('TradeDay')['PnL(Net)'].sum().reset_index()
-            for _, row in daily_pnl.iterrows():
-                trade_date = pd.to_datetime(row['TradeDay']).date()
-                pnl = float(row['PnL(Net)'])
-                append_daily_equity(trade_date, pnl)
-            logger.info(f"Appended portfolio equity for {len(daily_pnl)} days (new rows only)")
-    except (TypeError, ValueError, OSError, KeyError) as e:
-        logger.error(f"Failed to append portfolio equity: {e}")
 
     # Concatenate old and new
     final_df = pd.concat([past_performance_df, new_rows_df], ignore_index=True)
@@ -335,6 +333,17 @@ def generate_aggregated_data(valid_dataframes):
         print(f"New trades added: {new_rows_df}")
     else:
         logger.info("No new trades to add.")
+
+    # Persist daily trade sums for impacted days only.
+    try:
+        if affected_dates:
+            sync_trade_sum_from_performance_rows(final_df.to_dict(orient="records"), affected_dates)
+            logger.info("Updated trade_sum for %d affected day(s)", len(affected_dates))
+        else:
+            logger.info("No affected trade days; trade_sum not updated")
+    except (TypeError, ValueError, OSError, KeyError) as e:
+        logger.error(f"Failed to sync trade_sum: {e}")
+
     # Save and return
     final_df.to_csv(PERFORMANCE_CSV, index=False)
     logger.info(f"Processed data saved to {PERFORMANCE_CSV}")

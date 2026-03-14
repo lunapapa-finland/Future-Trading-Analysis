@@ -27,7 +27,7 @@ from dashboard.config.analysis import (
     ANALYSIS_TIMEZONE,
 )
 from dashboard.services.data.load_data import load_performance, load_future
-from dashboard.services.portfolio import latest_equity, equity_series, append_manual
+from dashboard.services.portfolio import equity_series, append_manual
 from dashboard.services.analysis.portfolio_metrics import portfolio_metrics
 from dashboard.services.utils.trade_enrichment import ensure_trade_id, merge_trade_labels
 from dashboard.services.utils.trade_journal import load_trade_journal, merge_trade_journal, validate_trade_journal
@@ -178,11 +178,11 @@ def register_api(server):
     @api.route("/portfolio", methods=["GET"])
     def portfolio():
         try:
-            latest = latest_equity()
             series = equity_series(limit=500)
+            latest = series[-1] if series else None
             metrics = portfolio_metrics()
             return jsonify({"latest": latest, "series": series, "risk_free_rate": RISK_FREE_RATE, "metrics": metrics})
-        except (ValueError, OSError) as exc:
+        except Exception as exc:
             return jsonify({"error": f"failed to load portfolio: {exc}"}), 500
 
     @api.route("/portfolio/adjust", methods=["POST"])
