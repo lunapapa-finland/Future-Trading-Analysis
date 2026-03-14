@@ -198,8 +198,21 @@ def process_csv(file_path):
         'TradeDuration': 'first'
     }).reset_index()
 
-    # Assign Ids based on trade day
-    grouped['TradeDate'] = pd.to_datetime(grouped['TradeDay'], format='%m/%d/%Y %H:%M:%S %z').dt.date
+    # Assign Ids based on US/Central trade day. Parse in UTC first to handle mixed offsets safely.
+    trade_day_ts = pd.to_datetime(
+        grouped['TradeDay'],
+        format='%m/%d/%Y %H:%M:%S %z',
+        errors='coerce',
+        utc=True,
+    )
+    entered_at_ts = pd.to_datetime(
+        grouped['EnteredAt'],
+        format='%m/%d/%Y %H:%M:%S %z',
+        errors='coerce',
+        utc=True,
+    )
+    grouped['TradeDate'] = trade_day_ts.fillna(entered_at_ts).dt.tz_convert('US/Central').dt.date
+    grouped = grouped[grouped['TradeDate'].notna()].copy()
     grouped = grouped.sort_values(['TradeDate', 'EnteredAt']).reset_index(drop=True)
     
     # Reset Id for each unique trade date
