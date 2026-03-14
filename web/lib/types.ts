@@ -41,26 +41,38 @@ export interface InsightsPayload {
 }
 
 export interface InsightsResponse {
+  applied_config?: Record<string, unknown>;
+  analysis_scope?: Record<string, string | number>;
   setup_journal: AnalysisSeriesPoint[];
+  setup_quality?: Record<string, string | number | Record<string, number>>;
   rule_compliance: {
     summary: Record<string, string | number>;
     daily: AnalysisSeriesPoint[];
   };
-  mae_mfe: {
-    overall: Record<string, string | number>;
-    by_setup: AnalysisSeriesPoint[];
+  execution_quality?: {
+    by_entry_hour: AnalysisSeriesPoint[];
+    by_hold_bucket: AnalysisSeriesPoint[];
   };
   playbook: {
     highlights: AnalysisSeriesPoint[];
     stop_doing: AnalysisSeriesPoint[];
     action_items: AnalysisSeriesPoint[];
+    rationale?: {
+      breach_counts: Record<string, number>;
+      worst_entry_hour: AnalysisSeriesPoint | null;
+      worst_hold_bucket: AnalysisSeriesPoint | null;
+      best_setup: AnalysisSeriesPoint | null;
+      weak_setup: AnalysisSeriesPoint | null;
+    };
   };
   monthly_report: {
     summary: Record<string, string | number>;
     focus_points: string[];
-    setup_summary: AnalysisSeriesPoint[];
     markdown?: string;
+    applied_config?: Record<string, unknown>;
+    analysis_scope?: Record<string, string | number>;
   };
+  llm_prompt_markdown?: string;
 }
 
 export interface TradingSession {

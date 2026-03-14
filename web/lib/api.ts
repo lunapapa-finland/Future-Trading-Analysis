@@ -144,3 +144,38 @@ export async function postPortfolioAdjust(payload: { reason: "deposit" | "withdr
   );
   return handleResponse<any>(res);
 }
+
+export async function postJournalSetupTags(payload: {
+  rows: Array<{
+    trade_id?: string;
+    TradeDay?: string;
+    ContractName?: string;
+    IntradayIndex?: string | number;
+    Phase?: string;
+    Context?: string;
+    SignalBar?: string;
+    setups: string[] | string;
+  }>;
+}): Promise<{ ok: boolean; updated: number; inserted: number }> {
+  const url = new URL("/api/journal/tags", API_BASE);
+  const res = await fetch(
+    url.toString(),
+    withAuth({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload ?? { rows: [] }),
+    })
+  );
+  return handleResponse<{ ok: boolean; updated: number; inserted: number }>(res);
+}
+
+export async function getTagTaxonomy(): Promise<{
+  phase: Array<{ value: string; hint?: string; order?: number }>;
+  context: Array<{ value: string; hint?: string; order?: number }>;
+  setup: Array<{ value: string; hint?: string; order?: number }>;
+  signal_bar: Array<{ value: string; hint?: string; order?: number }>;
+}> {
+  const url = new URL("/api/tags/taxonomy", API_BASE);
+  const res = await fetch(url.toString(), withAuth({ cache: "no-store" }));
+  return handleResponse(res);
+}

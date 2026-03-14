@@ -12,6 +12,12 @@ export type SymbolConfig = {
 
 export type ConfigResponse = {
   symbols: SymbolConfig[];
+  tag_taxonomy?: {
+    phase: Array<{ value: string; hint?: string; order?: number }>;
+    context: Array<{ value: string; hint?: string; order?: number }>;
+    setup: Array<{ value: string; hint?: string; order?: number }>;
+    signal_bar: Array<{ value: string; hint?: string; order?: number }>;
+  };
   timeframes?: Timeframe[];
   playback_speeds?: number[];
   insights_defaults?: {

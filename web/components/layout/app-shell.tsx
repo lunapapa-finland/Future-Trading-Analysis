@@ -13,7 +13,15 @@ const navLinks = [
   { href: "/config", label: "Config" }
 ];
 
-export function AppShell({ children, active }: { children: ReactNode; active?: string }) {
+export function AppShell({
+  children,
+  active,
+  maxWidthClass = "max-w-6xl",
+}: {
+  children: ReactNode;
+  active?: string;
+  maxWidthClass?: string;
+}) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const title =
     active === "/guide"
@@ -31,7 +39,7 @@ export function AppShell({ children, active }: { children: ReactNode; active?: s
   }
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-6xl flex-col gap-4 px-3 py-4 sm:gap-6 sm:px-6 sm:py-6">
+    <div className={clsx("mx-auto flex min-h-screen flex-col gap-4 px-3 py-4 sm:gap-6 sm:px-6 sm:py-6", maxWidthClass)}>
       <header className="rounded-2xl border border-white/5 bg-surface/60 px-3 py-3 shadow-lg sm:px-5 sm:py-4">
         <div className="flex items-center justify-between gap-3">
           <div>

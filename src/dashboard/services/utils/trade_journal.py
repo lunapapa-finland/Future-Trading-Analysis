@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Optional
+import re
 
 import pandas as pd
 
@@ -214,7 +215,13 @@ def _row_matches_rule(row: pd.Series, rule: pd.Series) -> bool:
         row_val = str(row.get(col, "")).strip()
         if rule_val == "*":
             continue
-        if row_val != rule_val:
+        if col == "Setup":
+            parts = [p.strip() for p in re.split(r"[|,;/]+", row_val) if p.strip()]
+            if not parts:
+                return False
+            if rule_val not in parts:
+                return False
+        elif row_val != rule_val:
             return False
     return True
 
@@ -247,8 +254,17 @@ def validate_trade_journal(
             if not val:
                 row_errors.append(f"{field}:missing")
                 continue
-            if allowed[field] and val not in allowed[field]:
-                row_errors.append(f"{field}:invalid_value({val})")
+            if field == "Setup":
+                setups = [p.strip() for p in re.split(r"[|,;/]+", val) if p.strip()]
+                if not setups:
+                    row_errors.append("Setup:missing")
+                    continue
+                invalid = [s for s in setups if allowed[field] and s not in allowed[field]]
+                if invalid:
+                    row_errors.append(f"Setup:invalid_value({', '.join(invalid)})")
+            else:
+                if allowed[field] and val not in allowed[field]:
+                    row_errors.append(f"{field}:invalid_value({val})")
         if row_errors:
             violations.append({**key, "Issue": "; ".join(row_errors)})
             continue

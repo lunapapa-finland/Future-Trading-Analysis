@@ -163,9 +163,13 @@ export default function AnalysisPage() {
   const [maxTradesAfterBigLoss, setMaxTradesAfterBigLoss] = useState(2);
   const [capLossPerTrade, setCapLossPerTrade] = useState(200);
   const [capTradesAfterBigLoss, setCapTradesAfterBigLoss] = useState(5);
-  const [setupFilter, setSetupFilter] = useState("");
+  const [phaseFilters, setPhaseFilters] = useState<string[]>([]);
+  const [contextFilters, setContextFilters] = useState<string[]>([]);
+  const [setupTagFilters, setSetupTagFilters] = useState<string[]>([]);
+  const [signalBarFilters, setSignalBarFilters] = useState<string[]>([]);
   const [breachesOnly, setBreachesOnly] = useState(false);
   const [defaultsHydrated, setDefaultsHydrated] = useState(false);
+  const [tagFiltersHydrated, setTagFiltersHydrated] = useState(false);
 
   const { data: config, isLoading: configLoading, error: configError } = useQuery({
     queryKey: ["config"],
@@ -189,6 +193,19 @@ export default function AnalysisPage() {
     if (typeof d.max_trades_after_big_loss === "number") setMaxTradesAfterBigLoss(d.max_trades_after_big_loss);
     setDefaultsHydrated(true);
   }, [config, defaultsHydrated]);
+
+  useEffect(() => {
+    if (tagFiltersHydrated || !config?.tag_taxonomy) return;
+    const phase = (config.tag_taxonomy.phase ?? []).map((x: any) => String(x.value));
+    const context = (config.tag_taxonomy.context ?? []).map((x: any) => String(x.value));
+    const setup = (config.tag_taxonomy.setup ?? []).map((x: any) => String(x.value));
+    const signal = (config.tag_taxonomy.signal_bar ?? []).map((x: any) => String(x.value));
+    setPhaseFilters(phase);
+    setContextFilters(context);
+    setSetupTagFilters(setup);
+    setSignalBarFilters(signal);
+    setTagFiltersHydrated(true);
+  }, [config, tagFiltersHydrated]);
 
   const { data: analysisRaw, isFetching, error } = useQuery({
     queryKey: [
@@ -237,6 +254,10 @@ export default function AnalysisPage() {
       min_trades: insightsMinTrades,
     };
     if (insightsMonth) params.month = insightsMonth;
+    if (phaseFilters.length) params.phase = phaseFilters;
+    if (contextFilters.length) params.context = contextFilters;
+    if (setupTagFilters.length) params.setup = setupTagFilters;
+    if (signalBarFilters.length) params.signal_bar = signalBarFilters;
     if (showRuleOverrides) {
       params.max_trades_per_day = maxTradesPerDay;
       params.max_consecutive_losses = maxConsecutiveLosses;
@@ -254,6 +275,10 @@ export default function AnalysisPage() {
     maxDailyLoss,
     bigLossThreshold,
     maxTradesAfterBigLoss,
+    phaseFilters,
+    contextFilters,
+    setupTagFilters,
+    signalBarFilters,
   ]);
 
   const { data: insights, isFetching: insightsFetching, error: insightsError } = useQuery<InsightsResponse>({
@@ -439,16 +464,22 @@ export default function AnalysisPage() {
                     onChange={(e) => setInsightsMonth(e.target.value)}
                   />
                 </label>
-                <label className="flex flex-col gap-1 text-sm text-slate-300">
-                  Setup Filter
-                  <input
-                    type="text"
-                    placeholder="e.g. ORB"
-                    className="rounded-lg border border-white/10 bg-surface px-3 py-2 text-white outline-none focus:border-accent"
-                    value={setupFilter}
-                    onChange={(e) => setSetupFilter(e.target.value)}
-                  />
-                </label>
+                <div className="flex flex-col gap-1 text-sm text-slate-300">
+                  <span>Phase Filter (multi)</span>
+                  <CheckboxPills options={(config?.tag_taxonomy?.phase ?? []).map((x: any) => String(x.value))} selected={phaseFilters} onChange={setPhaseFilters} />
+                </div>
+                <div className="flex flex-col gap-1 text-sm text-slate-300">
+                  <span>Context Filter (multi)</span>
+                  <CheckboxPills options={(config?.tag_taxonomy?.context ?? []).map((x: any) => String(x.value))} selected={contextFilters} onChange={setContextFilters} />
+                </div>
+                <div className="flex flex-col gap-1 text-sm text-slate-300 sm:col-span-2">
+                  <span>Setup Tag Filter (multi)</span>
+                  <CheckboxPills options={(config?.tag_taxonomy?.setup ?? []).map((x: any) => String(x.value))} selected={setupTagFilters} onChange={setSetupTagFilters} />
+                </div>
+                <div className="flex flex-col gap-1 text-sm text-slate-300 sm:col-span-2">
+                  <span>SignalBar Filter (multi)</span>
+                  <CheckboxPills options={(config?.tag_taxonomy?.signal_bar ?? []).map((x: any) => String(x.value))} selected={signalBarFilters} onChange={setSignalBarFilters} />
+                </div>
                 <label className="flex items-center gap-2 text-sm text-slate-300 sm:mt-6">
                   <input
                     type="checkbox"
@@ -598,7 +629,7 @@ export default function AnalysisPage() {
           {insightsError && !insightsNoData ? (
             <p className="text-red-300">Error: {(insightsError as Error).message}</p>
           ) : null}
-          {insights ? <InsightsPanel insights={insights} setupFilter={setupFilter} breachesOnly={breachesOnly} /> : null}
+          {insights ? <InsightsPanel insights={insights} breachesOnly={breachesOnly} /> : null}
         </Card>
       )}
     </AppShell>
@@ -607,42 +638,73 @@ export default function AnalysisPage() {
 
 function InsightsPanel({
   insights,
-  setupFilter,
   breachesOnly,
 }: {
   insights: InsightsResponse;
-  setupFilter: string;
   breachesOnly: boolean;
 }) {
-  const normalizedSetupFilter = setupFilter.trim().toLowerCase();
-  const setupRows = (insights.setup_journal ?? []).filter((row) => {
-    if (!normalizedSetupFilter) return true;
-    const setup = String((row as Record<string, unknown>).Setup ?? "").toLowerCase();
-    return setup.includes(normalizedSetupFilter);
-  });
+  const setupRows = insights.setup_journal ?? [];
+  const appliedConfig = (insights.applied_config ?? {}) as Record<string, unknown>;
+  const analysisScope = (insights.analysis_scope ?? {}) as Record<string, string | number>;
+  const setupQualityRaw = (insights.setup_quality ?? {}) as Record<string, unknown>;
+  const setupSourceCounts = ((setupQualityRaw.SourceCounts as Record<string, number>) ?? {});
+  const setupQuality = Object.fromEntries(
+    Object.entries(setupQualityRaw).filter(([k]) => k !== "SourceCounts"),
+  ) as Record<string, string | number>;
+  const setupSourceRows = Object.entries(setupSourceCounts).map(([source, count]) => ({ Source: source, Count: count }));
   const compliance = insights.rule_compliance?.summary ?? {};
   const complianceDaily = (insights.rule_compliance?.daily ?? []).filter((row) => {
     if (!breachesOnly) return true;
     const count = Number((row as Record<string, unknown>).BreachCount ?? 0);
     return count > 0;
   });
-  const maeMfeOverall = insights.mae_mfe?.overall ?? {};
-  const maeMfeBySetup = (insights.mae_mfe?.by_setup ?? []).filter((row) => {
-    if (!normalizedSetupFilter) return true;
-    const setup = String((row as Record<string, unknown>).Setup ?? "").toLowerCase();
-    return setup.includes(normalizedSetupFilter);
-  });
+  const qualityByEntryHour = insights.execution_quality?.by_entry_hour ?? [];
+  const qualityByHoldBucket = insights.execution_quality?.by_hold_bucket ?? [];
   const playbookHighlights = insights.playbook?.highlights ?? [];
   const playbookStop = insights.playbook?.stop_doing ?? [];
   const playbookActions = insights.playbook?.action_items ?? [];
+  const playbookRationale = insights.playbook?.rationale;
   const monthlySummary = insights.monthly_report?.summary ?? {};
   const monthlyFocus = insights.monthly_report?.focus_points ?? [];
   const monthlyMarkdown = insights.monthly_report?.markdown ?? "";
+  const llmPromptMarkdown = insights.llm_prompt_markdown ?? "";
+
+  const exportMarkdown = (name: string, content: string) => {
+    if (!content) return;
+    const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div className="grid gap-4">
+      <div className="grid gap-4 xl:grid-cols-2">
+        <div>
+          <h3 className="mb-2 text-sm font-semibold text-slate-200">Applied Config</h3>
+          <pre className="rounded-lg border border-white/10 bg-white/5 p-2 text-xs text-slate-300 whitespace-pre-wrap">{JSON.stringify(appliedConfig, null, 2)}</pre>
+        </div>
+        <div>
+          <h3 className="mb-2 text-sm font-semibold text-slate-200">Analysis Scope</h3>
+          <SimpleKv kv={analysisScope} />
+        </div>
+      </div>
+
       <div>
         <h3 className="mb-2 text-sm font-semibold text-slate-200">Setup Journal</h3>
+        <SimpleKv kv={setupQuality} />
+        <div className="mt-2">
+          <p className="mb-1 text-xs uppercase tracking-[0.15em] text-slate-400">Setup Label Sources</p>
+          <SimpleTable rows={setupSourceRows} />
+        </div>
+        <div className="mt-2">
+          <p className="mb-1 text-xs uppercase tracking-[0.15em] text-slate-400">Setup Performance</p>
+        </div>
         <SimpleTable rows={setupRows} />
       </div>
 
@@ -655,10 +717,14 @@ function InsightsPanel({
           </div>
         </div>
         <div>
-          <h3 className="mb-2 text-sm font-semibold text-slate-200">MAE / MFE Analytics</h3>
-          <SimpleKv kv={maeMfeOverall} />
+          <h3 className="mb-2 text-sm font-semibold text-slate-200">Execution Quality</h3>
           <div className="mt-2">
-            <SimpleTable rows={maeMfeBySetup} />
+            <p className="mb-1 text-xs uppercase tracking-[0.15em] text-slate-400">Execution Quality by Entry Hour</p>
+            <SimpleTable rows={qualityByEntryHour} />
+          </div>
+          <div className="mt-3">
+            <p className="mb-1 text-xs uppercase tracking-[0.15em] text-slate-400">Execution Quality by Hold Bucket</p>
+            <SimpleTable rows={qualityByHoldBucket} />
           </div>
         </div>
       </div>
@@ -672,6 +738,33 @@ function InsightsPanel({
           <SimpleTable rows={playbookStop} />
           <p className="mb-1 mt-3 text-xs uppercase tracking-[0.15em] text-slate-400">Action Items</p>
           <SimpleTable rows={playbookActions} />
+          {playbookRationale ? (
+            <details className="mt-3 rounded-lg border border-white/10 bg-white/5 p-2">
+              <summary className="cursor-pointer text-xs uppercase tracking-[0.15em] text-slate-300">Playbook Rationale</summary>
+              <div className="mt-2 space-y-3">
+                <div>
+                  <p className="mb-1 text-xs uppercase tracking-[0.15em] text-slate-400">Breach Counts</p>
+                  <SimpleKv kv={(playbookRationale.breach_counts ?? {}) as Record<string, string | number>} />
+                </div>
+                <div>
+                  <p className="mb-1 text-xs uppercase tracking-[0.15em] text-slate-400">Worst Entry Hour Signal</p>
+                  <SimpleTable rows={playbookRationale.worst_entry_hour ? [playbookRationale.worst_entry_hour] : []} />
+                </div>
+                <div>
+                  <p className="mb-1 text-xs uppercase tracking-[0.15em] text-slate-400">Worst Hold Bucket Signal</p>
+                  <SimpleTable rows={playbookRationale.worst_hold_bucket ? [playbookRationale.worst_hold_bucket] : []} />
+                </div>
+                <div>
+                  <p className="mb-1 text-xs uppercase tracking-[0.15em] text-slate-400">Best Setup Signal</p>
+                  <SimpleTable rows={playbookRationale.best_setup ? [playbookRationale.best_setup] : []} />
+                </div>
+                <div>
+                  <p className="mb-1 text-xs uppercase tracking-[0.15em] text-slate-400">Weak Setup Signal</p>
+                  <SimpleTable rows={playbookRationale.weak_setup ? [playbookRationale.weak_setup] : []} />
+                </div>
+              </div>
+            </details>
+          ) : null}
         </div>
         <div>
           <h3 className="mb-2 text-sm font-semibold text-slate-200">Monthly Review Report</h3>
@@ -684,11 +777,75 @@ function InsightsPanel({
           {monthlyMarkdown ? (
             <details className="mt-3 rounded-lg border border-white/10 bg-white/5 p-2">
               <summary className="cursor-pointer text-xs uppercase tracking-[0.15em] text-slate-300">Auto Report (Markdown)</summary>
+              <div className="mt-2">
+                <button
+                  type="button"
+                  onClick={() => exportMarkdown("monthly_review_report.md", monthlyMarkdown)}
+                  className="rounded border border-white/20 px-2 py-1 text-xs text-slate-200 hover:border-accent hover:text-white"
+                >
+                  Export MD
+                </button>
+              </div>
               <pre className="mt-2 whitespace-pre-wrap text-xs text-slate-300">{monthlyMarkdown}</pre>
             </details>
           ) : null}
         </div>
       </div>
+
+      {llmPromptMarkdown ? (
+        <div>
+          <h3 className="mb-2 text-sm font-semibold text-slate-200">LLM Prompt Pack</h3>
+          <div className="mb-2">
+            <button
+              type="button"
+              onClick={() => exportMarkdown("trading_behavior_prompt_pack.md", llmPromptMarkdown)}
+              className="rounded border border-accent px-3 py-1.5 text-xs font-medium text-white hover:bg-accent hover:text-black"
+            >
+              Export Prompt MD
+            </button>
+          </div>
+          <details className="rounded-lg border border-white/10 bg-white/5 p-2">
+            <summary className="cursor-pointer text-xs uppercase tracking-[0.15em] text-slate-300">Preview Prompt</summary>
+            <pre className="mt-2 whitespace-pre-wrap text-xs text-slate-300">{llmPromptMarkdown}</pre>
+          </details>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function CheckboxPills({
+  options,
+  selected,
+  onChange,
+}: {
+  options: string[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  if (!options.length) {
+    return <p className="text-xs text-slate-500">No options.</p>;
+  }
+  const toggle = (v: string) => {
+    const exists = selected.includes(v);
+    onChange(exists ? selected.filter((x) => x !== v) : [...selected, v]);
+  };
+  return (
+    <div className="flex flex-wrap gap-2 rounded-lg border border-white/10 bg-white/5 p-2">
+      {options.map((v) => {
+        const active = selected.includes(v);
+        return (
+          <label key={v} className={`inline-flex cursor-pointer items-center gap-2 rounded-full border px-2 py-1 text-xs ${active ? "border-accent bg-accent/20 text-white" : "border-white/15 text-slate-300"}`}>
+            <input
+              type="checkbox"
+              checked={active}
+              onChange={() => toggle(v)}
+              className="h-3 w-3"
+            />
+            <span>{v}</span>
+          </label>
+        );
+      })}
     </div>
   );
 }

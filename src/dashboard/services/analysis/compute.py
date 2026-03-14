@@ -3,6 +3,7 @@ from dashboard.config.settings import DEFAULT_GRANULARITY, DEFAULT_ROLLING_WINDO
 from dashboard.config.analysis import RULE_COMPLIANCE_DEFAULTS, ANALYSIS_TIMEZONE
 import numpy as np
 from dashboard.services.analysis.schema import validate_performance_df
+import re
 
 def _coerce_window(window, fallback=DEFAULT_ROLLING_WINDOW):
     value = fallback if window is None else window
@@ -516,10 +517,31 @@ def performance_envelope(performance_df, granularity=DEFAULT_GRANULARITY):
     except Exception as e:
         raise ValueError(f"Failed to compute Performance Envelope for {granularity}: {str(e)}")
     
-def overtrading_detection(performance_df, cap_loss_per_trade=200, cap_trades_after_big_loss=5):
+def overtrading_detection(
+    performance_df,
+    cap_loss_per_trade=200,
+    cap_trades_after_big_loss=5,
+    max_consecutive_losses=3,
+    include_eth=True,
+    rth_start="08:30",
+    rth_end="15:00",
+):
     # Initialize empty DataFrames if performance_df is empty
     daily_columns = ['TradeDay', 'TradesPerDay', 'DailyPnL']
-    trade_columns = ['TradeIndex', 'R_multiple', 'IsPostLoss', 'TradeDay', 'ExitedAt', 'PnL(Net)', 'Size', 'Duration', 'TradeTag']
+    trade_columns = [
+        'TradeIndex',
+        'R_multiple',
+        'IsPostLoss',
+        'IsConsecutiveLossBreach',
+        'TradeDay',
+        'ExitedAt',
+        'PnL(Net)',
+        'Size',
+        'Duration',
+        'Session',
+        'BreachReason',
+        'TradeTag',
+    ]
     if performance_df.empty:
         return pd.DataFrame(columns=daily_columns), pd.DataFrame(columns=trade_columns)
     
@@ -534,6 +556,17 @@ def overtrading_detection(performance_df, cap_loss_per_trade=200, cap_trades_aft
         performance_df['ExitedAt'] = _to_cme(performance_df['ExitedAt'], 'ExitedAt').dt.tz_localize(None)
         performance_df['EnteredAt'] = _to_cme(performance_df['EnteredAt'], 'EnteredAt').dt.tz_localize(None)
         performance_df['TradeDay'] = performance_df['ExitedAt'].dt.floor("D")
+        start_t = pd.to_datetime(rth_start, format="%H:%M").time()
+        end_t = pd.to_datetime(rth_end, format="%H:%M").time()
+        performance_df['Session'] = np.where(
+            performance_df['EnteredAt'].dt.time.between(start_t, end_t),
+            'RTH',
+            'ETH',
+        )
+        if not include_eth:
+            performance_df = performance_df[performance_df['Session'] == 'RTH'].copy()
+            if performance_df.empty:
+                return pd.DataFrame(columns=daily_columns), pd.DataFrame(columns=trade_columns)
         
         # Daily aggregation for existing plots
         grouped = performance_df.groupby('TradeDay').agg({
@@ -561,45 +594,61 @@ def overtrading_detection(performance_df, cap_loss_per_trade=200, cap_trades_aft
         # Compute duration in minutes
         trade_df['Duration'] = (trade_df['ExitedAt'] - trade_df['EnteredAt']).dt.total_seconds() / 60
         
-        # Identify large loss trades and post-loss trades
+        # Identify large loss trades and explicit overtrading breaches.
         trade_df['IsLoss'] = trade_df['R_multiple'] <= -1
         trade_df['IsPostLoss'] = False
+        trade_df['IsConsecutiveLossBreach'] = False
+        trade_df['BreachReason'] = ""
+        trade_df['Session'] = np.where(
+            trade_df['EnteredAt'].dt.time.between(start_t, end_t),
+            'RTH',
+            'ETH',
+        )
+
+        # Consecutive loss breach: mark trades once streak exceeds max.
+        streak = 0
+        for idx in trade_df.index:
+            if bool(trade_df.loc[idx, 'IsLoss']):
+                streak += 1
+            else:
+                streak = 0
+            if streak > int(max_consecutive_losses):
+                trade_df.loc[idx, 'IsConsecutiveLossBreach'] = True
+
+        # Post-big-loss window: any immediate re-entry within configured trade-count window.
         for idx in trade_df[trade_df['IsLoss']].index:
             end_idx = min(idx + cap_trades_after_big_loss + 1, len(trade_df))
             trade_df.loc[idx + 1:end_idx - 1, 'IsPostLoss'] = True
-        
-        # Analyze post-loss trades for overtrading criteria
-        trade_df['TradeTag'] = 'LightBlue'  # Default to Blue
-        for idx in trade_df[trade_df['IsPostLoss']].index:
-            prev_losses = trade_df.index[(trade_df['IsLoss']) & (trade_df.index < idx)]
-            if len(prev_losses) == 0:
-                continue
-            loss_idx = int(prev_losses.max())
-            # Subsequent-trade window after the triggering big loss.
-            start_idx = loss_idx + 1
-            end_idx = min(loss_idx + cap_trades_after_big_loss + 1, len(trade_df))
-            subset = trade_df.iloc[start_idx:end_idx]
-            if subset.empty:
-                continue
-            
-            # Calculate averages for the subsequent trades.
-            avg_size = subset['Size'].mean()
-            avg_duration = subset['Duration'].mean()
-            
-            # Current trade criteria
-            current_trade = trade_df.loc[idx]
-            r_criterion = current_trade['R_multiple'] < 0
-            size_criterion = current_trade['Size'] > avg_size
-            duration_criterion = current_trade['Duration'] < avg_duration
-            
-            # Update TradeTag
-            if r_criterion and size_criterion and duration_criterion:
-                trade_df.loc[idx, 'TradeTag'] = 'DarkRed'
-            elif r_criterion or size_criterion or duration_criterion:
-                trade_df.loc[idx, 'TradeTag'] = 'LightCoral'
-        
+
+        # Explainable tags/reasons (no hidden heuristic scoring).
+        trade_df['TradeTag'] = 'LightBlue'
+        for idx in trade_df.index:
+            reasons = []
+            if bool(trade_df.loc[idx, 'IsConsecutiveLossBreach']):
+                reasons.append('consecutive_losses')
+            if bool(trade_df.loc[idx, 'IsPostLoss']):
+                reasons.append('reentry_after_big_loss')
+            if reasons:
+                trade_df.loc[idx, 'BreachReason'] = ", ".join(reasons)
+                trade_df.loc[idx, 'TradeTag'] = 'DarkRed' if len(reasons) > 1 else 'LightCoral'
+
         # Select relevant columns
-        trade_df = trade_df[['TradeIndex', 'R_multiple', 'IsPostLoss', 'TradeDay', 'ExitedAt', 'PnL(Net)', 'Size', 'Duration', 'TradeTag']]
+        trade_df = trade_df[
+            [
+                'TradeIndex',
+                'R_multiple',
+                'IsPostLoss',
+                'IsConsecutiveLossBreach',
+                'TradeDay',
+                'ExitedAt',
+                'PnL(Net)',
+                'Size',
+                'Duration',
+                'Session',
+                'BreachReason',
+                'TradeTag',
+            ]
+        ]
         
         return daily_df, trade_df
     
@@ -687,19 +736,76 @@ def kelly_criterion(performance_df):
         raise ValueError(f"Failed to compute Kelly Criterion: {str(e)}")
 
 
-def _setup_series(df: pd.DataFrame) -> pd.Series:
-    candidates = ["Setup", "setup", "Tag", "tag", "Strategy", "Pattern", "Playbook", "Type"]
+def _setup_series_with_source(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    # Only explicit setup/tag fields are considered setup labels.
+    # Do not use trade direction/type as setup taxonomy.
+    candidates = ["Setup", "setup", "Tag", "tag", "Strategy", "Pattern", "Playbook"]
+    labels = pd.Series([pd.NA] * len(df), index=df.index, dtype="object")
+    sources = pd.Series([pd.NA] * len(df), index=df.index, dtype="object")
     for col in candidates:
-        if col in df.columns:
-            return df[col].fillna("Unlabeled").astype(str)
-    return pd.Series(["Unlabeled"] * len(df), index=df.index, dtype="object")
+        if col not in df.columns:
+            continue
+        raw = df[col].astype(str).str.strip()
+        cleaned = raw.where(raw != "", pd.NA)
+        missing = labels.isna() & cleaned.notna()
+        labels = labels.fillna(cleaned)
+        sources.loc[missing] = col
+    return labels.fillna("Unlabeled").astype(str), sources.fillna("Unlabeled").astype(str)
+
+
+def _setup_series(df: pd.DataFrame) -> pd.Series:
+    labels, _ = _setup_series_with_source(df)
+    return labels
+
+
+def _split_setup_labels(value: object) -> list[str]:
+    raw = str(value or "").strip()
+    if not raw or raw.lower() == "unlabeled":
+        return ["Unlabeled"]
+    parts = [p.strip() for p in re.split(r"[|,;/]+", raw) if p and p.strip()]
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for p in parts:
+        k = p.lower()
+        if k in seen:
+            continue
+        seen.add(k)
+        deduped.append(p)
+    return deduped or ["Unlabeled"]
+
+
+def _setup_label_quality(df: pd.DataFrame) -> dict[str, object]:
+    if df.empty:
+        return {"TotalTrades": 0, "LabeledTrades": 0, "UnlabeledTrades": 0, "LabeledPct": 0.0, "PrimarySource": "none"}
+    labels, sources = _setup_series_with_source(df)
+    total = int(len(labels))
+    unlabeled = int((labels == "Unlabeled").sum())
+    labeled = total - unlabeled
+    source_counts = sources.value_counts().to_dict()
+    ranked_sources = sorted(
+        ((str(k), int(v)) for k, v in source_counts.items() if str(k) != "Unlabeled"),
+        key=lambda x: x[1],
+        reverse=True,
+    )
+    primary_source = ranked_sources[0][0] if ranked_sources else "none"
+    return {
+        "TotalTrades": total,
+        "LabeledTrades": labeled,
+        "UnlabeledTrades": unlabeled,
+        "LabeledPct": round((labeled / total * 100.0) if total > 0 else 0.0, 2),
+        "PrimarySource": primary_source,
+        "SourceCounts": {k: v for k, v in ranked_sources},
+    }
 
 
 def setup_journal(performance_df, min_trades=3):
     df = validate_performance_df(performance_df).copy()
     if df.empty:
         return pd.DataFrame(columns=["Setup", "Trades", "WinRate", "NetPnL", "AvgPnL", "Expectancy"])
-    df["SetupLabel"] = _setup_series(df)
+    setup_labels = _setup_series(df)
+    df["SetupTag"] = setup_labels.apply(_split_setup_labels)
+    df = df.explode("SetupTag").rename(columns={"SetupTag": "SetupLabel"})
+    df["SetupLabel"] = df["SetupLabel"].fillna("Unlabeled").astype(str).str.strip().replace("", "Unlabeled")
     grouped = (
         df.groupby("SetupLabel", observed=True)
         .agg(
@@ -810,77 +916,175 @@ def rule_compliance_score(
     return {"summary": summary, "daily": daily}
 
 
-def mae_mfe_analytics(performance_df, min_trades=3):
+def execution_quality_layer(performance_df, min_trades=3):
     df = validate_performance_df(performance_df).copy()
     if df.empty:
-        return {"overall": {}, "by_setup": pd.DataFrame(columns=["Setup", "Trades", "AvgMAE", "AvgMFE", "PayoffRatio"])}
-    df["Setup"] = _setup_series(df)
+        return {"by_entry_hour": [], "by_hold_bucket": []}
 
-    mfe_candidates = ["MFE", "MaxFavorableExcursion", "FavorableExcursion", "Runup"]
-    mae_candidates = ["MAE", "MaxAdverseExcursion", "AdverseExcursion", "Drawdown"]
-    mfe_col = next((c for c in mfe_candidates if c in df.columns), None)
-    mae_col = next((c for c in mae_candidates if c in df.columns), None)
-
-    derived_mfe = df["PnL(Net)"].clip(lower=0)
-    derived_mae = df["PnL(Net)"].clip(upper=0)
-
-    if mfe_col:
-        mfe_raw = pd.to_numeric(df[mfe_col], errors="coerce")
-        # MFE is a favorable excursion magnitude and should be non-negative.
-        df["MFE_Used"] = mfe_raw.abs().fillna(derived_mfe)
-        mfe_coverage = float(mfe_raw.notna().mean() * 100)
-    else:
-        df["MFE_Used"] = derived_mfe
-        mfe_coverage = 0.0
-    if mae_col:
-        mae_raw = pd.to_numeric(df[mae_col], errors="coerce")
-        # MAE is an adverse excursion and should be non-positive.
-        df["MAE_Used"] = (-mae_raw.abs()).fillna(derived_mae)
-        mae_coverage = float(mae_raw.notna().mean() * 100)
-    else:
-        df["MAE_Used"] = derived_mae
-        mae_coverage = 0.0
-
-    def _payoff(avg_mfe, avg_mae):
-        denom = abs(avg_mae) if abs(avg_mae) > 1e-10 else np.nan
-        return float(avg_mfe / denom) if pd.notna(denom) else 0.0
-
-    overall_avg_mae = float(df["MAE_Used"].mean())
-    overall_avg_mfe = float(df["MFE_Used"].mean())
-    overall = {
-        "Trades": int(len(df)),
-        "AvgMAE": round(overall_avg_mae, 2),
-        "AvgMFE": round(overall_avg_mfe, 2),
-        "PayoffRatio": round(_payoff(overall_avg_mfe, overall_avg_mae), 2),
-        "MFEColumn": mfe_col or "derived_from_pnl",
-        "MAEColumn": mae_col or "derived_from_pnl",
-        "MFERealCoveragePct": round(mfe_coverage, 2),
-        "MAERealCoveragePct": round(mae_coverage, 2),
-    }
-
-    by_setup = (
-        df.groupby("Setup", observed=True)
-        .agg(Trades=("PnL(Net)", "size"), AvgMAE=("MAE_Used", "mean"), AvgMFE=("MFE_Used", "mean"))
-        .reset_index()
+    df = df.copy()
+    df["EnteredAt"] = _to_cme(df["EnteredAt"], "EnteredAt")
+    df["ExitedAt"] = _to_cme(df["ExitedAt"], "ExitedAt")
+    df["DurationMin"] = (df["ExitedAt"] - df["EnteredAt"]).dt.total_seconds().div(60).clip(lower=0)
+    df["EntryHour"] = df["EnteredAt"].dt.hour
+    df["HoldBucket"] = pd.cut(
+        df["DurationMin"],
+        bins=[-0.0001, 2, 5, 15, 30, 60, 10_000],
+        labels=["0-2m", "2-5m", "5-15m", "15-30m", "30-60m", "60m+"],
+        ordered=True,
     )
-    by_setup = by_setup[by_setup["Trades"] >= int(min_trades)].copy()
-    by_setup["PayoffRatio"] = by_setup.apply(lambda r: _payoff(r["AvgMFE"], r["AvgMAE"]), axis=1)
-    by_setup["AvgMAE"] = by_setup["AvgMAE"].round(2)
-    by_setup["AvgMFE"] = by_setup["AvgMFE"].round(2)
-    by_setup["PayoffRatio"] = by_setup["PayoffRatio"].round(2)
-    by_setup = by_setup.sort_values(["PayoffRatio", "AvgMFE"], ascending=False)
-    return {"overall": overall, "by_setup": by_setup}
+
+    agg = {
+        "Trades": ("PnL(Net)", "size"),
+        "WinRate": ("PnL(Net)", lambda x: float((x > 0).mean() * 100)),
+        "AvgPnL": ("PnL(Net)", "mean"),
+    }
+    by_entry = df.groupby("EntryHour", observed=True).agg(**agg).reset_index()
+    by_hold = df.groupby("HoldBucket", observed=True).agg(**agg).reset_index()
+
+    by_entry = by_entry[by_entry["Trades"] >= int(min_trades)].copy()
+    by_hold = by_hold[by_hold["Trades"] >= int(min_trades)].copy()
+    for target in (by_entry, by_hold):
+        if target.empty:
+            continue
+        target["WinRate"] = target["WinRate"].round(2)
+        target["AvgPnL"] = target["AvgPnL"].round(2)
+
+    return {"by_entry_hour": by_entry.to_dict("records"), "by_hold_bucket": by_hold.to_dict("records")}
 
 
-def playbook_builder(performance_df, min_trades=5):
+def _collect_breach_counts(daily_df: pd.DataFrame) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    if daily_df.empty or "Breaches" not in daily_df.columns:
+        return counts
+    for raw in daily_df["Breaches"].astype(str):
+        if not raw or raw == "none":
+            continue
+        for token in raw.split(","):
+            key = token.strip()
+            if not key:
+                continue
+            counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _top_action_items(
+    *,
+    breach_counts: dict[str, int],
+    rules: dict[str, float],
+    worst_entry=None,
+    worst_hold=None,
+    best_setup=None,
+    weak_setup=None,
+) -> list[dict[str, object]]:
+    items: list[dict[str, object]] = []
+    if any(k.startswith("consecutive_losses>") for k in breach_counts):
+        items.append(
+            {
+                "Priority": "High",
+                "Why": f"Consecutive-loss breaches observed {sum(v for k, v in breach_counts.items() if k.startswith('consecutive_losses>'))} day(s).",
+                "Action": f"Hard stop after {int(rules['max_consecutive_losses'])} consecutive losses; no re-entry that day.",
+            }
+        )
+    if any(k.startswith("trades_after_big_loss>") for k in breach_counts):
+        items.append(
+            {
+                "Priority": "High",
+                "Why": f"Post-big-loss overtrading observed {sum(v for k, v in breach_counts.items() if k.startswith('trades_after_big_loss>'))} day(s).",
+                "Action": (
+                    f"After loss <= -{abs(float(rules['big_loss_threshold'])):.0f}, allow max "
+                    f"{int(rules['max_trades_after_big_loss'])} additional trade(s)."
+                ),
+            }
+        )
+    if any(k.startswith("daily_loss>") for k in breach_counts):
+        items.append(
+            {
+                "Priority": "High",
+                "Why": f"Daily loss cap breached {sum(v for k, v in breach_counts.items() if k.startswith('daily_loss>'))} day(s).",
+                "Action": f"Stop trading when intraday realized PnL reaches -{abs(float(rules['max_daily_loss'])):.0f}.",
+            }
+        )
+    if any(k.startswith("trades>") for k in breach_counts):
+        items.append(
+            {
+                "Priority": "Medium",
+                "Why": f"Trade-count limit breached {sum(v for k, v in breach_counts.items() if k.startswith('trades>'))} day(s).",
+                "Action": f"Set hard cap at {int(rules['max_trades_per_day'])} trades/day.",
+            }
+        )
+    if worst_entry:
+        items.append(
+            {
+                "Priority": "Medium",
+                "Why": f"Entry hour {worst_entry.get('EntryHour')} has weakest AvgPnL ({worst_entry.get('AvgPnL')}).",
+                "Action": f"Trade half-size or skip hour {worst_entry.get('EntryHour')} until 10-trade recheck.",
+            }
+        )
+    if worst_hold:
+        items.append(
+            {
+                "Priority": "Medium",
+                "Why": f"Hold bucket {worst_hold.get('HoldBucket')} has weakest AvgPnL ({worst_hold.get('AvgPnL')}).",
+                "Action": f"Reduce exposure in {worst_hold.get('HoldBucket')} holds; tighten invalidation.",
+            }
+        )
+    if best_setup:
+        items.append(
+            {
+                "Priority": "Medium",
+                "Why": f"{best_setup.get('Setup')} leads expectancy ({best_setup.get('Expectancy')}).",
+                "Action": f"Reserve first A-grade opportunity for {best_setup.get('Setup')} setup only.",
+            }
+        )
+    if weak_setup:
+        items.append(
+            {
+                "Priority": "Medium",
+                "Why": f"{weak_setup.get('Setup')} trails expectancy ({weak_setup.get('Expectancy')}).",
+                "Action": f"Pause {weak_setup.get('Setup')} for next 20 trades unless criteria is revised.",
+            }
+        )
+    if not items:
+        items.append(
+            {
+                "Priority": "Low",
+                "Why": "No major pattern concentration detected.",
+                "Action": "Keep current rules unchanged and re-evaluate after 20 additional trades.",
+            }
+        )
+    return items[:8]
+
+
+def playbook_builder(
+    performance_df,
+    *,
+    compliance_daily=None,
+    execution_quality=None,
+    rules=None,
+    min_trades=5,
+):
     journal = setup_journal(performance_df, min_trades=min_trades)
+    rules = rules or RULE_COMPLIANCE_DEFAULTS
+    execution_quality = execution_quality or {"by_entry_hour": [], "by_hold_bucket": []}
+    compliance_daily = compliance_daily if isinstance(compliance_daily, pd.DataFrame) else pd.DataFrame(compliance_daily or [])
     if journal.empty:
         return {
             "highlights": [],
             "stop_doing": [],
             "action_items": [
-                {"Priority": "Medium", "Item": "Not enough tagged trades yet. Keep journaling setups consistently."}
+                {
+                    "Priority": "Medium",
+                    "Why": "Too few labeled setup records for robust setup-level guidance.",
+                    "Action": "Label each trade with setup/context, then re-run insights after 20+ tagged trades.",
+                }
             ],
+            "rationale": {
+                "breach_counts": {},
+                "worst_entry_hour": None,
+                "worst_hold_bucket": None,
+                "best_setup": None,
+                "weak_setup": None,
+            },
         }
 
     winners = journal[journal["Expectancy"] > 0].head(3)
@@ -902,37 +1106,59 @@ def playbook_builder(performance_df, min_trades=5):
             "Trades": int(row["Trades"]),
             "WinRate": float(row["WinRate"]),
             "Expectancy": float(row["Expectancy"]),
-            "Action": "Reduce or pause this setup until rules are adjusted.",
+            "Action": "Pause this setup until expectancy improves over next review window.",
         }
         for _, row in losers.iterrows()
     ]
 
-    action_items = []
-    if highlights:
-        action_items.append(
-            {"Priority": "High", "Item": f"Focus first hour on {highlights[0]['Setup']} executions only."}
-        )
-    if stop_doing:
-        action_items.append(
-            {"Priority": "High", "Item": f"Disable {stop_doing[0]['Setup']} for the next review cycle."}
-        )
-    action_items.append(
-        {"Priority": "Medium", "Item": "Review every trade and assign a setup tag before next session."}
+    entry_rows = execution_quality.get("by_entry_hour", []) or []
+    hold_rows = execution_quality.get("by_hold_bucket", []) or []
+    worst_entry = min(entry_rows, key=lambda r: float(r.get("AvgPnL", 0))) if entry_rows else None
+    worst_hold = min(hold_rows, key=lambda r: float(r.get("AvgPnL", 0))) if hold_rows else None
+    best_setup = highlights[0] if highlights else None
+    weak_setup = stop_doing[0] if stop_doing else None
+    breach_counts = _collect_breach_counts(compliance_daily)
+
+    action_items = _top_action_items(
+        breach_counts=breach_counts,
+        rules={
+            "max_trades_per_day": int(rules.get("max_trades_per_day", 8)),
+            "max_consecutive_losses": int(rules.get("max_consecutive_losses", 3)),
+            "max_daily_loss": float(rules.get("max_daily_loss", 500)),
+            "big_loss_threshold": float(rules.get("big_loss_threshold", 200)),
+            "max_trades_after_big_loss": int(rules.get("max_trades_after_big_loss", 2)),
+        },
+        worst_entry=worst_entry,
+        worst_hold=worst_hold,
+        best_setup=best_setup,
+        weak_setup=weak_setup,
     )
-    return {"highlights": highlights, "stop_doing": stop_doing, "action_items": action_items}
+
+    return {
+        "highlights": highlights,
+        "stop_doing": stop_doing,
+        "action_items": action_items,
+        "rationale": {
+            "breach_counts": breach_counts,
+            "worst_entry_hour": worst_entry,
+            "worst_hold_bucket": worst_hold,
+            "best_setup": best_setup,
+            "weak_setup": weak_setup,
+        },
+    }
 
 
-def monthly_review_report(performance_df, month=None, min_trades=3):
+def monthly_review_report(performance_df, month=None, min_trades=3, applied_config=None, analysis_scope=None):
     df = validate_performance_df(performance_df).copy()
     if df.empty:
-        return {"summary": {}, "focus_points": [], "setup_summary": []}
+        return {"summary": {}, "focus_points": []}
 
     df["ExitedAt"] = _to_cme(df["ExitedAt"], "ExitedAt")
     df["Month"] = df["ExitedAt"].dt.tz_localize(None).dt.to_period("M").astype(str)
     target_month = month or df["Month"].max()
     mdf = df[df["Month"] == target_month].copy()
     if mdf.empty:
-        return {"summary": {"Month": target_month, "Trades": 0}, "focus_points": [], "setup_summary": []}
+        return {"summary": {"Month": target_month, "Trades": 0}, "focus_points": []}
 
     mdf["TradeDay"] = mdf["ExitedAt"].dt.strftime("%Y-%m-%d")
     daily = mdf.groupby("TradeDay", observed=True)["PnL(Net)"].sum().reset_index()
@@ -971,6 +1197,8 @@ def monthly_review_report(performance_df, month=None, min_trades=3):
         )
     markdown = (
         f"# Monthly Review ({summary['Month']})\n\n"
+        f"## Applied Config\n{applied_config if applied_config is not None else {}}\n\n"
+        f"## Analysis Scope\n{analysis_scope if analysis_scope is not None else {}}\n\n"
         f"- Trades: {summary['Trades']}\n"
         f"- Net PnL: {summary['NetPnL']}\n"
         f"- Win Rate: {summary['WinRate']}%\n"
@@ -987,8 +1215,9 @@ def monthly_review_report(performance_df, month=None, min_trades=3):
     return {
         "summary": summary,
         "focus_points": focus_points,
-        "setup_summary": setup_summary.to_dict("records"),
         "markdown": markdown,
+        "applied_config": applied_config if applied_config is not None else {},
+        "analysis_scope": analysis_scope if analysis_scope is not None else {},
     }
 
 
@@ -1000,33 +1229,215 @@ def _filter_by_month(performance_df, month=None):
     return df[period == str(month)].copy()
 
 
+def _filter_by_tags(performance_df, params=None):
+    params = params or {}
+    df = validate_performance_df(performance_df).copy()
+    if df.empty:
+        return df
+
+    def _selection_set(value):
+        vals: list[str] = []
+        if isinstance(value, list):
+            vals = [str(v).strip() for v in value if str(v).strip()]
+        elif isinstance(value, str):
+            vals = [p.strip() for p in re.split(r"[|,;/]+", value) if p.strip()]
+        elif value is not None:
+            raw = str(value).strip()
+            if raw:
+                vals = [raw]
+        return {v.lower() for v in vals}
+
+    phase_sel = _selection_set(params.get("phase"))
+    context_sel = _selection_set(params.get("context"))
+    setup_sel = _selection_set(params.get("setup"))
+    signal_sel = _selection_set(params.get("signal_bar"))
+
+    if phase_sel and "Phase" in df.columns:
+        df = df[df["Phase"].fillna("").astype(str).str.strip().str.lower().isin(phase_sel)].copy()
+        if df.empty:
+            return df
+    if context_sel and "Context" in df.columns:
+        df = df[df["Context"].fillna("").astype(str).str.strip().str.lower().isin(context_sel)].copy()
+        if df.empty:
+            return df
+    if signal_sel and "SignalBar" in df.columns:
+        df = df[df["SignalBar"].fillna("").astype(str).str.strip().str.lower().isin(signal_sel)].copy()
+        if df.empty:
+            return df
+    if setup_sel and "Setup" in df.columns:
+        parts = df["Setup"].fillna("").astype(str).apply(_split_setup_labels)
+        mask = parts.apply(lambda vals: any(str(v).strip().lower() in setup_sel for v in vals))
+        df = df[mask].copy()
+    return df
+
+
+def _normalized_selection(params, key: str) -> list[str]:
+    raw = (params or {}).get(key)
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        vals = [str(v).strip() for v in raw if str(v).strip()]
+    elif isinstance(raw, str):
+        vals = [p.strip() for p in re.split(r"[|,;/]+", raw) if p.strip()]
+    else:
+        v = str(raw).strip()
+        vals = [v] if v else []
+    out: list[str] = []
+    seen: set[str] = set()
+    for v in vals:
+        k = v.lower()
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(v)
+    return out
+
+
+def _build_applied_config(params, defaults):
+    params = params or {}
+    defaults = defaults or {}
+    return {
+        "min_trades": int(params.get("min_trades", 3)),
+        "month": str(params.get("month", "") or ""),
+        "filters": {
+            "phase": _normalized_selection(params, "phase"),
+            "context": _normalized_selection(params, "context"),
+            "setup": _normalized_selection(params, "setup"),
+            "signal_bar": _normalized_selection(params, "signal_bar"),
+        },
+        "rule_thresholds": {
+            "max_trades_per_day": int(params.get("max_trades_per_day", defaults.get("max_trades_per_day", 8))),
+            "max_consecutive_losses": int(params.get("max_consecutive_losses", defaults.get("max_consecutive_losses", 3))),
+            "max_daily_loss": float(params.get("max_daily_loss", defaults.get("max_daily_loss", 500))),
+            "big_loss_threshold": float(params.get("big_loss_threshold", defaults.get("big_loss_threshold", 200))),
+            "max_trades_after_big_loss": int(
+                params.get("max_trades_after_big_loss", defaults.get("max_trades_after_big_loss", 2))
+            ),
+        },
+    }
+
+
 def insights_bundle(performance_df, params=None):
     params = params or {}
-    min_trades = int(params.get("min_trades", 3))
-    scoped_df = _filter_by_month(performance_df, month=params.get("month"))
     rules = RULE_COMPLIANCE_DEFAULTS
+    applied_config = _build_applied_config(params, rules)
+    min_trades = int(applied_config["min_trades"])
+
+    base_df = validate_performance_df(performance_df).copy()
+    month_df = _filter_by_month(base_df, month=applied_config.get("month"))
+    scoped_df = _filter_by_tags(month_df, params=applied_config.get("filters"))
+    analysis_scope = {
+        "total_trades_input": int(len(base_df)),
+        "after_month_filter": int(len(month_df)),
+        "after_tag_filters": int(len(scoped_df)),
+    }
+
     setup = setup_journal(scoped_df, min_trades=min_trades)
+    setup_quality = _setup_label_quality(scoped_df)
     compliance = rule_compliance_score(
         scoped_df,
-        max_trades_per_day=int(params.get("max_trades_per_day", rules["max_trades_per_day"])),
-        max_consecutive_losses=int(params.get("max_consecutive_losses", rules["max_consecutive_losses"])),
-        max_daily_loss=float(params.get("max_daily_loss", rules["max_daily_loss"])),
-        big_loss_threshold=float(params.get("big_loss_threshold", rules["big_loss_threshold"])),
-        max_trades_after_big_loss=int(params.get("max_trades_after_big_loss", rules["max_trades_after_big_loss"])),
+        max_trades_per_day=int(applied_config["rule_thresholds"]["max_trades_per_day"]),
+        max_consecutive_losses=int(applied_config["rule_thresholds"]["max_consecutive_losses"]),
+        max_daily_loss=float(applied_config["rule_thresholds"]["max_daily_loss"]),
+        big_loss_threshold=float(applied_config["rule_thresholds"]["big_loss_threshold"]),
+        max_trades_after_big_loss=int(applied_config["rule_thresholds"]["max_trades_after_big_loss"]),
     )
-    mae_mfe = mae_mfe_analytics(scoped_df, min_trades=min_trades)
-    playbook = playbook_builder(scoped_df, min_trades=max(min_trades, 5))
-    monthly = monthly_review_report(scoped_df, month=params.get("month"), min_trades=min_trades)
+    execution_quality = execution_quality_layer(scoped_df, min_trades=min_trades)
+    playbook = playbook_builder(
+        scoped_df,
+        compliance_daily=compliance["daily"],
+        execution_quality=execution_quality,
+        rules=applied_config["rule_thresholds"],
+        min_trades=max(min_trades, 5),
+    )
+    monthly = monthly_review_report(
+        scoped_df,
+        month=applied_config.get("month"),
+        min_trades=min_trades,
+        applied_config=applied_config,
+        analysis_scope=analysis_scope,
+    )
+    llm_prompt_markdown = _build_llm_prompt_markdown(
+        setup=setup,
+        setup_quality=setup_quality,
+        compliance=compliance,
+        execution_quality=execution_quality,
+        playbook=playbook,
+        monthly=monthly,
+        applied_config=applied_config,
+        analysis_scope=analysis_scope,
+    )
     return {
+        "applied_config": applied_config,
+        "analysis_scope": analysis_scope,
         "setup_journal": setup.to_dict("records"),
+        "setup_quality": setup_quality,
         "rule_compliance": {
             "summary": compliance["summary"],
             "daily": compliance["daily"].to_dict("records"),
         },
-        "mae_mfe": {
-            "overall": mae_mfe["overall"],
-            "by_setup": mae_mfe["by_setup"].to_dict("records"),
-        },
+        "execution_quality": execution_quality,
         "playbook": playbook,
         "monthly_report": monthly,
+        "llm_prompt_markdown": llm_prompt_markdown,
     }
+
+
+def _build_llm_prompt_markdown(setup, setup_quality, compliance, execution_quality, playbook, monthly, applied_config, analysis_scope):
+    setup_rows = setup.head(10).to_dict("records") if hasattr(setup, "head") else []
+    compliance_daily = compliance.get("daily")
+    if hasattr(compliance_daily, "tail"):
+        compliance_rows = compliance_daily.tail(15).to_dict("records")
+    else:
+        compliance_rows = []
+    quality_entry_rows = execution_quality.get("by_entry_hour", [])[:10]
+    quality_hold_rows = execution_quality.get("by_hold_bucket", [])[:10]
+    playbook_actions = playbook.get("action_items", [])[:8]
+    monthly_summary = monthly.get("summary", {})
+    monthly_focus = monthly.get("focus_points", [])
+
+    def _rows_to_md(rows):
+        if not rows:
+            return "- none"
+        lines = []
+        for row in rows:
+            items = [f"{k}={row[k]}" for k in row.keys()]
+            lines.append(f"- {', '.join(items)}")
+        return "\n".join(lines)
+
+    return (
+        "# Trading Behavior Analysis Prompt Pack\n\n"
+        "You are a performance coach for intraday futures trading. Use the structured data below and avoid generic advice.\n\n"
+        "## Requested Output From LLM\n"
+        "- 1) Root-cause diagnosis of losses, with evidence from the tables\n"
+        "- 2) Rule changes with concrete numeric thresholds (not vague language)\n"
+        "- 3) RTH-first execution plan and ETH policy recommendation\n"
+        "- 4) Next 5 trading-day checklist with measurable pass/fail criteria\n"
+        "- 5) Position-sizing and stop logic changes after consecutive losses\n\n"
+        "## Constraints\n"
+        "- Prioritize preserving downside and reducing behavioral mistakes.\n"
+        "- Do not propose increasing risk before breach frequency improves.\n"
+        "- Separate strategy edge issues from execution discipline issues.\n\n"
+        f"## Applied Config\n```json\n{applied_config}\n```\n\n"
+        f"## Analysis Scope\n```json\n{analysis_scope}\n```\n\n"
+        "## Setup Label Quality\n```json\n"
+        + f"{setup_quality}\n```\n"
+        + "\n\n"
+        "## Setup Journal (Top Rows)\n"
+        + _rows_to_md(setup_rows)
+        + "\n\n## Rule Compliance Summary\n```json\n"
+        + f"{compliance.get('summary', {})}\n```\n"
+        + "\n\n## Rule Compliance Daily (Recent)\n"
+        + _rows_to_md(compliance_rows)
+        + "\n\n## Execution Quality By Entry Hour\n"
+        + _rows_to_md(quality_entry_rows)
+        + "\n\n## Execution Quality By Hold Bucket\n"
+        + _rows_to_md(quality_hold_rows)
+        + "\n\n## Playbook Actions\n"
+        + _rows_to_md(playbook_actions)
+        + "\n\n## Monthly Summary\n```json\n"
+        + f"{monthly_summary}\n```\n"
+        + "\n\n## Monthly Focus Points\n"
+        + ("\n".join([f"- {line}" for line in monthly_focus]) if monthly_focus else "- none")
+        + "\n"
+    )

@@ -1,4 +1,4 @@
-.PHONY: install run run-dev run-dev-data run-dev-performance \
+.PHONY: install run run-dev run-dev-data run-dev-performance scan \
         docker-up docker-down docker-logs docker-rebuild docker-ps \
         docker-job-trading docker-job-perf clean help
 
@@ -34,6 +34,22 @@ run-dev-data:
 ## Process temp performance CSVs if any (idempotent) in dev
 run-dev-performance:
 	$(PY) src/dashboard/utils/performance_acquisition.py
+
+## Full dry scan: syntax, security, tests (+optional frontend checks)
+scan:
+	@echo "==> Python compile check"
+	PYTHONPATH=src $(PY) -m compileall -q src test jobs wsgi.py test_environment.py
+	@echo "==> Security scan (bandit: src + jobs)"
+	PYTHONPATH=src $(PY) -m bandit -q -r src jobs
+	@echo "==> Backend tests"
+	PYTHONPATH=src $(PY) -m pytest -q
+	@echo "==> Frontend checks (optional)"
+	@if command -v npm >/dev/null 2>&1; then \
+		npm --prefix web run -s typecheck; \
+		npm --prefix web run -s lint; \
+	else \
+		echo "npm not found; skipping frontend checks"; \
+	fi
 
 # -------- Docker/Compose helpers --------
 
@@ -82,6 +98,7 @@ help:
 	@echo "  run-dev             - run Dash dev server"
 	@echo "  run-dev-data        - run data acquisition now without Docker locally"
 	@echo "  run-dev-performance - process temp performance CSVs if present without Docker locally"
+	@echo "  scan                - compile + bandit + pytest (+frontend checks if npm exists)"
 	@echo "  docker-up           - docker compose up -d"
 	@echo "  docker-down         - docker compose down"
 	@echo "  docker-rebuild      - rebuild image(s) and restart"

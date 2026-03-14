@@ -1,6 +1,7 @@
 import glob
 import logging
 import os
+import re
 import time
 from collections import deque
 from datetime import timedelta
@@ -11,7 +12,7 @@ import pytz
 import yfinance as yf
 
 from dashboard.config.settings import PERFORMANCE_DIR, TIMEZONE, PERFORMANCE_CSV
-from dashboard.config.env import TEMP_PERF_DIR
+from dashboard.config.env import TEMP_PERF_DIR, BASE_DIR
 from dashboard.services.portfolio import sync_trade_sum_from_performance_rows
 from dashboard.services.utils.trade_enrichment import ensure_trade_id, merge_trade_labels
 from dashboard.services.utils.trade_journal import sync_trade_journal
@@ -27,6 +28,51 @@ TRADE_SIGNATURE_COLUMNS = [
     "Size",
     "Type",
 ]
+
+CONTRACT_SPECS_CSV = BASE_DIR / "data" / "future" / "contract_specs.csv"
+_DEFAULT_POINT_VALUES = {
+    "MES": 5.0,
+    "MNQ": 2.0,
+    "M2K": 5.0,
+    "M6E": 12500.0,
+    "M6B": 6250.0,
+    "MBT": 0.1,
+    "MET": 0.1,
+}
+
+
+def _symbol_root(raw_symbol: object) -> str:
+    sym = str(raw_symbol or "").strip().upper()
+    if not sym:
+        return ""
+    # Remove exchange suffix, e.g. MESH26.CME -> MESH26
+    sym = sym.split(".")[0]
+    # Match futures code with month code + year (e.g. MESH26 -> MES)
+    m = re.match(r"^([A-Z]+?)([FGHJKMNQUVXZ])(\d{1,2})$", sym)
+    if m:
+        return m.group(1)
+    # Fallback to leading alpha token.
+    m2 = re.match(r"^([A-Z]+)", sym)
+    return m2.group(1) if m2 else sym
+
+
+def _load_point_values() -> dict[str, float]:
+    specs = dict(_DEFAULT_POINT_VALUES)
+    if CONTRACT_SPECS_CSV.exists():
+        try:
+            df = pd.read_csv(CONTRACT_SPECS_CSV)
+            if {"symbol", "point_value"}.issubset(df.columns):
+                for _, row in df.iterrows():
+                    root = _symbol_root(row.get("symbol"))
+                    if not root:
+                        continue
+                    try:
+                        specs[root] = float(row.get("point_value"))
+                    except (TypeError, ValueError):
+                        continue
+        except (OSError, pd.errors.ParserError) as exc:
+            logger.warning("Failed to load contract specs from %s: %s", CONTRACT_SPECS_CSV, exc)
+    return specs
 
 
 def _sort_combined(df: pd.DataFrame) -> pd.DataFrame:
@@ -88,9 +134,22 @@ def process_csv(file_path):
     # Initialize round trips list
     round_trips = []
 
+    point_values = _load_point_values()
+
     # Group trades by symbol
     for symbol in df['Symbol'].unique():
         symbol_df = df[df['Symbol'] == symbol].copy()
+        symbol_root = _symbol_root(symbol)
+        point_value = point_values.get(symbol_root)
+        if point_value is None:
+            point_value = _DEFAULT_POINT_VALUES.get("MES", 5.0)
+            logger.warning(
+                "Missing point_value for symbol '%s' (root '%s'); defaulting to %.2f. Add row to %s",
+                symbol,
+                symbol_root,
+                point_value,
+                CONTRACT_SPECS_CSV,
+            )
 
         # Initialize queues for this symbol
         buy_trades = deque()
@@ -128,7 +187,7 @@ def process_csv(file_path):
                 entry_price = buy['Price']
                 exit_price = sell['Price']
                 fees = buy['FeePerUnit'] + sell['FeePerUnit']
-                pnl = (exit_price - entry_price) * 5 - fees
+                pnl = (exit_price - entry_price) * point_value - fees
             else:
                 trade_type = 'Short'
                 entered_at = sell['Time']
@@ -136,7 +195,7 @@ def process_csv(file_path):
                 entry_price = sell['Price']
                 exit_price = buy['Price']
                 fees = buy['FeePerUnit'] + sell['FeePerUnit']
-                pnl = (entry_price - exit_price) * 5 - fees
+                pnl = (entry_price - exit_price) * point_value - fees
 
             # Calculate duration
             trade_duration_seconds = (exited_at - entered_at).total_seconds()

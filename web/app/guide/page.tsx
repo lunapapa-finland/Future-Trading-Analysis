@@ -3,6 +3,8 @@
 import { useMemo, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { Card } from "@/components/ui/card";
+import { getTagTaxonomy } from "@/lib/api";
+import { useQuery } from "@tanstack/react-query";
 
 const workflow = [
   {
@@ -37,7 +39,7 @@ const beforeSession = [
   "Use 0-DTE call/put wall context: OI > 3000, volume > 3000, and OI ratio > 6 as dynamic levels.",
 ];
 
-const phaseItems = [
+const fallbackPhaseItems = [
   {
     text: "Open",
     hint: "Classify trend vs TR quickly, identify opening reversal vs continuation at major S/R, and watch for MM potential after pullbacks.",
@@ -52,7 +54,7 @@ const phaseItems = [
   },
 ];
 
-const contextItems = [
+const fallbackContextItems = [
   { text: "TTR", hint: "Very tight range. Prefer patience and tight-risk scalp logic." },
   { text: "TR", hint: "Two-leg or multi-leg behavior. Avoid treating every move as trend." },
   { text: "Stair Channel", hint: "Trend with pauses/retests; monitor step quality." },
@@ -60,7 +62,7 @@ const contextItems = [
   { text: "Strong Trend", hint: "Trend-side setups favored; counter-trend quality must be exceptional." },
 ];
 
-const setupItems = [
+const fallbackSetupItems = [
   "Wedge",
   "DB/DT",
   "Big Surprise bar w/ follow-through",
@@ -81,7 +83,7 @@ const setupItems = [
   "50% Pullback (mainly strong trend context)",
 ];
 
-const signalItems = [
+const fallbackSignalItems = [
   { text: "Close at High", hint: "Momentum confirmation for long-side strength." },
   { text: "Close at Middle", hint: "Neutral close, needs stronger context confirmation." },
   { text: "Close at Low", hint: "Momentum confirmation for short-side strength." },
@@ -113,7 +115,29 @@ export default function GuidePage() {
   const [size, setSize] = useState(1);
   const [tpPrice, setTpPrice] = useState(6010);
   const [stopPrice, setStopPrice] = useState(5990);
+  const { data: taxonomy } = useQuery({
+    queryKey: ["tag-taxonomy"],
+    queryFn: () => getTagTaxonomy(),
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
   const activeMeta = workflow[activeStep];
+  const phaseItems = useMemo(() => {
+    const fromApi = (taxonomy?.phase ?? []).map((x) => ({ text: x.value, hint: x.hint || "" }));
+    return fromApi.length ? fromApi : fallbackPhaseItems;
+  }, [taxonomy?.phase]);
+  const contextItems = useMemo(() => {
+    const fromApi = (taxonomy?.context ?? []).map((x) => ({ text: x.value, hint: x.hint || "" }));
+    return fromApi.length ? fromApi : fallbackContextItems;
+  }, [taxonomy?.context]);
+  const setupItems = useMemo(() => {
+    const fromApi = (taxonomy?.setup ?? []).map((x) => x.value);
+    return fromApi.length ? fromApi : fallbackSetupItems;
+  }, [taxonomy?.setup]);
+  const signalItems = useMemo(() => {
+    const fromApi = (taxonomy?.signal_bar ?? []).map((x) => ({ text: x.value, hint: x.hint || "" }));
+    return fromApi.length ? fromApi : fallbackSignalItems;
+  }, [taxonomy?.signal_bar]);
   const progressPct = useMemo(() => ((activeStep + 1) / workflow.length) * 100, [activeStep]);
   const contractValuePerPoint = pricePerTick * ticksPerPoint;
   const onQuarterTick = (v: number) => Number.isFinite(v) && Math.abs(v * 4 - Math.round(v * 4)) < 1e-9;

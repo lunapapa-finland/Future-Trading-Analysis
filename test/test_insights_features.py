@@ -50,11 +50,33 @@ def test_setup_journal_and_playbook():
     assert set(journal["Setup"].tolist()) == {"ORBreak", "Fade"}
     assert "Expectancy" in journal.columns
 
-    playbook = compute.playbook_builder(df, min_trades=2)
+    compliance = compute.rule_compliance_score(
+        df,
+        max_trades_per_day=1,
+        max_consecutive_losses=1,
+        max_daily_loss=40,
+        big_loss_threshold=40,
+        max_trades_after_big_loss=0,
+    )
+    quality = compute.execution_quality_layer(df, min_trades=1)
+    playbook = compute.playbook_builder(
+        df,
+        compliance_daily=compliance["daily"],
+        execution_quality=quality,
+        rules={
+            "max_trades_per_day": 1,
+            "max_consecutive_losses": 1,
+            "max_daily_loss": 40,
+            "big_loss_threshold": 40,
+            "max_trades_after_big_loss": 0,
+        },
+        min_trades=2,
+    )
     assert "highlights" in playbook
     assert "stop_doing" in playbook
     assert "action_items" in playbook
-    assert len(playbook["action_items"]) >= 1
+    assert len(playbook["action_items"]) >= 3
+    assert {"Priority", "Why", "Action"}.issubset(set(playbook["action_items"][0].keys()))
 
 
 def test_rule_compliance_and_monthly_report():
@@ -71,33 +93,20 @@ def test_rule_compliance_and_monthly_report():
     assert "markdown" in monthly
 
 
-def test_mae_mfe_and_bundle():
+def test_execution_quality_and_bundle():
     df = _fixture_df()
-    mm = compute.mae_mfe_analytics(df, min_trades=2)
-    assert "overall" in mm and "by_setup" in mm
-    assert mm["overall"]["Trades"] == len(df)
-    assert len(mm["by_setup"]) == 2
+    quality = compute.execution_quality_layer(df, min_trades=1)
+    assert "by_entry_hour" in quality and "by_hold_bucket" in quality
+    assert len(quality["by_entry_hour"]) >= 1
+    assert len(quality["by_hold_bucket"]) >= 1
 
     bundle = compute.insights_bundle(df, params={"min_trades": 2})
     assert "setup_journal" in bundle
     assert "rule_compliance" in bundle
-    assert "mae_mfe" in bundle
+    assert "execution_quality" in bundle
     assert "playbook" in bundle
     assert "monthly_report" in bundle
     assert "markdown" in bundle["monthly_report"]
-
-
-def test_mae_mfe_prefers_real_columns_with_fallback():
-    df = _fixture_df().copy()
-    df["MFE"] = [120, 30, None, 40, 150, None]
-    df["MAE"] = [20, 70, None, 15, 25, None]  # positive source values should normalize as adverse (negative)
-    mm = compute.mae_mfe_analytics(df, min_trades=2)
-    assert mm["overall"]["MFEColumn"] == "MFE"
-    assert mm["overall"]["MAEColumn"] == "MAE"
-    assert 0 < mm["overall"]["MFERealCoveragePct"] < 100
-    assert 0 < mm["overall"]["MAERealCoveragePct"] < 100
-    assert mm["overall"]["AvgMFE"] > 0
-    assert mm["overall"]["AvgMAE"] <= 0
 
 
 def test_insights_bundle_month_scopes_all_sections():
@@ -110,6 +119,16 @@ def test_insights_bundle_month_scopes_all_sections():
     total_trades_setup = sum(int(r.get("Trades", 0)) for r in bundle["setup_journal"])
     assert total_trades_setup == 6
 
-    assert int(bundle["mae_mfe"]["overall"]["Trades"]) == 6
+    by_entry = bundle["execution_quality"]["by_entry_hour"]
+    assert sum(int(r.get("Trades", 0)) for r in by_entry) == 6
 
     assert int(bundle["rule_compliance"]["summary"]["DaysAnalyzed"]) == 3
+
+
+def test_setup_journal_explodes_multi_setup_tags():
+    df = _fixture_df().copy()
+    df.loc[0, "Setup"] = "Wedge | BO + Follow-through"
+    journal = compute.setup_journal(df, min_trades=1)
+    names = set(journal["Setup"].tolist())
+    assert "Wedge" in names
+    assert "BO + Follow-through" in names

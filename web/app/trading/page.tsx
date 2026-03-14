@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { CandlesChart } from "@/components/charts/candles-chart";
 import { SymbolSelect } from "@/components/forms/symbol-select";
 import { TimeframeSelect } from "@/components/forms/timeframe-select";
-import { getTradingSession } from "@/lib/api";
+import { getTagTaxonomy, getTradingSession, postJournalSetupTags } from "@/lib/api";
 import { resampleCandles } from "@/lib/timeframes";
 import { Candle, Timeframe, TradeMarker } from "@/lib/types";
 import { useEffect, useMemo, useState } from "react";
@@ -28,16 +28,29 @@ export default function TradingPage() {
   const [sizeFilter, setSizeFilter] = useState("");
   const [playbackSlice, setPlaybackSlice] = useState<Candle[]>([]);
   const [playbackIndex, setPlaybackIndex] = useState(0);
+  const [tagDrafts, setTagDrafts] = useState<Record<string, { Phase: string; Context: string; Setup: string; SignalBar: string }>>({});
+  const [setupSaving, setSetupSaving] = useState(false);
+  const [setupMessage, setSetupMessage] = useState<string>("");
   const today = new Date().toISOString().slice(0, 10);
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
 
-  const { data, isFetching, error } = useQuery({
+  const { data, isFetching, error, refetch } = useQuery({
     queryKey: ["session", symbol, startDate, endDate],
     queryFn: () => getTradingSession({ symbol, start: startDate, end: endDate }),
     staleTime: 30_000,
     refetchOnWindowFocus: false
   });
+  const { data: taxonomy } = useQuery({
+    queryKey: ["tag-taxonomy"],
+    queryFn: () => getTagTaxonomy(),
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const phaseOptions = useMemo(() => (taxonomy?.phase ?? []).map((x) => x.value), [taxonomy?.phase]);
+  const contextOptions = useMemo(() => (taxonomy?.context ?? []).map((x) => x.value), [taxonomy?.context]);
+  const setupOptions = useMemo(() => (taxonomy?.setup ?? []).map((x) => x.value), [taxonomy?.setup]);
+  const signalOptions = useMemo(() => (taxonomy?.signal_bar ?? []).map((x) => x.value), [taxonomy?.signal_bar]);
 
   const viewData = useMemo(() => {
     const source = data?.future ?? [];
@@ -172,6 +185,127 @@ export default function TradingPage() {
     const low = Math.min(...viewData.map((b) => b.low));
     return { open, high, low, close };
   }, [viewData]);
+
+  const makeTradeKey = (row: Record<string, unknown>) => {
+    const tid = String(row["trade_id"] || "").trim();
+    if (tid) return `tid:${tid}`;
+    return [
+      String(row["TradeDay"] || "").trim(),
+      String(row["ContractName"] || "").trim(),
+      String(row["IntradayIndex"] || "").trim()
+    ].join("|");
+  };
+
+  const normalizeSetupString = (v: string) => {
+    const vals = v
+      .replace(/;/g, "|")
+      .replace(/,/g, "|")
+      .split("|")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const out: string[] = [];
+    const seen = new Set<string>();
+    vals.forEach((s) => {
+      const k = s.toLowerCase();
+      if (seen.has(k)) return;
+      seen.add(k);
+      out.push(s);
+    });
+    return out.join(" | ");
+  };
+  const splitSetupValues = (v: string) => normalizeSetupString(v).split("|").map((s) => s.trim()).filter(Boolean);
+  const toggleSetupChoice = (row: Record<string, unknown>, option: string) => {
+    const current = splitSetupValues(getDraft(row).Setup);
+    const has = current.some((x) => x.toLowerCase() === option.toLowerCase());
+    const next = has ? current.filter((x) => x.toLowerCase() !== option.toLowerCase()) : [...current, option];
+    setDraftField(row, "Setup", next.join(" | "));
+  };
+
+  const getDraft = (row: Record<string, unknown>) => {
+    const key = makeTradeKey(row);
+    const existing = tagDrafts[key];
+    if (existing) return existing;
+    return {
+      Phase: String(row["Phase"] || ""),
+      Context: String(row["Context"] || ""),
+      Setup: String(row["Setup"] || ""),
+      SignalBar: String(row["SignalBar"] || ""),
+    };
+  };
+
+  const setDraftField = (row: Record<string, unknown>, field: "Phase" | "Context" | "Setup" | "SignalBar", value: string) => {
+    const key = makeTradeKey(row);
+    setTagDrafts((prev) => ({
+      ...prev,
+      [key]: {
+        ...getDraft(row),
+        ...(prev[key] || {}),
+        [field]: value,
+      },
+    }));
+  };
+
+  const saveSetupTags = async () => {
+    const rows = (data?.performance || []) as Record<string, unknown>[];
+    const changed = rows
+      .map((row) => {
+        const key = makeTradeKey(row);
+        const draft = tagDrafts[key];
+        if (draft == null) return null;
+        const currentSetup = normalizeSetupString(String(row["Setup"] || ""));
+        const currentPhase = String(row["Phase"] || "").trim();
+        const currentContext = String(row["Context"] || "").trim();
+        const currentSignal = String(row["SignalBar"] || "").trim();
+        const nextSetup = normalizeSetupString(draft.Setup || "");
+        const nextPhase = String(draft.Phase || "").trim();
+        const nextContext = String(draft.Context || "").trim();
+        const nextSignal = String(draft.SignalBar || "").trim();
+        if (
+          nextSetup === currentSetup &&
+          nextPhase === currentPhase &&
+          nextContext === currentContext &&
+          nextSignal === currentSignal
+        ) {
+          return null;
+        }
+        return {
+          trade_id: String(row["trade_id"] || "").trim() || undefined,
+          TradeDay: String(row["TradeDay"] || "").trim() || undefined,
+          ContractName: String(row["ContractName"] || "").trim() || undefined,
+          IntradayIndex: String(row["IntradayIndex"] || "").trim() || undefined,
+          Phase: nextPhase,
+          Context: nextContext,
+          SignalBar: nextSignal,
+          setups: nextSetup,
+        };
+      })
+      .filter(Boolean) as Array<{
+        trade_id?: string;
+        TradeDay?: string;
+        ContractName?: string;
+        IntradayIndex?: string;
+        Phase?: string;
+        Context?: string;
+        SignalBar?: string;
+        setups: string;
+      }>;
+    if (!changed.length) {
+      setSetupMessage("No tag changes to save.");
+      return;
+    }
+    try {
+      setSetupSaving(true);
+      setSetupMessage("");
+      const resp = await postJournalSetupTags({ rows: changed });
+      setTagDrafts({});
+      setSetupMessage(`Saved setup tags: updated ${resp.updated}, inserted ${resp.inserted}.`);
+      await refetch();
+    } catch (e) {
+      setSetupMessage(`Failed to save tags: ${(e as Error).message}`);
+    } finally {
+      setSetupSaving(false);
+    }
+  };
 
 
   useEffect(() => {
@@ -362,6 +496,18 @@ export default function TradingPage() {
           <div className="space-y-4">
             <StatGrid stats={{ ...(data.stats || {}), duration_bins: durationBins }} />
               <div className="space-y-2 rounded-lg border border-white/5 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300">
+                <span>Tag each trade with Phase, Context, Setup(s), and Signal Bar. Use `|` or `,` for multiple setups.</span>
+                <button
+                  type="button"
+                  onClick={saveSetupTags}
+                  disabled={setupSaving}
+                  className="rounded border border-accent px-3 py-1 font-semibold text-white hover:bg-accent hover:text-black disabled:opacity-60"
+                >
+                  {setupSaving ? "Saving..." : "Save Setup Tags"}
+                </button>
+              </div>
+              {setupMessage ? <p className="text-xs text-slate-300">{setupMessage}</p> : null}
               <div className="grid gap-2 text-sm text-slate-200 sm:flex sm:flex-wrap sm:gap-3">
                 <label className="flex items-center justify-between gap-2 sm:justify-start">
                   <span className="text-xs uppercase tracking-[0.2em] text-slate-400">Direction</span>
@@ -411,6 +557,7 @@ export default function TradingPage() {
                     mins == null ? "N/A" : mins <= 5 ? "Scalp" : mins < 30 ? "Scalp/Swing" : "Swing";
                   const direction = String(row["Type"] || "");
                   const sizeVal = Number(row["Size"] || 0);
+                  const draft = getDraft(row as Record<string, unknown>);
 
                   const dirOk = !directionFilter || direction === directionFilter;
                   const typeOk = !typeFilter || holdType === typeFilter;
@@ -429,21 +576,93 @@ export default function TradingPage() {
                       <div className="grid grid-cols-[96px_1fr] gap-2 py-0.5"><span className="text-slate-400">Size</span><span>{sizeVal}</span></div>
                       <div className="grid grid-cols-[96px_1fr] gap-2 py-0.5"><span className="text-slate-400">Direction</span><span>{direction}</span></div>
                       <div className="grid grid-cols-[96px_1fr] gap-2 py-0.5"><span className="text-slate-400">Type</span><span>{holdType}</span></div>
+                      <div className="rounded border border-white/10 bg-white/5 p-2">
+                        <p className="mb-1 text-[10px] uppercase tracking-[0.15em] text-slate-400">Tags</p>
+                        <div className="grid grid-cols-2 gap-2">
+                          <select
+                            value={draft.Phase}
+                            onChange={(e) => setDraftField(row as Record<string, unknown>, "Phase", e.target.value)}
+                            className="h-[30px] rounded border border-white/10 bg-surface px-2 text-xs text-white outline-none focus:border-accent"
+                          >
+                            <option value="">Phase</option>
+                            {phaseOptions.map((v) => (
+                              <option key={v} value={v}>{v}</option>
+                            ))}
+                          </select>
+                          <select
+                            value={draft.Context}
+                            onChange={(e) => setDraftField(row as Record<string, unknown>, "Context", e.target.value)}
+                            className="h-[30px] rounded border border-white/10 bg-surface px-2 text-xs text-white outline-none focus:border-accent"
+                          >
+                            <option value="">Context</option>
+                            {contextOptions.map((v) => (
+                              <option key={v} value={v}>{v}</option>
+                            ))}
+                          </select>
+                          <select
+                            value={draft.SignalBar}
+                            onChange={(e) => setDraftField(row as Record<string, unknown>, "SignalBar", e.target.value)}
+                            className="h-[30px] rounded border border-white/10 bg-surface px-2 text-xs text-white outline-none focus:border-accent"
+                          >
+                            <option value="">SignalBar</option>
+                            {signalOptions.map((v) => (
+                              <option key={v} value={v}>{v}</option>
+                            ))}
+                          </select>
+                          <input
+                            type="text"
+                            value={draft.Setup}
+                            list="setup-options"
+                            onChange={(e) => setDraftField(row as Record<string, unknown>, "Setup", e.target.value)}
+                            placeholder="Setup(s): Wedge | BO + Follow-through"
+                            className="h-[30px] w-full rounded border border-white/10 bg-surface px-2 text-xs text-white outline-none focus:border-accent"
+                          />
+                        </div>
+                        <details className="mt-1 rounded border border-white/10 bg-white/5 px-2 py-1">
+                          <summary className="cursor-pointer text-[11px] text-slate-300">Pick Setup Tags</summary>
+                          <div className="mt-1 grid grid-cols-1 gap-1">
+                            {setupOptions.map((opt) => {
+                              const checked = splitSetupValues(draft.Setup).some((v) => v.toLowerCase() === opt.toLowerCase());
+                              return (
+                                <label key={opt} className="inline-flex items-center gap-2 text-[11px] text-slate-200">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => toggleSetupChoice(row as Record<string, unknown>, opt)}
+                                  />
+                                  <span>{opt}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </details>
+                      </div>
                     </div>
                   );
                 })}
               </div>
-              <div className="hidden overflow-x-auto md:block">
-                <table className="min-w-full divide-y divide-white/5 text-sm text-slate-200">
+              <div className="hidden md:block">
+                <table className="w-full table-fixed divide-y divide-white/5 text-sm text-slate-200">
+                  <colgroup>
+                    <col className="w-[40px]" />
+                    <col className="w-[140px]" />
+                    <col className="w-[140px]" />
+                    <col className="w-[96px]" />
+                    <col className="w-[64px]" />
+                    <col className="w-[88px]" />
+                    <col className="w-[100px]" />
+                    <col />
+                  </colgroup>
                   <thead className="bg-white/5 text-xs uppercase tracking-wide text-slate-400">
                     <tr>
-                      <th className="px-3 py-2 text-left">#</th>
-                      <th className="px-3 py-2 text-left">Entry</th>
-                      <th className="px-3 py-2 text-left">Exit</th>
-                      <th className="px-3 py-2 text-right">PnL(Net)</th>
-                      <th className="px-3 py-2 text-right">Size</th>
-                      <th className="px-3 py-2 text-left">Direction</th>
-                      <th className="px-3 py-2 text-left">Type</th>
+                      <th className="px-1 py-1 text-left">#</th>
+                      <th className="px-1 py-1 text-left">Entry</th>
+                      <th className="px-1 py-1 text-left">Exit</th>
+                      <th className="px-1 py-1 text-right">PnL(Net)</th>
+                      <th className="px-1 py-1 text-right">Size</th>
+                      <th className="px-1 py-1 text-left">Direction</th>
+                      <th className="px-1 py-1 text-left">Type</th>
+                      <th className="px-1 py-1 text-left">Tags</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
@@ -461,6 +680,7 @@ export default function TradingPage() {
                               : "Swing";
                       const direction = String(row["Type"] || "");
                       const sizeVal = Number(row["Size"] || 0);
+                      const draft = getDraft(row as Record<string, unknown>);
 
                       const dirOk = !directionFilter || direction === directionFilter;
                       const typeOk = !typeFilter || holdType === typeFilter;
@@ -472,15 +692,91 @@ export default function TradingPage() {
                       if (!dirOk || !typeOk || !sizeOk) return null;
                       return (
                         <tr key={idx} className="hover:bg-white/5">
-                          <td className="px-3 py-2 text-slate-400">{idx + 1}</td>
-                          <td className="px-3 py-2">{String(row["EnteredAt"] || row["TradeDay"] || "")}</td>
-                          <td className="px-3 py-2">{String(row["ExitedAt"] || "")}</td>
-                          <td className="px-3 py-2 text-right text-emerald-300">
+                          <td className="px-1 py-1 text-slate-400 align-middle">{idx + 1}</td>
+                          <td className="px-1 py-1 align-middle text-[12px] whitespace-nowrap">
+                            <span className="group relative block max-w-full cursor-help">
+                              <span className="block truncate">{String(row["EnteredAt"] || row["TradeDay"] || "")}</span>
+                              <span className="pointer-events-none invisible absolute left-0 top-full z-50 mt-1 rounded border border-white/20 bg-slate-900 px-2 py-1 text-[11px] text-slate-100 shadow-lg group-hover:visible group-focus-within:visible">
+                                {String(row["EnteredAt"] || row["TradeDay"] || "")}
+                              </span>
+                            </span>
+                          </td>
+                          <td className="px-1 py-1 align-middle text-[12px] whitespace-nowrap">
+                            <span className="group relative block max-w-full cursor-help">
+                              <span className="block truncate">{String(row["ExitedAt"] || "")}</span>
+                              <span className="pointer-events-none invisible absolute left-0 top-full z-50 mt-1 rounded border border-white/20 bg-slate-900 px-2 py-1 text-[11px] text-slate-100 shadow-lg group-hover:visible group-focus-within:visible">
+                                {String(row["ExitedAt"] || "")}
+                              </span>
+                            </span>
+                          </td>
+                          <td className="px-1 py-1 text-right text-emerald-300 align-middle">
                             {Number(row["PnL(Net)"] || 0).toFixed(4)}
                           </td>
-                          <td className="px-3 py-2 text-right">{Number(row["Size"] || 0)}</td>
-                          <td className="px-3 py-2">{String(row["Type"] || "")}</td>
-                          <td className="px-3 py-2">{holdType}</td>
+                          <td className="px-1 py-1 text-right align-middle">{Number(row["Size"] || 0)}</td>
+                          <td className="px-1 py-1 text-[12px] align-middle whitespace-nowrap overflow-hidden text-ellipsis">{String(row["Type"] || "")}</td>
+                          <td className="px-1 py-1 text-[12px] align-middle whitespace-nowrap overflow-hidden text-ellipsis">{holdType}</td>
+                          <td className="px-1 py-1 align-middle">
+                            <div className="w-full rounded border border-white/10 bg-white/5 p-1">
+                              <div className="grid grid-cols-2 gap-1">
+                                <select
+                                  value={draft.Phase}
+                                  onChange={(e) => setDraftField(row as Record<string, unknown>, "Phase", e.target.value)}
+                                  className="h-[30px] rounded border border-white/10 bg-surface px-2 text-xs text-white outline-none focus:border-accent"
+                                >
+                                  <option value="">Phase</option>
+                                  {phaseOptions.map((v) => (
+                                    <option key={v} value={v}>{v}</option>
+                                  ))}
+                                </select>
+                                <select
+                                  value={draft.Context}
+                                  onChange={(e) => setDraftField(row as Record<string, unknown>, "Context", e.target.value)}
+                                  className="h-[30px] rounded border border-white/10 bg-surface px-2 text-xs text-white outline-none focus:border-accent"
+                                >
+                                  <option value="">Context</option>
+                                  {contextOptions.map((v) => (
+                                    <option key={v} value={v}>{v}</option>
+                                  ))}
+                                </select>
+                                <select
+                                  value={draft.SignalBar}
+                                  onChange={(e) => setDraftField(row as Record<string, unknown>, "SignalBar", e.target.value)}
+                                  className="h-[30px] rounded border border-white/10 bg-surface px-2 text-xs text-white outline-none focus:border-accent"
+                                >
+                                  <option value="">SignalBar</option>
+                                  {signalOptions.map((v) => (
+                                    <option key={v} value={v}>{v}</option>
+                                  ))}
+                                </select>
+                                <input
+                                  type="text"
+                                  value={draft.Setup}
+                                  list="setup-options"
+                                  onChange={(e) => setDraftField(row as Record<string, unknown>, "Setup", e.target.value)}
+                                  placeholder="Setup(s): Wedge | BO + Follow-through"
+                                  className="h-[30px] w-full rounded border border-white/10 bg-surface px-2 text-xs text-white outline-none focus:border-accent"
+                                />
+                              </div>
+                              <details className="mt-1 rounded border border-white/10 bg-white/5 px-2 py-1">
+                                <summary className="cursor-pointer text-[11px] text-slate-300">Pick Setup Tags</summary>
+                                <div className="mt-1 grid grid-cols-2 gap-1">
+                                  {setupOptions.map((opt) => {
+                                    const checked = splitSetupValues(draft.Setup).some((v) => v.toLowerCase() === opt.toLowerCase());
+                                    return (
+                                      <label key={opt} className="inline-flex items-center gap-2 text-[11px] text-slate-200">
+                                        <input
+                                          type="checkbox"
+                                          checked={checked}
+                                          onChange={() => toggleSetupChoice(row as Record<string, unknown>, opt)}
+                                        />
+                                        <span>{opt}</span>
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              </details>
+                            </div>
+                          </td>
                         </tr>
                       );
                     })}
@@ -488,6 +784,11 @@ export default function TradingPage() {
                 </table>
               </div>
               <p className="text-xs text-slate-400">Showing all trades for this range.</p>
+              <datalist id="setup-options">
+                {setupOptions.map((v) => (
+                  <option key={v} value={v} />
+                ))}
+              </datalist>
             </div>
           </div>
         ) : (
