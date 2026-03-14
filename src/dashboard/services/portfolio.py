@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-import hashlib
 import logging
 from datetime import datetime, timezone, date
 from pathlib import Path
@@ -51,9 +50,9 @@ def _init_if_missing() -> None:
                     }
                 )
             _write_cashflow_rows(_sort_cashflow_rows(normalized_rows))
-        except Exception:
-            # Never block portfolio reads/writes on best-effort ordering maintenance.
-            pass
+        except (OSError, ValueError, csv.Error) as exc:
+            # Best effort only; preserve API availability if filesystem data is temporarily malformed.
+            log.warning("Skipping cashflow ordering normalization: %s", exc)
 
 
 def _read_rows() -> List[Dict[str, Any]]:
@@ -162,8 +161,7 @@ def _write_trade_sum_rows(rows: List[Dict[str, Any]]) -> None:
 def _append_cashflow_row(*, day: str, amount: float, reason: str) -> Dict[str, Any]:
     _init_if_missing()
     created_at = datetime.now(tz=timezone.utc).isoformat()
-    entropy = f"{day}|{reason}|{amount:.2f}|{created_at}|{uuid4().hex}"
-    event_id = hashlib.sha1(entropy.encode("utf-8")).hexdigest()[:16]
+    event_id = uuid4().hex[:16]
     row = {
         "event_id": event_id,
         "date": day,
