@@ -20,6 +20,7 @@ from dashboard.config.env import (
     FUTURE_DIR,
     TEMP_PERF_DIR,
     METADATA_DIR,
+    AUDIT_DIR,
     DEBUG_FLAG,
     PORT,
     TIMEZONE,
@@ -63,7 +64,12 @@ _APP_PATHS = get_app_config().get("paths", {})
 PERFORMANCE_CSV = str(resolve_path(str(_APP_PATHS.get("performance_csv", PERFORMANCE_DIR / "Performance_sum.csv")), BASE_DIR))
 TRADE_LABELS_CSV = str(resolve_path(str(_APP_PATHS.get("trade_labels_csv", PERFORMANCE_DIR / "trade_labels.csv")), BASE_DIR))
 TRADE_TAG_TAXONOMY_CSV = str(resolve_path(str(_APP_PATHS.get("tag_taxonomy_csv", METADATA_DIR / "tag_taxonomy.csv")), BASE_DIR))
+DAY_PLAN_TAXONOMY_CSV = str(resolve_path(str(_APP_PATHS.get("day_plan_taxonomy_csv", METADATA_DIR / "day_plan_taxonomy.csv")), BASE_DIR))
 CONTRACT_SPECS_CSV = str(resolve_path(str(_APP_PATHS.get("contract_specs_csv", METADATA_DIR / "contract_specs.csv")), BASE_DIR))
+DAY_PLAN_CSV = str(resolve_path(str(_APP_PATHS.get("day_plan_csv", PERFORMANCE_DIR / "day_plan.csv")), BASE_DIR))
+CASHFLOW_CSV = str(resolve_path(str(_APP_PATHS.get("cashflow_csv", DATA_DIR / "portfolio" / "cashflow.csv")), BASE_DIR))
+TRADE_SUM_CSV = str(resolve_path(str(_APP_PATHS.get("trade_sum_csv", DATA_DIR / "portfolio" / "trade_sum.csv")), BASE_DIR))
+AUDIT_LOG_JSONL = str(resolve_path(str(_APP_PATHS.get("audit_log_jsonl", AUDIT_DIR / "change_audit.jsonl")), BASE_DIR))
 
 # Resolved symbol catalog (absolute paths, defaults applied)
 SYMBOL_CATALOG = resolve_symbol_catalog(BASE_DIR)

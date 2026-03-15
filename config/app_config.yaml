@@ -2,9 +2,12 @@ paths:
   performance_csv: data/performance/Performance_sum.csv
   trade_labels_csv: data/performance/trade_labels.csv
   tag_taxonomy_csv: data/metadata/tag_taxonomy.csv
+  day_plan_taxonomy_csv: data/metadata/day_plan_taxonomy.csv
   contract_specs_csv: data/metadata/contract_specs.csv
+  day_plan_csv: data/performance/day_plan.csv
   cashflow_csv: data/portfolio/cashflow.csv
   trade_sum_csv: data/portfolio/trade_sum.csv
+  audit_log_jsonl: data/audit/change_audit.jsonl
 
 ui:
   timeframes: ["5m", "15m", "30m", "1h", "4h", "1d", "1w"]

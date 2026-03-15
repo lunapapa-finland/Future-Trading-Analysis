@@ -65,6 +65,10 @@ export interface InsightsResponse {
       weak_setup: AnalysisSeriesPoint | null;
     };
   };
+  day_plan_review?: {
+    summary: Record<string, string | number>;
+    daily: AnalysisSeriesPoint[];
+  };
   monthly_report: {
     summary: Record<string, string | number>;
     focus_points: string[];

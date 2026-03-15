@@ -107,3 +107,38 @@ def test_journal_tags_strict_mode_rejects_invalid_tag(tmp_path, monkeypatch):
     assert resp.status_code == 400
     body = resp.get_json()
     assert "invalid Phase" in body["error"]
+
+
+def test_journal_tags_writes_audit_event(tmp_path, monkeypatch):
+    perf_csv = tmp_path / "Performance_sum.csv"
+    _seed_perf_csv(perf_csv)
+    monkeypatch.setattr(routes, "PERFORMANCE_CSV", str(perf_csv))
+    events = []
+    monkeypatch.setattr(routes, "append_audit_event", lambda *args, **kwargs: events.append((args, kwargs)))
+
+    client = app.test_client()
+    resp = client.post(
+        "/api/journal/tags",
+        json={"rows": [{"trade_id": "t1", "Phase": "Open", "Context": "TR", "SignalBar": "Doji", "setups": ["Wedge"]}]},
+    )
+    assert resp.status_code == 200
+    assert len(events) == 1
+    args, kwargs = events[0]
+    assert args[0] == "journal_tags_updated"
+    assert kwargs["actor"] == "api:/journal/tags"
+
+
+def test_journal_tags_updates_trade_intent(tmp_path, monkeypatch):
+    perf_csv = tmp_path / "Performance_sum.csv"
+    _seed_perf_csv(perf_csv)
+    monkeypatch.setattr(routes, "PERFORMANCE_CSV", str(perf_csv))
+
+    client = app.test_client()
+    resp = client.post(
+        "/api/journal/tags",
+        json={"rows": [{"trade_id": "t1", "TradeIntent": "Runner", "setups": "Wedge"}]},
+    )
+    assert resp.status_code == 200
+    out = pd.read_csv(perf_csv)
+    row = out.loc[out["trade_id"] == "t1"].iloc[0]
+    assert row["TradeIntent"] == "Runner"

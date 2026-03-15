@@ -167,6 +167,7 @@ export default function AnalysisPage() {
   const [contextFilters, setContextFilters] = useState<string[]>([]);
   const [setupTagFilters, setSetupTagFilters] = useState<string[]>([]);
   const [signalBarFilters, setSignalBarFilters] = useState<string[]>([]);
+  const [tradeIntentFilters, setTradeIntentFilters] = useState<string[]>([]);
   const [breachesOnly, setBreachesOnly] = useState(false);
   const [defaultsHydrated, setDefaultsHydrated] = useState(false);
   const [tagFiltersHydrated, setTagFiltersHydrated] = useState(false);
@@ -202,10 +203,12 @@ export default function AnalysisPage() {
     const context = (config.tag_taxonomy.context ?? []).map((x: any) => String(x.value));
     const setup = (config.tag_taxonomy.setup ?? []).map((x: any) => String(x.value));
     const signal = (config.tag_taxonomy.signal_bar ?? []).map((x: any) => String(x.value));
+    const intent = (config.tag_taxonomy.trade_intent ?? []).map((x: any) => String(x.value));
     setPhaseFilters(phase);
     setContextFilters(context);
     setSetupTagFilters(setup);
     setSignalBarFilters(signal);
+    setTradeIntentFilters(intent);
     setTagFiltersHydrated(true);
   }, [config, tagFiltersHydrated]);
 
@@ -260,6 +263,7 @@ export default function AnalysisPage() {
     if (contextFilters.length) params.context = contextFilters;
     if (setupTagFilters.length) params.setup = setupTagFilters;
     if (signalBarFilters.length) params.signal_bar = signalBarFilters;
+    if (tradeIntentFilters.length) params.trade_intent = tradeIntentFilters;
     if (showRuleOverrides) {
       params.max_trades_per_day = maxTradesPerDay;
       params.max_consecutive_losses = maxConsecutiveLosses;
@@ -281,6 +285,7 @@ export default function AnalysisPage() {
     contextFilters,
     setupTagFilters,
     signalBarFilters,
+    tradeIntentFilters,
   ]);
 
   const { data: insights, isFetching: insightsFetching, error: insightsError } = useQuery<InsightsResponse>({
@@ -482,6 +487,10 @@ export default function AnalysisPage() {
                   <span>SignalBar Filter (multi)</span>
                   <CheckboxPills options={(config?.tag_taxonomy?.signal_bar ?? []).map((x: any) => String(x.value))} selected={signalBarFilters} onChange={setSignalBarFilters} />
                 </div>
+                <div className="flex flex-col gap-1 text-sm text-slate-300 sm:col-span-2">
+                  <span>Trade Intent Filter (multi)</span>
+                  <CheckboxPills options={(config?.tag_taxonomy?.trade_intent ?? []).map((x: any) => String(x.value))} selected={tradeIntentFilters} onChange={setTradeIntentFilters} />
+                </div>
                 <label className="flex items-center gap-2 text-sm text-slate-300 sm:mt-6">
                   <input
                     type="checkbox"
@@ -666,6 +675,8 @@ function InsightsPanel({
   const playbookStop = insights.playbook?.stop_doing ?? [];
   const playbookActions = insights.playbook?.action_items ?? [];
   const playbookRationale = insights.playbook?.rationale;
+  const dayPlanSummary = insights.day_plan_review?.summary ?? {};
+  const dayPlanDaily = insights.day_plan_review?.daily ?? [];
   const monthlySummary = insights.monthly_report?.summary ?? {};
   const monthlyFocus = insights.monthly_report?.focus_points ?? [];
   const monthlyMarkdown = insights.monthly_report?.markdown ?? "";
@@ -768,6 +779,16 @@ function InsightsPanel({
             </details>
           ) : null}
         </div>
+        <div>
+          <h3 className="mb-2 text-sm font-semibold text-slate-200">Day Plan Review</h3>
+          <SimpleKv kv={dayPlanSummary as Record<string, string | number>} />
+          <div className="mt-2">
+            <SimpleTable rows={dayPlanDaily.slice(-12)} />
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-2">
         <div>
           <h3 className="mb-2 text-sm font-semibold text-slate-200">Monthly Review Report</h3>
           <SimpleKv kv={monthlySummary} />

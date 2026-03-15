@@ -40,9 +40,10 @@ PERFORMANCE_DIR = Path(os.environ.get("PERFORMANCE_DIR", DATA_DIR / "performance
 FUTURE_DIR = Path(os.environ.get("FUTURE_DIR", DATA_DIR / "future"))
 TEMP_PERF_DIR = Path(os.environ.get("TEMP_PERFORMANCE_DIR", DATA_DIR / "temp_performance"))
 METADATA_DIR = Path(os.environ.get("METADATA_DIR", DATA_DIR / "metadata"))
+AUDIT_DIR = Path(os.environ.get("AUDIT_DIR", DATA_DIR / "audit"))
 
 # Ensure directories exist
-for d in (LOG_DIR, DATA_DIR, PERFORMANCE_DIR, FUTURE_DIR, TEMP_PERF_DIR, METADATA_DIR):
+for d in (LOG_DIR, DATA_DIR, PERFORMANCE_DIR, FUTURE_DIR, TEMP_PERF_DIR, METADATA_DIR, AUDIT_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 DEBUG_FLAG = False  # Enable debug mode

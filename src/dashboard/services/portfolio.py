@@ -8,12 +8,14 @@ from typing import Dict, Any, List
 from uuid import uuid4
 
 from dashboard.config.env import BASE_DIR
+from dashboard.config.settings import CASHFLOW_CSV as SETTINGS_CASHFLOW_CSV, TRADE_SUM_CSV as SETTINGS_TRADE_SUM_CSV
+from dashboard.services.utils.persistence import append_audit_event
 
 PORTFOLIO_DIR = BASE_DIR / "data" / "portfolio"
 PORTFOLIO_DIR.mkdir(parents=True, exist_ok=True)
 PORTFOLIO_CSV = PORTFOLIO_DIR / "equity.csv"  # legacy path, no longer used as source of truth
-CASHFLOW_CSV = PORTFOLIO_DIR / "cashflow.csv"
-TRADE_SUM_CSV = PORTFOLIO_DIR / "trade_sum.csv"
+CASHFLOW_CSV = Path(SETTINGS_CASHFLOW_CSV)
+TRADE_SUM_CSV = Path(SETTINGS_TRADE_SUM_CSV)
 
 CASHFLOW_HEADERS = ["event_id", "date", "amount", "reason", "created_at"]
 TRADE_SUM_HEADERS = ["date", "trade_pnl", "updated_at"]
@@ -306,6 +308,17 @@ def append_manual(reason: str, amount: float, ts: datetime | None = None, date_o
     else:
         amount = abs(float(amount))
     row = _append_cashflow_row(day=day, amount=amount, reason=reason)
+    append_audit_event(
+        "cashflow_manual_appended",
+        {
+            "event_id": row["event_id"],
+            "date": day,
+            "amount": float(row["amount"]),
+            "reason": reason,
+            "cashflow_csv": str(CASHFLOW_CSV),
+        },
+        actor="api:/portfolio/adjust",
+    )
     latest = latest_equity()
     return {
         "event_id": row["event_id"],

@@ -16,6 +16,7 @@ from dashboard.config.settings import PERFORMANCE_DIR, TIMEZONE, PERFORMANCE_CSV
 from dashboard.config.env import TEMP_PERF_DIR
 from dashboard.services.portfolio import sync_trade_sum_from_performance_rows
 from dashboard.services.utils.trade_enrichment import ensure_trade_id, merge_trade_labels
+from dashboard.services.utils.persistence import advisory_file_lock, atomic_write_csv, append_audit_event
 
 logger = logging.getLogger(__name__)
 
@@ -138,10 +139,27 @@ def _sort_combined(df: pd.DataFrame) -> pd.DataFrame:
 
 def _dedupe_by_trade_signature(df: pd.DataFrame, *, label: str) -> pd.DataFrame:
     out = df.copy()
+    out = ensure_trade_id(out)
+    if "trade_id" in out.columns:
+        out["trade_id"] = out["trade_id"].fillna("").astype(str).str.strip()
+        before = len(out)
+        with_id = out[out["trade_id"] != ""].drop_duplicates(subset=["trade_id"], keep="last")
+        without_id = out[out["trade_id"] == ""].copy()
+        if not without_id.empty:
+            missing = [c for c in TRADE_SIGNATURE_COLUMNS if c not in without_id.columns]
+            if missing:
+                logger.warning("Skip signature dedupe for %s rows without trade_id: missing %s", label, missing)
+            else:
+                without_id = without_id.drop_duplicates(subset=TRADE_SIGNATURE_COLUMNS, keep="last")
+        out = pd.concat([with_id, without_id], ignore_index=True)
+        removed = before - len(out)
+        if removed > 0:
+            logger.info("Deduped %s by trade_id/signature fallback: removed %d duplicate row(s)", label, removed)
+        return out.reset_index(drop=True)
     missing = [c for c in TRADE_SIGNATURE_COLUMNS if c not in out.columns]
     if missing:
-        logger.warning("Skip dedupe for %s: missing signature columns %s", label, missing)
-        return out
+        logger.warning("Skip dedupe for %s: missing columns %s", label, missing)
+        return out.reset_index(drop=True)
     before = len(out)
     out = out.drop_duplicates(subset=TRADE_SIGNATURE_COLUMNS, keep="last").reset_index(drop=True)
     removed = before - len(out)
@@ -351,17 +369,38 @@ def calculate_streaks(df):
     return df
 
 def generate_aggregated_data(valid_dataframes):
-    past_performance_df = pd.read_csv(PERFORMANCE_CSV) if os.path.exists(PERFORMANCE_CSV) else pd.DataFrame()
+    with advisory_file_lock(PERFORMANCE_CSV):
+        past_performance_df = pd.read_csv(PERFORMANCE_CSV) if os.path.exists(PERFORMANCE_CSV) else pd.DataFrame()
+        if not past_performance_df.empty:
+            past_performance_df = _dedupe_by_trade_signature(past_performance_df, label="past_performance")
+            past_performance_df = ensure_trade_id(past_performance_df)
+            past_performance_df = merge_trade_labels(past_performance_df)
+            past_performance_df['EnteredAt'] = pd.to_datetime(past_performance_df['EnteredAt'], utc=True).dt.tz_convert(TIMEZONE)
+            past_performance_df['ExitedAt'] = pd.to_datetime(past_performance_df['ExitedAt'], utc=True).dt.tz_convert(TIMEZONE)
+            past_performance_df['TradeDay'] = past_performance_df['EnteredAt'].dt.strftime('%Y-%m-%d')
+            past_performance_df['DayOfWeek'] = past_performance_df['EnteredAt'].dt.day_name()
+            past_performance_df['YearMonth'] = past_performance_df['EnteredAt'].dt.tz_localize(None).dt.to_period('M')
+            past_performance_df['HourOfDay'] = past_performance_df['EnteredAt'].dt.hour
+        _final_df, _updated_count, _inserted_count, _affected_dates = _generate_aggregated_data_inner(past_performance_df, valid_dataframes)
+        atomic_write_csv(_final_df, PERFORMANCE_CSV)
+    append_audit_event(
+        "performance_sum_merged",
+        {
+            "performance_csv": PERFORMANCE_CSV,
+            "updated_trades": _updated_count,
+            "inserted_trades": _inserted_count,
+            "affected_trade_days": sorted(_affected_dates),
+            "final_rows": int(len(_final_df)),
+        },
+        actor="job:acquire_missing_performance",
+    )
+    logger.info(f"Processed data saved to {PERFORMANCE_CSV}")
+    return _final_df
+
+
+def _generate_aggregated_data_inner(past_performance_df: pd.DataFrame, valid_dataframes: list[pd.DataFrame]):
     if not past_performance_df.empty:
-        past_performance_df = _dedupe_by_trade_signature(past_performance_df, label="past_performance")
-        past_performance_df = ensure_trade_id(past_performance_df)
-        past_performance_df = merge_trade_labels(past_performance_df)
-        past_performance_df['EnteredAt'] = pd.to_datetime(past_performance_df['EnteredAt'], utc=True).dt.tz_convert(TIMEZONE)
-        past_performance_df['ExitedAt'] = pd.to_datetime(past_performance_df['ExitedAt'], utc=True).dt.tz_convert(TIMEZONE)
-        past_performance_df['TradeDay'] = past_performance_df['EnteredAt'].dt.strftime('%Y-%m-%d')
-        past_performance_df['DayOfWeek'] = past_performance_df['EnteredAt'].dt.day_name()
-        past_performance_df['YearMonth'] = past_performance_df['EnteredAt'].dt.tz_localize(None).dt.to_period('M')
-        past_performance_df['HourOfDay'] = past_performance_df['EnteredAt'].dt.hour
+        past_performance_df = past_performance_df.copy()
 
     combined_df = pd.concat(valid_dataframes, ignore_index=True)
     logger.info("All valid files have been successfully concatenated.")
@@ -439,7 +478,7 @@ def generate_aggregated_data(valid_dataframes):
     final_df = ensure_trade_id(final_df)
     final_df = merge_trade_labels(final_df)
     final_df = _apply_phase_tags(final_df)
-    for col in ["Phase", "Context", "Setup", "SignalBar"]:
+    for col in ["Phase", "Context", "Setup", "SignalBar", "TradeIntent"]:
         if col not in final_df.columns:
             final_df[col] = ""
         final_df[col] = final_df[col].fillna("").astype(str).str.strip()
@@ -460,9 +499,7 @@ def generate_aggregated_data(valid_dataframes):
         logger.error(f"Failed to sync trade_sum: {e}")
 
     # Save and return
-    final_df.to_csv(PERFORMANCE_CSV, index=False)
-    logger.info(f"Processed data saved to {PERFORMANCE_CSV}")
-    return final_df
+    return final_df, updated_count, int(len(new_rows_df)), affected_dates
 
 def round_trip_converter():
     root_dir = TEMP_PERF_DIR

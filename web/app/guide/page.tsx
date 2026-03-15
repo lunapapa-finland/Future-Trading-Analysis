@@ -92,6 +92,14 @@ const fallbackSignalItems = [
   { text: "Doji", hint: "Indecision; avoid forcing entry without extra confirmation." },
 ];
 
+const fallbackDayTypeItems = [
+  { text: "Trend day", hint: "Sustained directional behavior with limited deep pullback." },
+  { text: "TR day", hint: "Range behavior dominates; fade extremes and avoid chasing." },
+  { text: "Trend from open", hint: "Direction establishes early and stays dominant." },
+  { text: "Spike and channel", hint: "Initial spike then channel continuation structure." },
+  { text: "Double distribution", hint: "Two distinct balance areas with transition between them." },
+];
+
 const entryRules = [
   "Basic check must be explicit: Phase + Context + Setup(s) + Signal Bar.",
   "2nd entry means BO + retest + quality signal bar; do not trail too early before HL/LH confirmation.",
@@ -139,6 +147,7 @@ export default function GuidePage() {
     const fromApi = (taxonomy?.signal_bar ?? []).map((x) => ({ text: x.value, hint: x.hint || "" }));
     return fromApi.length ? fromApi : fallbackSignalItems;
   }, [taxonomy?.signal_bar]);
+  const dayTypeItems = fallbackDayTypeItems;
   const progressPct = useMemo(() => ((activeStep + 1) / workflow.length) * 100, [activeStep]);
   const contractValuePerPoint = pricePerTick * ticksPerPoint;
   const onQuarterTick = (v: number) => Number.isFinite(v) && Math.abs(v * 4 - Math.round(v * 4)) < 1e-9;
@@ -189,7 +198,6 @@ export default function GuidePage() {
       rewardRisk,
     };
   }, [contractValuePerPoint, disciplinedMaxLoss, entryPrice, pricePerTick, size, stopPrice, ticksPerPoint, tpPrice]);
-
   return (
     <AppShell active="/guide">
       <Card title="Guide Workflow">
@@ -247,6 +255,11 @@ export default function GuidePage() {
 
             <Card title="Signal Bar">
               <HintChipGroup items={signalItems} tone="fuchsia" hintLabel="Signal hint" />
+            </Card>
+          </div>
+          <div className="mt-2">
+            <Card title="Day Type Classification">
+              <HintChipGroup items={dayTypeItems} tone="emerald" hintLabel="Day type hint" />
             </Card>
           </div>
         </>

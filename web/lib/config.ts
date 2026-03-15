@@ -17,6 +17,12 @@ export type ConfigResponse = {
     context: Array<{ value: string; hint?: string; order?: number }>;
     setup: Array<{ value: string; hint?: string; order?: number }>;
     signal_bar: Array<{ value: string; hint?: string; order?: number }>;
+    trade_intent?: Array<{ value: string; hint?: string; order?: number }>;
+  };
+  day_plan_taxonomy?: {
+    bias: Array<{ value: string; hint?: string; order?: number }>;
+    expected_day_type: Array<{ value: string; hint?: string; order?: number }>;
+    actual_day_type?: Array<{ value: string; hint?: string; order?: number }>;
   };
   timeframes?: Timeframe[];
   playback_speeds?: number[];

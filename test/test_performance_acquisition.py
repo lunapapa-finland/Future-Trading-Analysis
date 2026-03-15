@@ -135,7 +135,7 @@ def test_generate_aggregated_data_handles_duplicate_trade_ids_without_crash(tmp_
     assert not out.empty
 
 
-def test_generate_aggregated_data_removes_existing_signature_duplicates(tmp_path, monkeypatch):
+def test_generate_aggregated_data_preserves_distinct_trade_ids_with_same_signature(tmp_path, monkeypatch):
     perf_csv = tmp_path / "combined.csv"
     dup_rows = pd.DataFrame(
         {
@@ -182,8 +182,11 @@ def test_generate_aggregated_data_removes_existing_signature_duplicates(tmp_path
     monkeypatch.setattr(pa, "merge_trade_labels", lambda df: df)
 
     out = pa.generate_aggregated_data([incoming])
+    assert "trade_id" in out.columns
+    assert out["trade_id"].nunique() == len(out)
+    # Distinct trade_ids can legitimately share identical signature fields; do not collapse them.
     sig = ["ContractName", "EnteredAt", "ExitedAt", "EntryPrice", "ExitPrice", "Size", "Type"]
-    assert out.duplicated(subset=sig).sum() == 0
+    assert out.duplicated(subset=sig).sum() >= 1
 
 
 def test_generate_aggregated_data_sorts_chronologically(tmp_path, monkeypatch):
@@ -358,3 +361,35 @@ def test_apply_phase_tags_handles_dst_before_and_after():
     )
     out = pa._apply_phase_tags(df)
     assert out["Phase"].tolist() == ["Open", "Open"]
+
+
+def test_generate_aggregated_data_writes_audit_event(tmp_path, monkeypatch):
+    perf_csv = tmp_path / "combined.csv"
+    incoming = pd.DataFrame(
+        {
+            "Id": [1],
+            "ContractName": ["MES"],
+            "EnteredAt": ["2025-01-03T15:00:00Z"],
+            "ExitedAt": ["2025-01-03T15:10:00Z"],
+            "EntryPrice": [6002.0],
+            "ExitPrice": [6003.0],
+            "Fees": [2.0],
+            "PnL": [8.0],
+            "Size": [1],
+            "Type": ["Long"],
+            "TradeDay": ["2025-01-03"],
+            "TradeDuration": ["0 days 00:10:00"],
+        }
+    )
+    events = []
+    monkeypatch.setattr(pa, "PERFORMANCE_CSV", str(perf_csv))
+    monkeypatch.setattr(pa, "sync_trade_sum_from_performance_rows", lambda *args, **kwargs: None)
+    monkeypatch.setattr(pa, "merge_trade_labels", lambda df: df)
+    monkeypatch.setattr(pa, "append_audit_event", lambda *args, **kwargs: events.append((args, kwargs)))
+
+    out = pa.generate_aggregated_data([incoming])
+    assert not out.empty
+    assert len(events) == 1
+    args, kwargs = events[0]
+    assert args[0] == "performance_sum_merged"
+    assert kwargs["actor"] == "job:acquire_missing_performance"

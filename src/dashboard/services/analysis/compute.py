@@ -3,6 +3,7 @@ from dashboard.config.settings import DEFAULT_GRANULARITY, DEFAULT_ROLLING_WINDO
 from dashboard.config.analysis import RULE_COMPLIANCE_DEFAULTS, ANALYSIS_TIMEZONE
 import numpy as np
 from dashboard.services.analysis.schema import validate_performance_df
+from dashboard.services.utils.day_plan import load_day_plan
 import re
 
 def _coerce_window(window, fallback=DEFAULT_ROLLING_WINDOW):
@@ -1221,6 +1222,112 @@ def monthly_review_report(performance_df, month=None, min_trades=3, applied_conf
     }
 
 
+def day_plan_review(performance_df, month=None):
+    df = validate_performance_df(performance_df).copy()
+    if df.empty:
+        return {"summary": {}, "daily": []}
+
+    df["ExitedAt"] = _to_cme(df["ExitedAt"], "ExitedAt")
+    df["TradeDay"] = df["ExitedAt"].dt.strftime("%Y-%m-%d")
+    if month:
+        period = df["ExitedAt"].dt.tz_localize(None).dt.to_period("M").astype(str)
+        df = df[period == str(month)].copy()
+    daily = (
+        df.groupby("TradeDay", observed=True)
+        .agg(
+            DayPnL=("PnL(Net)", "sum"),
+            Trades=("PnL(Net)", "size"),
+            WinRate=("PnL(Net)", lambda s: float((s > 0).mean() * 100) if len(s) else 0.0),
+        )
+        .reset_index()
+        .rename(columns={"TradeDay": "Date"})
+    )
+
+    plan = load_day_plan()
+    if month and not plan.empty:
+        p = pd.to_datetime(plan["Date"], errors="coerce").dt.to_period("M").astype(str)
+        plan = plan[p == str(month)].copy()
+    plan_cols = ["Date", "Bias", "ExpectedDayType", "ActualDayType", "KeyLevelsHTFContext", "PrimaryPlan", "AvoidancePlan"]
+    for col in plan_cols:
+        if col not in plan.columns:
+            plan[col] = ""
+    plan = plan[plan_cols].copy()
+
+    merged = daily.merge(plan, on="Date", how="outer")
+    merged["DayPnL"] = pd.to_numeric(merged.get("DayPnL"), errors="coerce").fillna(0.0)
+    merged["Trades"] = pd.to_numeric(merged.get("Trades"), errors="coerce").fillna(0).astype(int)
+    merged["WinRate"] = pd.to_numeric(merged.get("WinRate"), errors="coerce").fillna(0.0)
+    for col in ["Bias", "ExpectedDayType", "ActualDayType", "KeyLevelsHTFContext", "PrimaryPlan", "AvoidancePlan"]:
+        merged[col] = merged[col].fillna("").astype(str).str.strip()
+    merged["HasPlan"] = (
+        (merged["Bias"] != "")
+        | (merged["ExpectedDayType"] != "")
+        | (merged["ActualDayType"] != "")
+        | (merged["PrimaryPlan"] != "")
+        | (merged["AvoidancePlan"] != "")
+        | (merged["KeyLevelsHTFContext"] != "")
+    )
+    merged["HasTrades"] = merged["Trades"] > 0
+    merged["BiasAligned"] = "n/a"
+    bullish = (merged["Bias"].str.lower() == "bullish") & merged["HasTrades"]
+    bearish = (merged["Bias"].str.lower() == "bearish") & merged["HasTrades"]
+    merged.loc[bullish, "BiasAligned"] = np.where(merged.loc[bullish, "DayPnL"] > 0, "yes", "no")
+    merged.loc[bearish, "BiasAligned"] = np.where(merged.loc[bearish, "DayPnL"] < 0, "yes", "no")
+    merged["DayTypeMatched"] = np.where(
+        (merged["ExpectedDayType"] != "") & (merged["ActualDayType"] != ""),
+        np.where(
+            merged["ExpectedDayType"].str.strip().str.lower() == merged["ActualDayType"].str.strip().str.lower(),
+            "yes",
+            "no",
+        ),
+        "n/a",
+    )
+    merged = merged.sort_values("Date", kind="stable")
+
+    plan_days = merged[merged["HasPlan"]]
+    plan_trade_days = plan_days[plan_days["HasTrades"]]
+    unplanned_trade_days = merged[(~merged["HasPlan"]) & (merged["HasTrades"])]
+    planned_no_trade = merged[(merged["HasPlan"]) & (~merged["HasTrades"])]
+    match_mask = (plan_days["ExpectedDayType"] != "") & (plan_days["ActualDayType"] != "")
+    bias_mask = plan_trade_days["BiasAligned"].isin(["yes", "no"])
+    expected_group = plan_trade_days[plan_trade_days["ExpectedDayType"] != ""].groupby("ExpectedDayType", observed=True)["DayPnL"].mean()
+    best_expected = expected_group.idxmax() if not expected_group.empty else "n/a"
+    worst_expected = expected_group.idxmin() if not expected_group.empty else "n/a"
+    expected_match_rate = float((plan_days.loc[match_mask, "DayTypeMatched"] == "yes").mean() * 100) if match_mask.any() else 0.0
+    bias_alignment_rate = float((plan_trade_days.loc[bias_mask, "BiasAligned"] == "yes").mean() * 100) if bias_mask.any() else 0.0
+
+    summary = {
+        "DaysWithPlan": int(len(plan_days)),
+        "PlanDaysWithTrades": int(len(plan_trade_days)),
+        "UnplannedTradeDays": int(len(unplanned_trade_days)),
+        "PlannedNoTradeDays": int(len(planned_no_trade)),
+        "ExpectedVsActualMatchRatePct": round(expected_match_rate, 2),
+        "BiasAlignmentRatePct": round(bias_alignment_rate, 2),
+        "NetPnLPlannedDays": round(float(plan_trade_days["DayPnL"].sum()) if not plan_trade_days.empty else 0.0, 2),
+        "NetPnLUnplannedDays": round(float(unplanned_trade_days["DayPnL"].sum()) if not unplanned_trade_days.empty else 0.0, 2),
+        "AvgPlannedDayPnL": round(float(plan_trade_days["DayPnL"].mean()) if not plan_trade_days.empty else 0.0, 2),
+        "BestExpectedDayType": str(best_expected),
+        "WorstExpectedDayType": str(worst_expected),
+    }
+    cols = [
+        "Date",
+        "HasPlan",
+        "HasTrades",
+        "Bias",
+        "ExpectedDayType",
+        "ActualDayType",
+        "DayPnL",
+        "Trades",
+        "WinRate",
+        "BiasAligned",
+        "DayTypeMatched",
+        "KeyLevelsHTFContext",
+        "PrimaryPlan",
+        "AvoidancePlan",
+    ]
+    return {"summary": summary, "daily": merged[cols].to_dict("records")}
+
+
 def _filter_by_month(performance_df, month=None):
     df = validate_performance_df(performance_df).copy()
     if df.empty or not month:
@@ -1251,6 +1358,7 @@ def _filter_by_tags(performance_df, params=None):
     context_sel = _selection_set(params.get("context"))
     setup_sel = _selection_set(params.get("setup"))
     signal_sel = _selection_set(params.get("signal_bar"))
+    intent_sel = _selection_set(params.get("trade_intent"))
 
     if phase_sel and "Phase" in df.columns:
         df = df[df["Phase"].fillna("").astype(str).str.strip().str.lower().isin(phase_sel)].copy()
@@ -1268,6 +1376,10 @@ def _filter_by_tags(performance_df, params=None):
         parts = df["Setup"].fillna("").astype(str).apply(_split_setup_labels)
         mask = parts.apply(lambda vals: any(str(v).strip().lower() in setup_sel for v in vals))
         df = df[mask].copy()
+        if df.empty:
+            return df
+    if intent_sel and "TradeIntent" in df.columns:
+        df = df[df["TradeIntent"].fillna("").astype(str).str.strip().str.lower().isin(intent_sel)].copy()
     return df
 
 
@@ -1304,6 +1416,7 @@ def _build_applied_config(params, defaults):
             "context": _normalized_selection(params, "context"),
             "setup": _normalized_selection(params, "setup"),
             "signal_bar": _normalized_selection(params, "signal_bar"),
+            "trade_intent": _normalized_selection(params, "trade_intent"),
         },
         "rule_thresholds": {
             "max_trades_per_day": int(params.get("max_trades_per_day", defaults.get("max_trades_per_day", 8))),
@@ -1357,6 +1470,7 @@ def insights_bundle(performance_df, params=None):
         applied_config=applied_config,
         analysis_scope=analysis_scope,
     )
+    plan_review = day_plan_review(scoped_df, month=applied_config.get("month"))
     llm_prompt_markdown = _build_llm_prompt_markdown(
         setup=setup,
         setup_quality=setup_quality,
@@ -1364,6 +1478,7 @@ def insights_bundle(performance_df, params=None):
         execution_quality=execution_quality,
         playbook=playbook,
         monthly=monthly,
+        day_plan=plan_review,
         applied_config=applied_config,
         analysis_scope=analysis_scope,
     )
@@ -1378,12 +1493,13 @@ def insights_bundle(performance_df, params=None):
         },
         "execution_quality": execution_quality,
         "playbook": playbook,
+        "day_plan_review": plan_review,
         "monthly_report": monthly,
         "llm_prompt_markdown": llm_prompt_markdown,
     }
 
 
-def _build_llm_prompt_markdown(setup, setup_quality, compliance, execution_quality, playbook, monthly, applied_config, analysis_scope):
+def _build_llm_prompt_markdown(setup, setup_quality, compliance, execution_quality, playbook, monthly, day_plan, applied_config, analysis_scope):
     setup_rows = setup.head(10).to_dict("records") if hasattr(setup, "head") else []
     compliance_daily = compliance.get("daily")
     if hasattr(compliance_daily, "tail"):
@@ -1395,6 +1511,8 @@ def _build_llm_prompt_markdown(setup, setup_quality, compliance, execution_quali
     playbook_actions = playbook.get("action_items", [])[:8]
     monthly_summary = monthly.get("summary", {})
     monthly_focus = monthly.get("focus_points", [])
+    day_plan_summary = (day_plan or {}).get("summary", {})
+    day_plan_rows = (day_plan or {}).get("daily", [])[:15]
 
     def _rows_to_md(rows):
         if not rows:
@@ -1435,6 +1553,10 @@ def _build_llm_prompt_markdown(setup, setup_quality, compliance, execution_quali
         + _rows_to_md(quality_hold_rows)
         + "\n\n## Playbook Actions\n"
         + _rows_to_md(playbook_actions)
+        + "\n\n## Day Plan Review Summary\n```json\n"
+        + f"{day_plan_summary}\n```\n"
+        + "\n\n## Day Plan Review Daily\n"
+        + _rows_to_md(day_plan_rows)
         + "\n\n## Monthly Summary\n```json\n"
         + f"{monthly_summary}\n```\n"
         + "\n\n## Monthly Focus Points\n"

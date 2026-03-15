@@ -33,6 +33,9 @@ from dashboard.services.portfolio import equity_series, append_manual
 from dashboard.services.analysis.portfolio_metrics import portfolio_metrics
 from dashboard.services.utils.trade_enrichment import ensure_trade_id, merge_trade_labels
 from dashboard.services.utils.tag_taxonomy import taxonomy_payload
+from dashboard.services.utils.day_plan_taxonomy import day_plan_taxonomy_payload
+from dashboard.services.utils.day_plan import list_day_plan, upsert_day_plan_rows
+from dashboard.services.utils.persistence import advisory_file_lock, atomic_write_csv, append_audit_event
 from dashboard.services.utils.datetime_utils import (
     parse_optional_timestamp_utc,
     parse_optional_date_in_timezone,
@@ -189,6 +192,7 @@ def register_api(server):
                     "rule_compliance": RULE_COMPLIANCE_DEFAULTS,
                 },
                 "tag_taxonomy": taxonomy_payload(),
+                "day_plan_taxonomy": day_plan_taxonomy_payload(),
                 "runtime_manifest": runtime_manifest(),
             }
         )
@@ -201,6 +205,15 @@ def register_api(server):
             return jsonify(taxonomy_payload()), 200
         except (KeyError, TypeError, pd.errors.ParserError, OSError) as exc:
             return jsonify({"error": f"failed to load tag taxonomy: {exc}"}), 500
+
+    @api.route("/day-plan/taxonomy", methods=["GET", "OPTIONS"])
+    def day_plan_taxonomy():
+        if request.method == "OPTIONS":
+            return _cors_headers(jsonify({"ok": True}), allowed_origin)
+        try:
+            return jsonify(day_plan_taxonomy_payload()), 200
+        except (KeyError, TypeError, pd.errors.ParserError, OSError) as exc:
+            return jsonify({"error": f"failed to load day-plan taxonomy: {exc}"}), 500
 
     @api.route("/portfolio", methods=["GET"])
     def portfolio():
@@ -460,19 +473,6 @@ def register_api(server):
                 raise ValueError("rows must be an array")
             if not os.path.exists(PERFORMANCE_CSV):
                 raise FileNotFoundError("performance data not found")
-            perf_df = ensure_trade_id(pd.read_csv(PERFORMANCE_CSV))
-            for col in ["TradeDay", "ContractName", "IntradayIndex", "Phase", "Context", "Setup", "SignalBar"]:
-                if col not in perf_df.columns:
-                    perf_df[col] = ""
-            perf_df["trade_id"] = perf_df["trade_id"].fillna("").astype(str).str.strip()
-            perf_df["TradeDay"] = perf_df["TradeDay"].fillna("").astype(str).str.strip()
-            perf_df["ContractName"] = perf_df["ContractName"].fillna("").astype(str).str.strip()
-            perf_df["IntradayIndex"] = pd.to_numeric(perf_df["IntradayIndex"], errors="coerce").fillna(-1).astype(int).astype(str)
-            perf_df["Phase"] = perf_df["Phase"].fillna("").astype(str).str.strip()
-            perf_df["Context"] = perf_df["Context"].fillna("").astype(str).str.strip()
-            perf_df["Setup"] = perf_df["Setup"].fillna("").astype(str).str.strip()
-            perf_df["SignalBar"] = perf_df["SignalBar"].fillna("").astype(str).str.strip()
-            perf_df["__effective_key"] = _effective_key(perf_df)
 
             def _normalize_setups(v: Any) -> str:
                 if isinstance(v, list):
@@ -492,102 +492,156 @@ def register_api(server):
             def _normalize_text(v: Any) -> str:
                 return str(v or "").strip()
 
-            strict_mode = bool(get_app_config().get("tagging", {}).get("strict_mode", True))
-            taxonomy = taxonomy_payload()
-            allowed_phase = {str(x.get("value", "")).strip().lower(): str(x.get("value", "")).strip() for x in taxonomy.get("phase", [])}
-            allowed_context = {str(x.get("value", "")).strip().lower(): str(x.get("value", "")).strip() for x in taxonomy.get("context", [])}
-            allowed_setup = {str(x.get("value", "")).strip().lower(): str(x.get("value", "")).strip() for x in taxonomy.get("setup", [])}
-            allowed_signal = {str(x.get("value", "")).strip().lower(): str(x.get("value", "")).strip() for x in taxonomy.get("signal_bar", [])}
+            with advisory_file_lock(PERFORMANCE_CSV):
+                perf_df = ensure_trade_id(pd.read_csv(PERFORMANCE_CSV))
+                for col in ["TradeDay", "ContractName", "IntradayIndex", "Phase", "Context", "Setup", "SignalBar", "TradeIntent"]:
+                    if col not in perf_df.columns:
+                        perf_df[col] = ""
+                perf_df["trade_id"] = perf_df["trade_id"].fillna("").astype(str).str.strip()
+                perf_df["TradeDay"] = perf_df["TradeDay"].fillna("").astype(str).str.strip()
+                perf_df["ContractName"] = perf_df["ContractName"].fillna("").astype(str).str.strip()
+                perf_df["IntradayIndex"] = pd.to_numeric(perf_df["IntradayIndex"], errors="coerce").fillna(-1).astype(int).astype(str)
+                perf_df["Phase"] = perf_df["Phase"].fillna("").astype(str).str.strip()
+                perf_df["Context"] = perf_df["Context"].fillna("").astype(str).str.strip()
+                perf_df["Setup"] = perf_df["Setup"].fillna("").astype(str).str.strip()
+                perf_df["SignalBar"] = perf_df["SignalBar"].fillna("").astype(str).str.strip()
+                perf_df["TradeIntent"] = perf_df["TradeIntent"].fillna("").astype(str).str.strip()
+                perf_df["__effective_key"] = _effective_key(perf_df)
+                updated = 0
+                skipped = 0
+                changed_keys: list[str] = []
+                strict_mode = bool(get_app_config().get("tagging", {}).get("strict_mode", True))
+                taxonomy = taxonomy_payload()
+                allowed_phase = {str(x.get("value", "")).strip().lower(): str(x.get("value", "")).strip() for x in taxonomy.get("phase", [])}
+                allowed_context = {str(x.get("value", "")).strip().lower(): str(x.get("value", "")).strip() for x in taxonomy.get("context", [])}
+                allowed_setup = {str(x.get("value", "")).strip().lower(): str(x.get("value", "")).strip() for x in taxonomy.get("setup", [])}
+                allowed_signal = {str(x.get("value", "")).strip().lower(): str(x.get("value", "")).strip() for x in taxonomy.get("signal_bar", [])}
+                allowed_intent = {str(x.get("value", "")).strip().lower(): str(x.get("value", "")).strip() for x in taxonomy.get("trade_intent", [])}
 
-            def _normalize_by_taxonomy(raw: str, allowed_map: Dict[str, str], field: str) -> str:
-                val = _normalize_text(raw)
-                if not strict_mode or val == "":
-                    return val
-                if not allowed_map:
-                    return val
-                key = val.lower()
-                if key not in allowed_map:
-                    raise ValueError(f"invalid {field}: {val}")
-                return allowed_map[key]
+                def _normalize_by_taxonomy(raw: str, allowed_map: Dict[str, str], field: str) -> str:
+                    val = _normalize_text(raw)
+                    if not strict_mode or val == "":
+                        return val
+                    if not allowed_map:
+                        return val
+                    key = val.lower()
+                    if key not in allowed_map:
+                        raise ValueError(f"invalid {field}: {val}")
+                    return allowed_map[key]
 
-            def _normalize_setups_by_taxonomy(raw: Any) -> str:
-                val = _normalize_setups(raw)
-                if not strict_mode or val == "":
-                    return val
-                if not allowed_setup:
-                    return val
-                parts = [p.strip() for p in val.split("|") if p.strip()]
-                norm_parts: list[str] = []
-                for part in parts:
-                    key = part.lower()
-                    if key not in allowed_setup:
-                        raise ValueError(f"invalid setup: {part}")
-                    norm_parts.append(allowed_setup[key])
-                # dedupe canonical parts
-                out: list[str] = []
-                seen: set[str] = set()
-                for item in norm_parts:
-                    k = item.lower()
-                    if k in seen:
+                def _normalize_setups_by_taxonomy(raw: Any) -> str:
+                    val = _normalize_setups(raw)
+                    if not strict_mode or val == "":
+                        return val
+                    if not allowed_setup:
+                        return val
+                    parts = [p.strip() for p in val.split("|") if p.strip()]
+                    norm_parts: list[str] = []
+                    for part in parts:
+                        key = part.lower()
+                        if key not in allowed_setup:
+                            raise ValueError(f"invalid setup: {part}")
+                        norm_parts.append(allowed_setup[key])
+                    out: list[str] = []
+                    seen: set[str] = set()
+                    for item in norm_parts:
+                        k = item.lower()
+                        if k in seen:
+                            continue
+                        seen.add(k)
+                        out.append(item)
+                    return " | ".join(out)
+
+                for row in rows:
+                    if not isinstance(row, dict):
                         continue
-                    seen.add(k)
-                    out.append(item)
-                return " | ".join(out)
+                    trade_id = str(row.get("trade_id", "")).strip()
+                    trade_day = str(row.get("TradeDay", "")).strip()
+                    contract = str(row.get("ContractName", "")).strip()
+                    intraday_idx = str(row.get("IntradayIndex", "")).strip()
+                    setups = _normalize_setups_by_taxonomy(row.get("setups", row.get("Setup", "")))
+                    phase = _normalize_by_taxonomy(row.get("phase", row.get("Phase", "")), allowed_phase, "Phase")
+                    context = _normalize_by_taxonomy(row.get("context", row.get("Context", "")), allowed_context, "Context")
+                    signal_bar = _normalize_by_taxonomy(row.get("signal_bar", row.get("SignalBar", "")), allowed_signal, "SignalBar")
+                    trade_intent = _normalize_by_taxonomy(row.get("trade_intent", row.get("TradeIntent", "")), allowed_intent, "TradeIntent")
+                    if not trade_id and (not trade_day or not contract or not intraday_idx):
+                        continue
 
-            updated = 0
-            skipped = 0
-            for row in rows:
-                if not isinstance(row, dict):
-                    continue
-                trade_id = str(row.get("trade_id", "")).strip()
-                trade_day = str(row.get("TradeDay", "")).strip()
-                contract = str(row.get("ContractName", "")).strip()
-                intraday_idx = str(row.get("IntradayIndex", "")).strip()
-                setups = _normalize_setups_by_taxonomy(row.get("setups", row.get("Setup", "")))
-                phase = _normalize_by_taxonomy(row.get("phase", row.get("Phase", "")), allowed_phase, "Phase")
-                context = _normalize_by_taxonomy(row.get("context", row.get("Context", "")), allowed_context, "Context")
-                signal_bar = _normalize_by_taxonomy(row.get("signal_bar", row.get("SignalBar", "")), allowed_signal, "SignalBar")
-                if not trade_id and (not trade_day or not contract or not intraday_idx):
-                    continue
+                    key_df = pd.DataFrame(
+                        [
+                            {
+                                "trade_id": trade_id,
+                                "TradeDay": trade_day,
+                                "ContractName": contract,
+                                "IntradayIndex": intraday_idx,
+                            }
+                        ]
+                    )
+                    key_df["trade_id"] = key_df["trade_id"].fillna("").astype(str).str.strip()
+                    key_df["TradeDay"] = key_df["TradeDay"].astype(str).str.strip()
+                    key_df["ContractName"] = key_df["ContractName"].astype(str).str.strip()
+                    key_df["IntradayIndex"] = pd.to_numeric(key_df["IntradayIndex"], errors="coerce").fillna(-1).astype(int).astype(str)
+                    eff_key = _effective_key(key_df).iloc[0]
 
-                key_df = pd.DataFrame(
-                    [
-                        {
-                            "trade_id": trade_id,
-                            "TradeDay": trade_day,
-                            "ContractName": contract,
-                            "IntradayIndex": intraday_idx,
-                        }
-                    ]
+                    mask = perf_df["__effective_key"] == eff_key
+                    if mask.any():
+                        perf_df.loc[mask, "Setup"] = setups
+                        if phase or ("Phase" in row):
+                            perf_df.loc[mask, "Phase"] = phase
+                        if context or ("Context" in row):
+                            perf_df.loc[mask, "Context"] = context
+                        if signal_bar or ("SignalBar" in row):
+                            perf_df.loc[mask, "SignalBar"] = signal_bar
+                        if trade_intent or ("TradeIntent" in row):
+                            perf_df.loc[mask, "TradeIntent"] = trade_intent
+                        updated += 1
+                        changed_keys.append(eff_key)
+                    else:
+                        skipped += 1
+
+                perf_df = perf_df.drop(columns=["__effective_key"], errors="ignore")
+                atomic_write_csv(perf_df, PERFORMANCE_CSV)
+                append_audit_event(
+                    "journal_tags_updated",
+                    {
+                        "performance_csv": PERFORMANCE_CSV,
+                        "rows_requested": len(rows),
+                        "updated": updated,
+                        "inserted": 0,
+                        "skipped": skipped,
+                        "effective_keys": changed_keys[:200],
+                    },
+                    actor="api:/journal/tags",
                 )
-                key_df["trade_id"] = key_df["trade_id"].fillna("").astype(str).str.strip()
-                key_df["TradeDay"] = key_df["TradeDay"].astype(str).str.strip()
-                key_df["ContractName"] = key_df["ContractName"].astype(str).str.strip()
-                key_df["IntradayIndex"] = pd.to_numeric(key_df["IntradayIndex"], errors="coerce").fillna(-1).astype(int).astype(str)
-                eff_key = _effective_key(key_df).iloc[0]
-
-                mask = perf_df["__effective_key"] == eff_key
-                if mask.any():
-                    perf_df.loc[mask, "Setup"] = setups
-                    if phase or ("Phase" in row):
-                        perf_df.loc[mask, "Phase"] = phase
-                    if context or ("Context" in row):
-                        perf_df.loc[mask, "Context"] = context
-                    if signal_bar or ("SignalBar" in row):
-                        perf_df.loc[mask, "SignalBar"] = signal_bar
-                    updated += 1
-                else:
-                    skipped += 1
-
-            perf_df = perf_df.drop(columns=["__effective_key"], errors="ignore")
-            perf_df.to_csv(PERFORMANCE_CSV, index=False)
             return jsonify({"ok": True, "updated": updated, "inserted": 0, "skipped": skipped}), 200
+
         except FileNotFoundError as exc:
             return jsonify({"error": str(exc)}), 404
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
         except (KeyError, TypeError, pd.errors.ParserError, OSError) as exc:
             return jsonify({"error": f"journal setup-tag update failed: {exc}"}), 500
+
+    @api.route("/day-plan", methods=["GET", "POST", "OPTIONS"])
+    def day_plan():
+        if request.method == "OPTIONS":
+            return _cors_headers(jsonify({"ok": True}), allowed_origin)
+        try:
+            if request.method == "GET":
+                start = request.args.get("start")
+                end = request.args.get("end")
+                return jsonify({"rows": list_day_plan(start=start, end=end)}), 200
+
+            payload = _require_json_object()
+            rows = payload.get("rows")
+            out = upsert_day_plan_rows(rows)
+            return jsonify({"ok": True, **out}), 200
+        except FileNotFoundError as exc:
+            return jsonify({"error": str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except (KeyError, TypeError, pd.errors.ParserError, OSError) as exc:
+            return jsonify({"error": f"day plan update failed: {exc}"}), 500
 
     @api.route("/trading/session", methods=["GET", "OPTIONS"])
     def trading_session():

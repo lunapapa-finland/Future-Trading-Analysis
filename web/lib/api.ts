@@ -154,6 +154,7 @@ export async function postJournalSetupTags(payload: {
     Phase?: string;
     Context?: string;
     SignalBar?: string;
+    TradeIntent?: string;
     setups: string[] | string;
   }>;
 }): Promise<{ ok: boolean; updated: number; inserted: number }> {
@@ -174,8 +175,50 @@ export async function getTagTaxonomy(): Promise<{
   context: Array<{ value: string; hint?: string; order?: number }>;
   setup: Array<{ value: string; hint?: string; order?: number }>;
   signal_bar: Array<{ value: string; hint?: string; order?: number }>;
+  trade_intent: Array<{ value: string; hint?: string; order?: number }>;
 }> {
   const url = new URL("/api/tags/taxonomy", API_BASE);
+  const res = await fetch(url.toString(), withAuth({ cache: "no-store" }));
+  return handleResponse(res);
+}
+
+export async function getDayPlan(params?: { start?: string; end?: string }): Promise<{ rows: Array<Record<string, unknown>> }> {
+  const url = new URL("/api/day-plan", API_BASE);
+  if (params?.start) url.searchParams.set("start", params.start);
+  if (params?.end) url.searchParams.set("end", params.end);
+  const res = await fetch(url.toString(), withAuth({ cache: "no-store" }));
+  return handleResponse(res);
+}
+
+export async function postDayPlan(payload: {
+  rows: Array<{
+    Date: string;
+    Bias?: string;
+    ExpectedDayType?: string;
+    ActualDayType?: string;
+    KeyLevelsHTFContext?: string;
+    PrimaryPlan?: string;
+    AvoidancePlan?: string;
+  }>;
+}): Promise<{ ok: boolean; updated: number; inserted: number }> {
+  const url = new URL("/api/day-plan", API_BASE);
+  const res = await fetch(
+    url.toString(),
+    withAuth({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload ?? { rows: [] }),
+    })
+  );
+  return handleResponse(res);
+}
+
+export async function getDayPlanTaxonomy(): Promise<{
+  bias: Array<{ value: string; hint?: string; order?: number }>;
+  expected_day_type: Array<{ value: string; hint?: string; order?: number }>;
+  actual_day_type: Array<{ value: string; hint?: string; order?: number }>;
+}> {
+  const url = new URL("/api/day-plan/taxonomy", API_BASE);
   const res = await fetch(url.toString(), withAuth({ cache: "no-store" }));
   return handleResponse(res);
 }

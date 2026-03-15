@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { CandlesChart } from "@/components/charts/candles-chart";
 import { SymbolSelect } from "@/components/forms/symbol-select";
 import { TimeframeSelect } from "@/components/forms/timeframe-select";
-import { getTagTaxonomy, getTradingSession, postJournalSetupTags } from "@/lib/api";
+import { getDayPlan, getDayPlanTaxonomy, getTagTaxonomy, getTradingSession, postDayPlan, postJournalSetupTags } from "@/lib/api";
 import { resampleCandles } from "@/lib/timeframes";
 import { Candle, Timeframe, TradeMarker } from "@/lib/types";
 import { useEffect, useMemo, useState } from "react";
@@ -28,10 +28,19 @@ export default function TradingPage() {
   const [sizeFilter, setSizeFilter] = useState("");
   const [playbackSlice, setPlaybackSlice] = useState<Candle[]>([]);
   const [playbackIndex, setPlaybackIndex] = useState(0);
-  const [tagDrafts, setTagDrafts] = useState<Record<string, { Phase: string; Context: string; Setup: string; SignalBar: string }>>({});
+  const [tagDrafts, setTagDrafts] = useState<Record<string, { Phase: string; Context: string; Setup: string; SignalBar: string; TradeIntent: string }>>({});
   const [setupSaving, setSetupSaving] = useState(false);
   const [setupMessage, setSetupMessage] = useState<string>("");
   const today = new Date().toISOString().slice(0, 10);
+  const [planDate, setPlanDate] = useState(today);
+  const [planBias, setPlanBias] = useState("");
+  const [planDayType, setPlanDayType] = useState("");
+  const [actualDayType, setActualDayType] = useState("");
+  const [planLevels, setPlanLevels] = useState("");
+  const [planPrimary, setPlanPrimary] = useState("");
+  const [planAvoidance, setPlanAvoidance] = useState("");
+  const [planSaving, setPlanSaving] = useState(false);
+  const [planMessage, setPlanMessage] = useState<string>("");
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
 
@@ -48,10 +57,60 @@ export default function TradingPage() {
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
   });
+  const { data: dayPlanTaxonomy } = useQuery({
+    queryKey: ["day-plan-taxonomy"],
+    queryFn: () => getDayPlanTaxonomy(),
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+  });
+  const { data: dayPlanRange, refetch: refetchDayPlan } = useQuery({
+    queryKey: ["day-plan-range", startDate, endDate],
+    queryFn: () => getDayPlan({ start: startDate, end: endDate }),
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+  });
   const phaseOptions = useMemo(() => (taxonomy?.phase ?? []).map((x) => x.value), [taxonomy?.phase]);
   const contextOptions = useMemo(() => (taxonomy?.context ?? []).map((x) => x.value), [taxonomy?.context]);
   const setupOptions = useMemo(() => (taxonomy?.setup ?? []).map((x) => x.value), [taxonomy?.setup]);
   const signalOptions = useMemo(() => (taxonomy?.signal_bar ?? []).map((x) => x.value), [taxonomy?.signal_bar]);
+  const tradeIntentOptions = useMemo(() => {
+    const opts = (taxonomy?.trade_intent ?? []).map((x) => x.value);
+    return opts.length ? opts : ["Scalp", "Swing", "Runner", "Scale-in", "Scale-out"];
+  }, [taxonomy?.trade_intent]);
+  const dayBiasOptions = useMemo(() => {
+    const opts = (dayPlanTaxonomy?.bias ?? []).map((x) => x.value);
+    return opts.length ? opts : ["Bullish", "Bearish", "Neutral"];
+  }, [dayPlanTaxonomy?.bias]);
+  const dayTypeOptions = useMemo(() => {
+    const opts = (dayPlanTaxonomy?.expected_day_type ?? []).map((x) => x.value);
+    return opts.length ? opts : ["Trend day", "TR day", "Trend from open", "Spike and channel", "Double distribution"];
+  }, [dayPlanTaxonomy?.expected_day_type]);
+  const dayPlanByDate = useMemo(() => {
+    const out = new Map<string, Record<string, unknown>>();
+    (dayPlanRange?.rows ?? []).forEach((r) => {
+      const day = String(r["Date"] || "").trim();
+      if (day) out.set(day, r);
+    });
+    return out;
+  }, [dayPlanRange?.rows]);
+  const businessDayOptions = useMemo(() => {
+    const out: string[] = [];
+    if (!startDate || !endDate) return out;
+    const start = new Date(`${startDate}T00:00:00`);
+    const end = new Date(`${endDate}T00:00:00`);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return out;
+    const cur = new Date(start);
+    while (cur <= end) {
+      const wd = cur.getDay();
+      if (wd !== 0 && wd !== 6) {
+        out.push(cur.toISOString().slice(0, 10));
+      }
+      cur.setDate(cur.getDate() + 1);
+    }
+    return out;
+  }, [startDate, endDate]);
 
   const viewData = useMemo(() => {
     const source = data?.future ?? [];
@@ -231,10 +290,11 @@ export default function TradingPage() {
       Context: String(row["Context"] || ""),
       Setup: String(row["Setup"] || ""),
       SignalBar: String(row["SignalBar"] || ""),
+      TradeIntent: String(row["TradeIntent"] || ""),
     };
   };
 
-  const setDraftField = (row: Record<string, unknown>, field: "Phase" | "Context" | "Setup" | "SignalBar", value: string) => {
+  const setDraftField = (row: Record<string, unknown>, field: "Phase" | "Context" | "Setup" | "SignalBar" | "TradeIntent", value: string) => {
     const key = makeTradeKey(row);
     setTagDrafts((prev) => ({
       ...prev,
@@ -257,15 +317,18 @@ export default function TradingPage() {
         const currentPhase = String(row["Phase"] || "").trim();
         const currentContext = String(row["Context"] || "").trim();
         const currentSignal = String(row["SignalBar"] || "").trim();
+        const currentIntent = String(row["TradeIntent"] || "").trim();
         const nextSetup = normalizeSetupString(draft.Setup || "");
         const nextPhase = String(draft.Phase || "").trim();
         const nextContext = String(draft.Context || "").trim();
         const nextSignal = String(draft.SignalBar || "").trim();
+        const nextIntent = String(draft.TradeIntent || "").trim();
         if (
           nextSetup === currentSetup &&
           nextPhase === currentPhase &&
           nextContext === currentContext &&
-          nextSignal === currentSignal
+          nextSignal === currentSignal &&
+          nextIntent === currentIntent
         ) {
           return null;
         }
@@ -277,6 +340,7 @@ export default function TradingPage() {
           Phase: nextPhase,
           Context: nextContext,
           SignalBar: nextSignal,
+          TradeIntent: nextIntent,
           setups: nextSetup,
         };
       })
@@ -288,6 +352,7 @@ export default function TradingPage() {
         Phase?: string;
         Context?: string;
         SignalBar?: string;
+        TradeIntent?: string;
         setups: string;
       }>;
     if (!changed.length) {
@@ -319,6 +384,65 @@ export default function TradingPage() {
     setTypeFilter("");
     setSizeFilter("");
   }, [timeframe]);
+
+  useEffect(() => {
+    if (!businessDayOptions.length) {
+      setPlanDate("");
+      return;
+    }
+    if (!planDate || !businessDayOptions.includes(planDate)) {
+      setPlanDate(businessDayOptions[0]);
+    }
+  }, [businessDayOptions, planDate]);
+
+  useEffect(() => {
+    const row = dayPlanByDate.get(planDate);
+    if (!row) {
+      setPlanBias("");
+      setPlanDayType("");
+      setActualDayType("");
+      setPlanLevels("");
+      setPlanPrimary("");
+      setPlanAvoidance("");
+      return;
+    }
+    setPlanBias(String(row["Bias"] || ""));
+    setPlanDayType(String(row["ExpectedDayType"] || ""));
+    setActualDayType(String(row["ActualDayType"] || ""));
+    setPlanLevels(String(row["KeyLevelsHTFContext"] || ""));
+    setPlanPrimary(String(row["PrimaryPlan"] || ""));
+    setPlanAvoidance(String(row["AvoidancePlan"] || ""));
+  }, [planDate, dayPlanByDate]);
+
+  const saveDayPlan = async () => {
+    if (!planDate) {
+      setPlanMessage("No business day available in the selected range.");
+      return;
+    }
+    try {
+      setPlanSaving(true);
+      setPlanMessage("");
+      const resp = await postDayPlan({
+        rows: [
+          {
+            Date: planDate,
+            Bias: planBias,
+            ExpectedDayType: planDayType,
+            ActualDayType: actualDayType,
+            KeyLevelsHTFContext: planLevels,
+            PrimaryPlan: planPrimary,
+            AvoidancePlan: planAvoidance,
+          },
+        ],
+      });
+      setPlanMessage(`Saved day plan: updated ${resp.updated}, inserted ${resp.inserted}.`);
+      await refetchDayPlan();
+    } catch (e) {
+      setPlanMessage(`Failed to save day plan: ${(e as Error).message}`);
+    } finally {
+      setPlanSaving(false);
+    }
+  };
 
   return (
     <AppShell active="/trading">
@@ -496,9 +620,127 @@ export default function TradingPage() {
         {data ? (
           <div className="space-y-4">
             <StatGrid stats={{ ...(data.stats || {}), duration_bins: durationBins }} />
+            <div className="rounded-lg border border-white/5 bg-white/5 p-3 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs uppercase tracking-[0.15em] text-slate-300">Daily Plan (Day-Level Journal)</p>
+                <span className="text-[11px] text-slate-400">Range-bound to {startDate} → {endDate}</span>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {(dayPlanRange?.rows ?? []).length ? (
+                  (dayPlanRange?.rows ?? []).map((r) => {
+                    const d = String((r as Record<string, unknown>)["Date"] || "");
+                    return (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() => setPlanDate(d)}
+                        className={`rounded border px-2 py-0.5 text-[11px] ${planDate === d ? "border-accent text-white" : "border-white/15 text-slate-300"}`}
+                      >
+                        {d}
+                      </button>
+                    );
+                  })
+                ) : (
+                  <span className="text-[11px] text-slate-400">No day-plan rows in selected range.</span>
+                )}
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <label className="flex flex-col gap-1 text-xs text-slate-300">
+                  Date
+                  <select
+                    value={planDate}
+                    onChange={(e) => setPlanDate(e.target.value)}
+                    disabled={!businessDayOptions.length}
+                    className="h-[32px] rounded border border-white/10 bg-surface px-2 text-xs text-white outline-none focus:border-accent"
+                  >
+                    {!businessDayOptions.length ? <option value="">No business days</option> : null}
+                    {businessDayOptions.map((d) => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-xs text-slate-300">
+                  Bias
+                  <select
+                    value={planBias}
+                    onChange={(e) => setPlanBias(e.target.value)}
+                    className="h-[32px] rounded border border-white/10 bg-surface px-2 text-xs text-white outline-none focus:border-accent"
+                  >
+                    <option value="">Select</option>
+                    {dayBiasOptions.map((v) => (
+                      <option key={v} value={v}>{v}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-xs text-slate-300">
+                  Expected Day Type
+                  <select
+                    value={planDayType}
+                    onChange={(e) => setPlanDayType(e.target.value)}
+                    className="h-[32px] rounded border border-white/10 bg-surface px-2 text-xs text-white outline-none focus:border-accent"
+                  >
+                    <option value="">Select</option>
+                    {dayTypeOptions.map((v) => (
+                      <option key={v} value={v}>{v}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-xs text-slate-300">
+                  Actual Day Type
+                  <select
+                    value={actualDayType}
+                    onChange={(e) => setActualDayType(e.target.value)}
+                    className="h-[32px] rounded border border-white/10 bg-surface px-2 text-xs text-white outline-none focus:border-accent"
+                  >
+                    <option value="">Select</option>
+                    {dayTypeOptions.map((v) => (
+                      <option key={v} value={v}>{v}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-xs text-slate-300 sm:col-span-2">
+                  Key Levels / HTF Context
+                  <textarea
+                    value={planLevels}
+                    onChange={(e) => setPlanLevels(e.target.value)}
+                    rows={2}
+                    className="rounded border border-white/10 bg-surface px-2 py-1.5 text-xs text-white outline-none focus:border-accent"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs text-slate-300 sm:col-span-2">
+                  Primary Plan
+                  <textarea
+                    value={planPrimary}
+                    onChange={(e) => setPlanPrimary(e.target.value)}
+                    rows={2}
+                    className="rounded border border-white/10 bg-surface px-2 py-1.5 text-xs text-white outline-none focus:border-accent"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs text-slate-300 sm:col-span-2">
+                  Avoidance Plan
+                  <textarea
+                    value={planAvoidance}
+                    onChange={(e) => setPlanAvoidance(e.target.value)}
+                    rows={2}
+                    className="rounded border border-white/10 bg-surface px-2 py-1.5 text-xs text-white outline-none focus:border-accent"
+                  />
+                </label>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={saveDayPlan}
+                  disabled={planSaving || !planDate}
+                  className="rounded border border-accent px-3 py-1 text-xs font-semibold text-white hover:bg-accent hover:text-black disabled:opacity-60"
+                >
+                  {planSaving ? "Saving..." : "Save Day Plan"}
+                </button>
+                {planMessage ? <span className="text-xs text-slate-300">{planMessage}</span> : null}
+              </div>
+            </div>
               <div className="space-y-2 rounded-lg border border-white/5 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300">
-                <span>Tag each trade with Phase, Context, Setup(s), and Signal Bar. Use `|` or `,` for multiple setups.</span>
+                <span>Tag each trade with Phase, Context, Setup(s), Signal Bar, and Trade Intent. Use `|` or `,` for multiple setups.</span>
                 <button
                   type="button"
                   onClick={saveSetupTags}
@@ -607,6 +849,16 @@ export default function TradingPage() {
                           >
                             <option value="">SignalBar</option>
                             {signalOptions.map((v) => (
+                              <option key={v} value={v}>{v}</option>
+                            ))}
+                          </select>
+                          <select
+                            value={draft.TradeIntent}
+                            onChange={(e) => setDraftField(row as Record<string, unknown>, "TradeIntent", e.target.value)}
+                            className="h-[30px] rounded border border-white/10 bg-surface px-2 text-xs text-white outline-none focus:border-accent"
+                          >
+                            <option value="">TradeIntent</option>
+                            {tradeIntentOptions.map((v) => (
                               <option key={v} value={v}>{v}</option>
                             ))}
                           </select>
@@ -746,6 +998,16 @@ export default function TradingPage() {
                                 >
                                   <option value="">SignalBar</option>
                                   {signalOptions.map((v) => (
+                                    <option key={v} value={v}>{v}</option>
+                                  ))}
+                                </select>
+                                <select
+                                  value={draft.TradeIntent}
+                                  onChange={(e) => setDraftField(row as Record<string, unknown>, "TradeIntent", e.target.value)}
+                                  className="h-[30px] rounded border border-white/10 bg-surface px-2 text-xs text-white outline-none focus:border-accent"
+                                >
+                                  <option value="">TradeIntent</option>
+                                  {tradeIntentOptions.map((v) => (
                                     <option key={v} value={v}>{v}</option>
                                   ))}
                                 </select>

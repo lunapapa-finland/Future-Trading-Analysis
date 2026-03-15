@@ -132,3 +132,41 @@ def test_setup_journal_explodes_multi_setup_tags():
     names = set(journal["Setup"].tolist())
     assert "Wedge" in names
     assert "BO + Follow-through" in names
+
+
+def test_day_plan_review_is_included_in_insights_bundle(monkeypatch):
+    df = _fixture_df()
+    monkeypatch.setattr(
+        compute,
+        "load_day_plan",
+        lambda: pd.DataFrame(
+            [
+                {
+                    "Date": "2025-01-06",
+                    "Bias": "Bullish",
+                    "ExpectedDayType": "Trend day",
+                    "ActualDayType": "Trend day",
+                    "KeyLevelsHTFContext": "",
+                    "PrimaryPlan": "Trade continuation",
+                    "AvoidancePlan": "Avoid fades",
+                    "UpdatedAt": "2026-01-01T00:00:00Z",
+                },
+                {
+                    "Date": "2025-01-07",
+                    "Bias": "Bearish",
+                    "ExpectedDayType": "TR day",
+                    "ActualDayType": "TR day",
+                    "KeyLevelsHTFContext": "",
+                    "PrimaryPlan": "Fade extremes",
+                    "AvoidancePlan": "Avoid breakouts",
+                    "UpdatedAt": "2026-01-01T00:00:00Z",
+                },
+            ]
+        ),
+    )
+    bundle = compute.insights_bundle(df, params={"min_trades": 1, "month": "2025-01"})
+    assert "day_plan_review" in bundle
+    review = bundle["day_plan_review"]
+    assert "summary" in review and "daily" in review
+    assert int(review["summary"]["DaysWithPlan"]) >= 2
+    assert any(str(r.get("Date")) == "2025-01-06" for r in review["daily"])

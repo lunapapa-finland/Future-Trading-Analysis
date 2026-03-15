@@ -11,6 +11,7 @@ from flask import Flask, request, make_response
 from dotenv import load_dotenv
 from dashboard.api import register_api
 from dashboard.config.env import LOGGING_PATH, LOG_DIR
+from dashboard.services.utils.data_init import ensure_required_csvs
 
 # Logging setup
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -80,6 +81,7 @@ def _is_authorized() -> bool:
 
 
 _load_credentials_env()
+ensure_required_csvs()
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY') or secrets.token_urlsafe(32)
