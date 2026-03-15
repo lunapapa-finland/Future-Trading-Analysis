@@ -503,6 +503,8 @@ def register_api(server):
                 val = _normalize_text(raw)
                 if not strict_mode or val == "":
                     return val
+                if not allowed_map:
+                    return val
                 key = val.lower()
                 if key not in allowed_map:
                     raise ValueError(f"invalid {field}: {val}")
@@ -511,6 +513,8 @@ def register_api(server):
             def _normalize_setups_by_taxonomy(raw: Any) -> str:
                 val = _normalize_setups(raw)
                 if not strict_mode or val == "":
+                    return val
+                if not allowed_setup:
                     return val
                 parts = [p.strip() for p in val.split("|") if p.strip()]
                 norm_parts: list[str] = []
