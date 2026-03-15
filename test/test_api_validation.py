@@ -89,3 +89,30 @@ def test_analysis_date_filter_uses_trading_timezone_day_boundaries(tmp_path, mon
     out = resp.get_json()
     assert isinstance(out, list)
     assert len(out) == 1
+
+
+def test_analysis_date_filter_handles_dst_boundary_in_us_central(tmp_path, monkeypatch):
+    # Around DST start (2026-03-08 in US/Central):
+    # 05:30Z -> 2026-03-07 23:30 CST (previous day, should be excluded for 2026-03-08 filter)
+    # 14:10Z -> 2026-03-08 09:10 CDT (same day, should be included)
+    perf_csv = tmp_path / "perf.csv"
+    df = pd.DataFrame(
+        {
+            "ContractName": ["MES", "MES"],
+            "IntradayIndex": [1, 2],
+            "EnteredAt": ["2026-03-08T05:20:00Z", "2026-03-08T14:00:00Z"],
+            "ExitedAt": ["2026-03-08T05:30:00Z", "2026-03-08T14:10:00Z"],
+            "PnL(Net)": [1.0, 2.0],
+            "Type": ["Long", "Long"],
+            "Size": [1, 1],
+        }
+    )
+    df.to_csv(perf_csv, index=False)
+    monkeypatch.setattr(routes, "PERFORMANCE_CSV", str(perf_csv))
+
+    client = app.test_client()
+    resp = client.post("/api/analysis/drawdown", json={"start_date": "2026-03-08", "end_date": "2026-03-08"})
+    assert resp.status_code == 200
+    out = resp.get_json()
+    assert isinstance(out, list)
+    assert len(out) == 1

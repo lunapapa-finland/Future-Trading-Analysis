@@ -26,6 +26,7 @@ from dashboard.config.analysis import (
     RULE_COMPLIANCE_DEFAULTS,
     ANALYSIS_TIMEZONE,
 )
+from dashboard.config.app_config import get_app_config
 from dashboard.config.runtime_manifest import runtime_manifest
 from dashboard.services.data.load_data import load_performance, load_future
 from dashboard.services.portfolio import equity_series, append_manual
@@ -491,6 +492,44 @@ def register_api(server):
             def _normalize_text(v: Any) -> str:
                 return str(v or "").strip()
 
+            strict_mode = bool(get_app_config().get("tagging", {}).get("strict_mode", True))
+            taxonomy = taxonomy_payload()
+            allowed_phase = {str(x.get("value", "")).strip().lower(): str(x.get("value", "")).strip() for x in taxonomy.get("phase", [])}
+            allowed_context = {str(x.get("value", "")).strip().lower(): str(x.get("value", "")).strip() for x in taxonomy.get("context", [])}
+            allowed_setup = {str(x.get("value", "")).strip().lower(): str(x.get("value", "")).strip() for x in taxonomy.get("setup", [])}
+            allowed_signal = {str(x.get("value", "")).strip().lower(): str(x.get("value", "")).strip() for x in taxonomy.get("signal_bar", [])}
+
+            def _normalize_by_taxonomy(raw: str, allowed_map: Dict[str, str], field: str) -> str:
+                val = _normalize_text(raw)
+                if not strict_mode or val == "":
+                    return val
+                key = val.lower()
+                if key not in allowed_map:
+                    raise ValueError(f"invalid {field}: {val}")
+                return allowed_map[key]
+
+            def _normalize_setups_by_taxonomy(raw: Any) -> str:
+                val = _normalize_setups(raw)
+                if not strict_mode or val == "":
+                    return val
+                parts = [p.strip() for p in val.split("|") if p.strip()]
+                norm_parts: list[str] = []
+                for part in parts:
+                    key = part.lower()
+                    if key not in allowed_setup:
+                        raise ValueError(f"invalid setup: {part}")
+                    norm_parts.append(allowed_setup[key])
+                # dedupe canonical parts
+                out: list[str] = []
+                seen: set[str] = set()
+                for item in norm_parts:
+                    k = item.lower()
+                    if k in seen:
+                        continue
+                    seen.add(k)
+                    out.append(item)
+                return " | ".join(out)
+
             updated = 0
             skipped = 0
             for row in rows:
@@ -500,10 +539,10 @@ def register_api(server):
                 trade_day = str(row.get("TradeDay", "")).strip()
                 contract = str(row.get("ContractName", "")).strip()
                 intraday_idx = str(row.get("IntradayIndex", "")).strip()
-                setups = _normalize_setups(row.get("setups", row.get("Setup", "")))
-                phase = _normalize_text(row.get("phase", row.get("Phase", "")))
-                context = _normalize_text(row.get("context", row.get("Context", "")))
-                signal_bar = _normalize_text(row.get("signal_bar", row.get("SignalBar", "")))
+                setups = _normalize_setups_by_taxonomy(row.get("setups", row.get("Setup", "")))
+                phase = _normalize_by_taxonomy(row.get("phase", row.get("Phase", "")), allowed_phase, "Phase")
+                context = _normalize_by_taxonomy(row.get("context", row.get("Context", "")), allowed_context, "Context")
+                signal_bar = _normalize_by_taxonomy(row.get("signal_bar", row.get("SignalBar", "")), allowed_signal, "SignalBar")
                 if not trade_id and (not trade_day or not contract or not intraday_idx):
                     continue
 

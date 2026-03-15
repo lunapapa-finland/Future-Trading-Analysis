@@ -1,6 +1,6 @@
 .PHONY: install run run-dev run-dev-data run-dev-performance scan \
         docker-up docker-down docker-logs docker-rebuild docker-ps \
-        docker-job-trading docker-job-perf clean help
+        docker-job-trading docker-job-perf clean clean-data-artifacts help
 
 # -------- Config --------
 PY        ?= python
@@ -88,7 +88,12 @@ docker-job-perf:
 clean:
 	find . -type f -name "*.py[co]" -delete
 	find . -type d -name "__pycache__" -prune -exec rm -rf {} +
+	find . -type f -name ".DS_Store" -delete
 	rm -rf build dist .pytest_cache .mypy_cache .ruff_cache .coverage *.egg-info
+
+## Remove stale macOS artifacts from runtime data folders
+clean-data-artifacts:
+	find data -type f -name ".DS_Store" -delete
 
 ## Show available commands
 help:
@@ -107,5 +112,6 @@ help:
 	@echo "  docker-job-trading  - run the trading job inside jobs container"
 	@echo "  docker-job-perf     - run the performance job inside jobs container"
 	@echo "  clean               - remove caches/build artifacts"
+	@echo "  clean-data-artifacts - remove stale .DS_Store files under data/"
 	
 .DEFAULT_GOAL := help

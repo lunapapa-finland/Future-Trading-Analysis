@@ -81,3 +81,29 @@ def test_journal_tags_skips_unknown_trade_keys(tmp_path, monkeypatch):
     assert body["updated"] == 0
     assert body["inserted"] == 0
     assert body["skipped"] == 1
+
+
+def test_journal_tags_strict_mode_rejects_invalid_tag(tmp_path, monkeypatch):
+    perf_csv = tmp_path / "Performance_sum.csv"
+    _seed_perf_csv(perf_csv)
+    monkeypatch.setattr(routes, "PERFORMANCE_CSV", str(perf_csv))
+    monkeypatch.setattr(routes, "get_app_config", lambda: {"tagging": {"strict_mode": True}})
+    monkeypatch.setattr(
+        routes,
+        "taxonomy_payload",
+        lambda: {
+            "phase": [{"value": "Open"}],
+            "context": [{"value": "TR"}],
+            "setup": [{"value": "Wedge"}],
+            "signal_bar": [{"value": "Doji"}],
+        },
+    )
+
+    client = app.test_client()
+    resp = client.post(
+        "/api/journal/tags",
+        json={"rows": [{"trade_id": "t1", "Phase": "InvalidPhase", "setups": "Wedge"}]},
+    )
+    assert resp.status_code == 400
+    body = resp.get_json()
+    assert "invalid Phase" in body["error"]

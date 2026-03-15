@@ -343,3 +343,18 @@ def test_apply_phase_tags_uses_cme_windows():
     )
     out = pa._apply_phase_tags(df)
     assert out["Phase"].tolist() == ["Open", "Middle", "End"]
+
+
+def test_apply_phase_tags_handles_dst_before_and_after():
+    # Before DST start in US/Central (CST, UTC-6): 2026-03-06 08:45 -> 14:45Z.
+    # After DST start in US/Central (CDT, UTC-5): 2026-03-09 08:45 -> 13:45Z.
+    df = pd.DataFrame(
+        {
+            "EnteredAt": [
+                "2026-03-06T14:45:00Z",
+                "2026-03-09T13:45:00Z",
+            ]
+        }
+    )
+    out = pa._apply_phase_tags(df)
+    assert out["Phase"].tolist() == ["Open", "Open"]

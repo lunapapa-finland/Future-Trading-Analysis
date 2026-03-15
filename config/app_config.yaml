@@ -30,5 +30,8 @@ analysis:
     big_loss_threshold: 200.0
     max_trades_after_big_loss: 2
 
+tagging:
+  strict_mode: true
+
 symbols:
   default_performance_file: data/performance/Performance_sum.csv

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import copy
 import os
+import logging
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict
 
 import yaml
 
+log = logging.getLogger(__name__)
 
 DEFAULT_APP_CONFIG: Dict[str, Any] = {
     "paths": {
@@ -47,6 +49,9 @@ DEFAULT_APP_CONFIG: Dict[str, Any] = {
     },
     "symbols": {
         "default_performance_file": "data/performance/Performance_sum.csv",
+    },
+    "tagging": {
+        "strict_mode": True,
     },
 }
 
@@ -91,8 +96,8 @@ def get_app_config() -> Dict[str, Any]:
             loaded = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
             if isinstance(loaded, dict):
                 cfg = _deep_merge(cfg, loaded)
-        except Exception:
-            pass
+        except (OSError, yaml.YAMLError, TypeError, ValueError) as exc:
+            log.warning("Failed to load app config from %s, using defaults: %s", p, exc)
     return cfg
 
 
