@@ -60,9 +60,9 @@ def test_insights_rejects_non_object_params(tmp_path, monkeypatch):
     assert resp.status_code == 400
 
 
-def test_journal_validate_rejects_unknown_symbol():
+def test_journal_tags_rejects_non_array_rows():
     client = app.test_client()
-    resp = client.get("/api/journal/validate?symbol=UNKNOWN")
+    resp = client.post("/api/journal/tags", json={"rows": {}})
     assert resp.status_code == 400
 
 

@@ -44,8 +44,9 @@ export default function TradingPage() {
   const { data: taxonomy } = useQuery({
     queryKey: ["tag-taxonomy"],
     queryFn: () => getTagTaxonomy(),
-    staleTime: 60_000,
-    refetchOnWindowFocus: false,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
   const phaseOptions = useMemo(() => (taxonomy?.phase ?? []).map((x) => x.value), [taxonomy?.phase]);
   const contextOptions = useMemo(() => (taxonomy?.context ?? []).map((x) => x.value), [taxonomy?.context]);

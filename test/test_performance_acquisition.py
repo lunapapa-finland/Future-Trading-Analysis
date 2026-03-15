@@ -75,7 +75,6 @@ def test_generate_aggregated_data_updates_existing_trade_on_corrections(tmp_path
 
     monkeypatch.setattr(pa, "PERFORMANCE_CSV", str(perf_csv))
     monkeypatch.setattr(pa, "sync_trade_sum_from_performance_rows", lambda *args, **kwargs: None)
-    monkeypatch.setattr(pa, "sync_trade_journal", lambda *args, **kwargs: None)
     monkeypatch.setattr(pa, "merge_trade_labels", lambda df: df)
 
     final_df = pa.generate_aggregated_data([incoming])
@@ -130,7 +129,6 @@ def test_generate_aggregated_data_handles_duplicate_trade_ids_without_crash(tmp_
 
     monkeypatch.setattr(pa, "PERFORMANCE_CSV", str(perf_csv))
     monkeypatch.setattr(pa, "sync_trade_sum_from_performance_rows", lambda *args, **kwargs: None)
-    monkeypatch.setattr(pa, "sync_trade_journal", lambda *args, **kwargs: None)
     monkeypatch.setattr(pa, "merge_trade_labels", lambda df: df)
 
     out = pa.generate_aggregated_data([incoming])
@@ -181,7 +179,6 @@ def test_generate_aggregated_data_removes_existing_signature_duplicates(tmp_path
     )
     monkeypatch.setattr(pa, "PERFORMANCE_CSV", str(perf_csv))
     monkeypatch.setattr(pa, "sync_trade_sum_from_performance_rows", lambda *args, **kwargs: None)
-    monkeypatch.setattr(pa, "sync_trade_journal", lambda *args, **kwargs: None)
     monkeypatch.setattr(pa, "merge_trade_labels", lambda df: df)
 
     out = pa.generate_aggregated_data([incoming])
@@ -233,7 +230,6 @@ def test_generate_aggregated_data_sorts_chronologically(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(pa, "PERFORMANCE_CSV", str(perf_csv))
     monkeypatch.setattr(pa, "sync_trade_sum_from_performance_rows", lambda *args, **kwargs: None)
-    monkeypatch.setattr(pa, "sync_trade_journal", lambda *args, **kwargs: None)
     monkeypatch.setattr(pa, "merge_trade_labels", lambda df: df)
     out = pa.generate_aggregated_data([incoming])
     entered = pd.to_datetime(out["EnteredAt"], utc=True)
@@ -321,7 +317,6 @@ def test_generate_aggregated_data_syncs_trade_sum_for_affected_days_only(tmp_pat
     )
 
     monkeypatch.setattr(pa, "PERFORMANCE_CSV", str(perf_csv))
-    monkeypatch.setattr(pa, "sync_trade_journal", lambda *args, **kwargs: None)
     monkeypatch.setattr(pa, "merge_trade_labels", lambda df: df)
     monkeypatch.setattr(portfolio, "TRADE_SUM_CSV", trade_sum_csv)
     monkeypatch.setattr(portfolio, "CASHFLOW_CSV", cashflow_csv)
@@ -333,3 +328,18 @@ def test_generate_aggregated_data_syncs_trade_sum_for_affected_days_only(tmp_pat
     assert by_day["2025-01-01"] == 6.0  # unaffected day unchanged
     assert by_day["2025-01-02"] == 7.5  # corrected trade day updated
     assert by_day["2025-01-03"] == 8.0  # new trade day inserted
+
+
+def test_apply_phase_tags_uses_cme_windows():
+    # UTC timestamps corresponding to US/Central: 08:45, 11:15, 14:30 on the same day.
+    df = pd.DataFrame(
+        {
+            "EnteredAt": [
+                "2025-01-02T14:45:00Z",
+                "2025-01-02T17:15:00Z",
+                "2025-01-02T20:30:00Z",
+            ]
+        }
+    )
+    out = pa._apply_phase_tags(df)
+    assert out["Phase"].tolist() == ["Open", "Middle", "End"]

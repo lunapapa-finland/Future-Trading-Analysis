@@ -4,18 +4,18 @@ import os
 import re
 import time
 from collections import deque
-from datetime import timedelta
+from datetime import timedelta, time as dt_time
 from pathlib import Path
-
 import pandas as pd
 import pytz
 import yfinance as yf
 
-from dashboard.config.settings import PERFORMANCE_DIR, TIMEZONE, PERFORMANCE_CSV
-from dashboard.config.env import TEMP_PERF_DIR, BASE_DIR
+from dashboard.config.analysis import ANALYSIS_TIMEZONE
+from dashboard.config.app_config import get_app_config
+from dashboard.config.settings import PERFORMANCE_DIR, TIMEZONE, PERFORMANCE_CSV, CONTRACT_SPECS_CSV
+from dashboard.config.env import TEMP_PERF_DIR
 from dashboard.services.portfolio import sync_trade_sum_from_performance_rows
 from dashboard.services.utils.trade_enrichment import ensure_trade_id, merge_trade_labels
-from dashboard.services.utils.trade_journal import sync_trade_journal
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,6 @@ TRADE_SIGNATURE_COLUMNS = [
     "Type",
 ]
 
-CONTRACT_SPECS_CSV = BASE_DIR / "data" / "future" / "contract_specs.csv"
 _DEFAULT_POINT_VALUES = {
     "MES": 5.0,
     "MNQ": 2.0,
@@ -39,6 +38,49 @@ _DEFAULT_POINT_VALUES = {
     "MBT": 0.1,
     "MET": 0.1,
 }
+
+
+def _parse_hhmm(raw: object, default: dt_time) -> dt_time:
+    s = str(raw or "").strip()
+    if not s:
+        return default
+    try:
+        hh, mm = s.split(":")
+        return dt_time(hour=int(hh), minute=int(mm))
+    except Exception:
+        return default
+
+
+def _phase_windows() -> tuple[dt_time, dt_time, dt_time, dt_time]:
+    cfg = get_app_config().get("analysis", {}).get("session", {}).get("phase_windows", {})
+    open_start = _parse_hhmm(cfg.get("open_start"), dt_time(8, 30))
+    open_end = _parse_hhmm(cfg.get("open_end"), dt_time(10, 0))
+    middle_end = _parse_hhmm(cfg.get("middle_end"), dt_time(14, 0))
+    end_end = _parse_hhmm(cfg.get("end_end"), dt_time(15, 10))
+    return open_start, open_end, middle_end, end_end
+
+
+def _phase_for_time(t: dt_time, windows: tuple[dt_time, dt_time, dt_time, dt_time]) -> str:
+    open_start, open_end, middle_end, end_end = windows
+    if open_start <= t < open_end:
+        return "Open"
+    if open_end <= t < middle_end:
+        return "Middle"
+    if middle_end <= t <= end_end:
+        return "End"
+    return ""
+
+
+def _apply_phase_tags(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    if "EnteredAt" not in out.columns:
+        out["Phase"] = ""
+        return out
+    entered = pd.to_datetime(out["EnteredAt"], utc=True, errors="coerce")
+    local = entered.dt.tz_convert(ANALYSIS_TIMEZONE)
+    windows = _phase_windows()
+    out["Phase"] = local.dt.time.map(lambda t: _phase_for_time(t, windows) if pd.notna(t) else "")
+    return out
 
 
 def _symbol_root(raw_symbol: object) -> str:
@@ -58,9 +100,10 @@ def _symbol_root(raw_symbol: object) -> str:
 
 def _load_point_values() -> dict[str, float]:
     specs = dict(_DEFAULT_POINT_VALUES)
-    if CONTRACT_SPECS_CSV.exists():
+    specs_path = Path(CONTRACT_SPECS_CSV)
+    if specs_path.exists():
         try:
-            df = pd.read_csv(CONTRACT_SPECS_CSV)
+            df = pd.read_csv(specs_path)
             if {"symbol", "point_value"}.issubset(df.columns):
                 for _, row in df.iterrows():
                     root = _symbol_root(row.get("symbol"))
@@ -71,7 +114,7 @@ def _load_point_values() -> dict[str, float]:
                     except (TypeError, ValueError):
                         continue
         except (OSError, pd.errors.ParserError) as exc:
-            logger.warning("Failed to load contract specs from %s: %s", CONTRACT_SPECS_CSV, exc)
+            logger.warning("Failed to load contract specs from %s: %s", specs_path, exc)
     return specs
 
 
@@ -395,12 +438,12 @@ def generate_aggregated_data(valid_dataframes):
     final_df = _dedupe_by_trade_signature(final_df, label="final_combined")
     final_df = ensure_trade_id(final_df)
     final_df = merge_trade_labels(final_df)
+    final_df = _apply_phase_tags(final_df)
+    for col in ["Phase", "Context", "Setup", "SignalBar"]:
+        if col not in final_df.columns:
+            final_df[col] = ""
+        final_df[col] = final_df[col].fillna("").astype(str).str.strip()
     final_df = _sort_combined(final_df)
-    try:
-        sync_trade_journal(final_df)
-        logger.info("Trade journal synced with latest combined performance data")
-    except (TypeError, ValueError, OSError, KeyError) as e:
-        logger.error(f"Failed to sync trade journal: {e}")
     if not new_rows_df.empty:
         print(f"New trades added: {new_rows_df}")
     else:

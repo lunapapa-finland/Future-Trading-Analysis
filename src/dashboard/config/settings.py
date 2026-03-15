@@ -19,12 +19,14 @@ from dashboard.config.env import (
     PERFORMANCE_DIR,
     FUTURE_DIR,
     TEMP_PERF_DIR,
+    METADATA_DIR,
     DEBUG_FLAG,
     PORT,
     TIMEZONE,
     LOGGING_PATH,
     TIMEFRAME_OPTIONS,
 )
+from dashboard.config.app_config import get_app_config, resolve_path
 from dashboard.config.symbols import (
     DEFAULT_EXCHANGE,
     resolve_symbol_catalog,
@@ -57,11 +59,11 @@ class CMEHolidayCalendar(AbstractHolidayCalendar):
 # Section 3: Data File Paths & Symbols
 # -----------------------------------
 EXCHANGE = [DEFAULT_EXCHANGE]
-PERFORMANCE_CSV = str(PERFORMANCE_DIR / "Combined_performance_for_dash_project.csv")
-TRADE_LABELS_CSV = str(PERFORMANCE_DIR / "trade_labels.csv")
-TRADE_JOURNAL_CSV = str(PERFORMANCE_DIR / "trade_journal.csv")
-TRADE_JOURNAL_METADATA_CSV = str(PERFORMANCE_DIR / "trade_journal_metadata.csv")
-TRADE_TAG_TAXONOMY_CSV = str(PERFORMANCE_DIR / "tag_taxonomy.csv")
+_APP_PATHS = get_app_config().get("paths", {})
+PERFORMANCE_CSV = str(resolve_path(str(_APP_PATHS.get("performance_csv", PERFORMANCE_DIR / "Performance_sum.csv")), BASE_DIR))
+TRADE_LABELS_CSV = str(resolve_path(str(_APP_PATHS.get("trade_labels_csv", PERFORMANCE_DIR / "trade_labels.csv")), BASE_DIR))
+TRADE_TAG_TAXONOMY_CSV = str(resolve_path(str(_APP_PATHS.get("tag_taxonomy_csv", METADATA_DIR / "tag_taxonomy.csv")), BASE_DIR))
+CONTRACT_SPECS_CSV = str(resolve_path(str(_APP_PATHS.get("contract_specs_csv", METADATA_DIR / "contract_specs.csv")), BASE_DIR))
 
 # Resolved symbol catalog (absolute paths, defaults applied)
 SYMBOL_CATALOG = resolve_symbol_catalog(BASE_DIR)

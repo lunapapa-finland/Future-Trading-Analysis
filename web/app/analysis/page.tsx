@@ -174,7 +174,9 @@ export default function AnalysisPage() {
   const { data: config, isLoading: configLoading, error: configError } = useQuery({
     queryKey: ["config"],
     queryFn: fetchConfig,
-    staleTime: 5 * 60_000
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
 
   useEffect(() => {

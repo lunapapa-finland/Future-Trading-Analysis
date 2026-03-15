@@ -4,7 +4,7 @@ from typing import Any
 
 import pandas as pd
 
-from dashboard.config.settings import TRADE_TAG_TAXONOMY_CSV, TRADE_JOURNAL_METADATA_CSV
+from dashboard.config.settings import TRADE_TAG_TAXONOMY_CSV
 
 TAXONOMY_COLUMNS = ["Field", "Value", "Hint", "SortOrder", "Enabled"]
 FIELDS = ["Phase", "Context", "Setup", "SignalBar"]
@@ -37,44 +37,8 @@ def load_tag_taxonomy(path: str | None = None) -> pd.DataFrame:
     return out[TAXONOMY_COLUMNS]
 
 
-def _derive_taxonomy_from_metadata(metadata_path: str | None = None) -> pd.DataFrame:
-    target = metadata_path or TRADE_JOURNAL_METADATA_CSV
-    try:
-        meta = pd.read_csv(target)
-    except Exception:
-        return _empty_taxonomy_df()
-    if meta.empty:
-        return _empty_taxonomy_df()
-    rows: list[dict[str, Any]] = []
-    for field in FIELDS:
-        if field not in meta.columns:
-            continue
-        vals = (
-            meta[field]
-            .fillna("")
-            .astype(str)
-            .str.strip()
-        )
-        vals = vals[(vals != "") & (vals != "*")].drop_duplicates().tolist()
-        for idx, val in enumerate(vals, start=1):
-            rows.append(
-                {
-                    "Field": field,
-                    "Value": val,
-                    "Hint": "",
-                    "SortOrder": idx,
-                    "Enabled": True,
-                }
-            )
-    if not rows:
-        return _empty_taxonomy_df()
-    return pd.DataFrame(rows, columns=TAXONOMY_COLUMNS)
-
-
 def taxonomy_payload() -> dict[str, Any]:
     taxonomy = load_tag_taxonomy()
-    if taxonomy.empty:
-        taxonomy = _derive_taxonomy_from_metadata()
 
     by_field: dict[str, list[dict[str, Any]]] = {f: [] for f in FIELDS}
     for _, row in taxonomy.iterrows():
@@ -97,4 +61,3 @@ def taxonomy_payload() -> dict[str, Any]:
         "setup": by_field["Setup"],
         "signal_bar": by_field["SignalBar"],
     }
-

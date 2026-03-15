@@ -44,6 +44,7 @@ export default function ConfigPage() {
 
         {config ? (
           <>
+            {config.runtime_manifest ? <RuntimeManifestPanel manifest={config.runtime_manifest} /> : null}
             <SymbolTable symbols={config.symbols} />
             {config.timeframes?.length ? <TimeframeList timeframes={config.timeframes} /> : null}
             <HoldTypeInfo />
@@ -51,6 +52,79 @@ export default function ConfigPage() {
         ) : null}
       </div>
     </AppShell>
+  );
+}
+
+function RuntimeManifestPanel({
+  manifest,
+}: {
+  manifest: NonNullable<ConfigResponse["runtime_manifest"]>;
+}) {
+  const sourceEntries = Object.entries(manifest.sources || {});
+  return (
+    <div className="space-y-3 rounded-2xl border border-white/10 bg-surface/60 p-4 shadow-lg">
+      <div>
+        <p className="text-sm uppercase tracking-[0.2em] text-accent">Runtime Manifest</p>
+        <p className="mt-1 text-slate-300">Single control view for active data roots and CSV sources used by backend APIs.</p>
+      </div>
+      {manifest.app_config ? (
+        <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+          <p className="text-[11px] uppercase tracking-[0.12em] text-slate-400">App Config File</p>
+          <p className="truncate text-sm text-white" title={manifest.app_config.config_path}>
+            {manifest.app_config.config_path}
+          </p>
+        </div>
+      ) : null}
+      <div className="grid gap-2 md:grid-cols-2">
+        {Object.entries(manifest.roots || {}).map(([k, v]) => (
+          <div key={k} className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+            <p className="text-[11px] uppercase tracking-[0.12em] text-slate-400">{k}</p>
+            <p className="truncate text-sm text-white" title={v}>{v}</p>
+          </div>
+        ))}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-[920px] w-full text-sm text-white">
+          <thead className="text-xs uppercase tracking-[0.12em] text-slate-400">
+            <tr>
+              <th className="px-3 py-2 text-left">Source</th>
+              <th className="px-3 py-2 text-left">Path</th>
+              <th className="px-3 py-2 text-left">Status</th>
+              <th className="px-3 py-2 text-right">Rows</th>
+              <th className="px-3 py-2 text-left">Columns</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-white/5">
+            {sourceEntries.map(([name, info]) => {
+              const ok = info.exists && info.readable;
+              return (
+                <tr key={name}>
+                  <td className="px-3 py-2 font-semibold text-accent">{name}</td>
+                  <td className="px-3 py-2 text-slate-100" title={info.path}>
+                    <span className="block max-w-[320px] truncate">{info.path}</span>
+                  </td>
+                  <td className="px-3 py-2">
+                    <span
+                      className={`inline-flex rounded-full border px-2 py-0.5 text-xs ${
+                        ok ? "border-emerald-400/50 text-emerald-300" : "border-red-400/50 text-red-300"
+                      }`}
+                    >
+                      {ok ? "ready" : info.exists ? "unreadable" : "missing"}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-right">{info.rows}</td>
+                  <td className="px-3 py-2 text-slate-300">
+                    <span className="block max-w-[300px] truncate" title={(info.columns || []).join(", ")}>
+                      {(info.columns || []).join(", ") || "-"}
+                    </span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 

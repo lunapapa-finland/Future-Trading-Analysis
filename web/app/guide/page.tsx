@@ -63,24 +63,24 @@ const fallbackContextItems = [
 ];
 
 const fallbackSetupItems = [
-  "Wedge",
-  "DB/DT",
-  "Big Surprise bar w/ follow-through",
-  "Big Surprise bar w/o follow-through",
-  "Climax (often leads to TR, not instant reversal)",
-  "Final Flag (one more push)",
-  "2nd Leg (in TR)",
-  "BO + Follow-through",
-  "BO + PB + 2nd Entry",
-  "ii / iii / ioi",
-  "Expanding Triangle",
-  "Converging Triangle",
-  "TBTL",
-  "20 Bars Rule (trend diminishing)",
-  "HH/HL Major Trend Reversal",
-  "HH/HL Minor TR (scalp only)",
-  "Round Number",
-  "50% Pullback (mainly strong trend context)",
+  { text: "Wedge", hint: "Confluence reversal/continuation pattern. Confirm context and signal quality before entry." },
+  { text: "DB/DT", hint: "Double bottom/top pattern. Wait for clear confirmation at key levels." },
+  { text: "Big Surprise bar w/ follow-through", hint: "Momentum pattern with continuation confirmation." },
+  { text: "Big Surprise bar w/o follow-through", hint: "Potential failed breakout; tighten criteria." },
+  { text: "Climax (often leads to TR, not instant reversal)", hint: "Exhaustion behavior often transitions to range first." },
+  { text: "Final Flag (one more push)", hint: "Continuation attempt near trend end; manage risk tightly." },
+  { text: "2nd Leg (in TR)", hint: "Second-leg behavior in ranges; avoid overconfidence on first leg." },
+  { text: "BO + Follow-through", hint: "Breakout plus continuation bar quality required." },
+  { text: "BO + PB + 2nd Entry", hint: "Breakout, pullback, and quality second entry alignment." },
+  { text: "ii / iii / ioi", hint: "Inside-bar sequence. Confirm break direction with context." },
+  { text: "Expanding Triangle", hint: "Volatility expansion; prefer clear risk boundaries." },
+  { text: "Converging Triangle", hint: "Compression setup; wait for quality breakout." },
+  { text: "TBTL", hint: "Two-bar/two-leg behavior; require context confirmation." },
+  { text: "20 Bars Rule (trend diminishing)", hint: "Trend aging signal; avoid late momentum chasing." },
+  { text: "HH/HL Major Trend Reversal", hint: "Major reversal context with stronger confirmation needs." },
+  { text: "HH/HL Minor TR (scalp only)", hint: "Minor reversal in range; scalp bias only." },
+  { text: "Round Number", hint: "Psychological level; watch rejection/break quality." },
+  { text: "50% Pullback (mainly strong trend context)", hint: "Trend pullback setup; validate trend strength first." },
 ];
 
 const fallbackSignalItems = [
@@ -118,8 +118,9 @@ export default function GuidePage() {
   const { data: taxonomy } = useQuery({
     queryKey: ["tag-taxonomy"],
     queryFn: () => getTagTaxonomy(),
-    staleTime: 60_000,
-    refetchOnWindowFocus: false,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
   const activeMeta = workflow[activeStep];
   const phaseItems = useMemo(() => {
@@ -131,7 +132,7 @@ export default function GuidePage() {
     return fromApi.length ? fromApi : fallbackContextItems;
   }, [taxonomy?.context]);
   const setupItems = useMemo(() => {
-    const fromApi = (taxonomy?.setup ?? []).map((x) => x.value);
+    const fromApi = (taxonomy?.setup ?? []).map((x) => ({ text: x.value, hint: x.hint || "" }));
     return fromApi.length ? fromApi : fallbackSetupItems;
   }, [taxonomy?.setup]);
   const signalItems = useMemo(() => {
@@ -238,10 +239,7 @@ export default function GuidePage() {
 
             <Card title="Setups">
               <HintChipGroup
-                items={setupItems.map((s) => ({
-                  text: s,
-                  hint: "Validate this setup against current Phase, Context, and Signal Bar quality before entry.",
-                }))}
+                items={setupItems}
                 tone="emerald"
                 hintLabel="Setup hint"
               />

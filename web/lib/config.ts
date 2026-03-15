@@ -34,6 +34,28 @@ export type ConfigResponse = {
     start_date: string;
     risk_free_rate: number;
   };
+  runtime_manifest?: {
+    app_config?: {
+      config_path: string;
+      config: Record<string, unknown>;
+    };
+    roots: {
+      data_dir: string;
+      future_dir: string;
+      performance_dir: string;
+      metadata_dir: string;
+    };
+    sources: Record<
+      string,
+      {
+        path: string;
+        exists: boolean;
+        rows: number;
+        columns: string[];
+        readable: boolean;
+      }
+    >;
+  };
 };
 
 export async function fetchConfig(): Promise<ConfigResponse> {

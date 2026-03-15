@@ -26,12 +26,11 @@ from dashboard.config.analysis import (
     RULE_COMPLIANCE_DEFAULTS,
     ANALYSIS_TIMEZONE,
 )
+from dashboard.config.runtime_manifest import runtime_manifest
 from dashboard.services.data.load_data import load_performance, load_future
 from dashboard.services.portfolio import equity_series, append_manual
 from dashboard.services.analysis.portfolio_metrics import portfolio_metrics
 from dashboard.services.utils.trade_enrichment import ensure_trade_id, merge_trade_labels
-from dashboard.services.utils.trade_journal import load_trade_journal, merge_trade_journal, validate_trade_journal
-from dashboard.services.utils import trade_journal as tj
 from dashboard.services.utils.tag_taxonomy import taxonomy_payload
 from dashboard.services.utils.datetime_utils import (
     parse_optional_timestamp_utc,
@@ -84,6 +83,21 @@ def _require_json_object() -> Dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("request body must be a JSON object")
     return payload
+
+
+def _effective_key(df: pd.DataFrame) -> pd.Series:
+    out = df.copy()
+    if "trade_id" not in out.columns:
+        out["trade_id"] = ""
+    for col in ["TradeDay", "ContractName", "IntradayIndex"]:
+        if col not in out.columns:
+            out[col] = ""
+    out["trade_id"] = out["trade_id"].fillna("").astype(str).str.strip()
+    out["TradeDay"] = out["TradeDay"].fillna("").astype(str).str.strip()
+    out["ContractName"] = out["ContractName"].fillna("").astype(str).str.strip()
+    out["IntradayIndex"] = pd.to_numeric(out["IntradayIndex"], errors="coerce").fillna(-1).astype(int).astype(str)
+    legacy = out["TradeDay"] + "|" + out["ContractName"] + "|" + out["IntradayIndex"]
+    return out["trade_id"].where(out["trade_id"] != "", legacy)
 
 
 def _validate_symbol(symbol: Optional[str], *, required: bool = False) -> Optional[str]:
@@ -174,6 +188,7 @@ def register_api(server):
                     "rule_compliance": RULE_COMPLIANCE_DEFAULTS,
                 },
                 "tag_taxonomy": taxonomy_payload(),
+                "runtime_manifest": runtime_manifest(),
             }
         )
 
@@ -279,8 +294,7 @@ def register_api(server):
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
         try:
-            df = pd.read_csv(PERFORMANCE_CSV)
-            df = merge_trade_journal(merge_trade_labels(ensure_trade_id(df)))
+            df = merge_trade_labels(ensure_trade_id(pd.read_csv(PERFORMANCE_CSV)))
             if start or end:
                 if "TradeDay" in df.columns:
                     df["TradeDay"] = normalize_series_to_timezone(df["TradeDay"], "TradeDay", ANALYSIS_TIMEZONE).dt.normalize()
@@ -302,8 +316,7 @@ def register_api(server):
     def _load_performance_df(payload: Dict[str, Any]) -> pd.DataFrame:
         if not os.path.exists(PERFORMANCE_CSV):
             raise FileNotFoundError("performance data not found")
-        df = pd.read_csv(PERFORMANCE_CSV)
-        df = merge_trade_journal(merge_trade_labels(ensure_trade_id(df)))
+        df = merge_trade_labels(ensure_trade_id(pd.read_csv(PERFORMANCE_CSV)))
         symbol = payload.get("symbol")
         start = payload.get("start_date")
         end = payload.get("end_date")
@@ -434,61 +447,6 @@ def register_api(server):
         except (KeyError, TypeError, pd.errors.ParserError, OSError) as exc:
             return jsonify({"error": f"insights failed: {exc}"}), 500
 
-    @api.route("/journal/validate", methods=["GET", "OPTIONS"])
-    def journal_validate():
-        if request.method == "OPTIONS":
-            return _cors_headers(jsonify({"ok": True}), allowed_origin)
-        try:
-            start, end = _parse_range(request.args.get("start"), request.args.get("end"), normalize_date=True)
-            payload: Dict[str, Any] = {
-                "symbol": _validate_symbol(request.args.get("symbol"), required=False),
-                "start_date": start,
-                "end_date": end,
-            }
-            perf_df = _load_performance_df(payload)
-            journal_df = load_trade_journal()
-
-            # Optional scope: if query filters are provided, validate only corresponding key rows.
-            if not perf_df.empty and any(payload.values()):
-                scoped = perf_df.copy()
-                for col in ["trade_id", "TradeDay", "ContractName", "IntradayIndex"]:
-                    if col not in scoped.columns:
-                        scoped[col] = ""
-                keys = scoped[["trade_id", "TradeDay", "ContractName", "IntradayIndex"]].copy()
-                keys["trade_id"] = keys["trade_id"].fillna("").astype(str).str.strip()
-                keys["TradeDay"] = keys["TradeDay"].astype(str).str.strip()
-                keys["ContractName"] = keys["ContractName"].astype(str).str.strip()
-                keys["IntradayIndex"] = pd.to_numeric(keys["IntradayIndex"], errors="coerce").fillna(-1).astype(int).astype(str)
-                journal_df = journal_df.copy()
-                if "trade_id" not in journal_df.columns:
-                    journal_df["trade_id"] = ""
-                journal_df["trade_id"] = journal_df["trade_id"].fillna("").astype(str).str.strip()
-                journal_df["TradeDay"] = journal_df["TradeDay"].astype(str).str.strip()
-                journal_df["ContractName"] = journal_df["ContractName"].astype(str).str.strip()
-                journal_df["IntradayIndex"] = pd.to_numeric(journal_df["IntradayIndex"], errors="coerce").fillna(-1).astype(int).astype(str)
-                journal_df["__effective_key"] = tj.effective_key(journal_df)
-                keys["__effective_key"] = tj.effective_key(keys)
-                journal_df = journal_df.merge(keys[["__effective_key"]].drop_duplicates(), on="__effective_key", how="inner")
-                journal_df = journal_df.drop(columns=["__effective_key"])
-
-            report = validate_trade_journal(journal_df)
-            return (
-                jsonify(
-                    {
-                        "summary": report["summary"],
-                        "violations": report["violations"].to_dict("records"),
-                        "warnings": report["warnings"].to_dict("records"),
-                    }
-                ),
-                200,
-            )
-        except FileNotFoundError as exc:
-            return jsonify({"error": str(exc)}), 404
-        except ValueError as exc:
-            return jsonify({"error": str(exc)}), 400
-        except (KeyError, TypeError, pd.errors.ParserError, OSError) as exc:
-            return jsonify({"error": f"journal validation failed: {exc}"}), 500
-
     @api.route("/journal/tags", methods=["POST", "OPTIONS"])
     @api.route("/journal/setup-tags", methods=["POST", "OPTIONS"])
     def journal_setup_tags():
@@ -499,28 +457,21 @@ def register_api(server):
             rows = payload.get("rows")
             if not isinstance(rows, list):
                 raise ValueError("rows must be an array")
-
-            # Ensure journal scaffold exists for current performance universe.
-            if os.path.exists(PERFORMANCE_CSV):
-                perf_df = ensure_trade_id(pd.read_csv(PERFORMANCE_CSV))
-                tj.sync_trade_journal(perf_df)
-            journal_df = load_trade_journal()
-
-            if journal_df.empty:
-                journal_df = pd.DataFrame(columns=tj.JOURNAL_COLUMNS)
-                for col in tj.JOURNAL_COLUMNS:
-                    if col not in journal_df.columns:
-                        journal_df[col] = ""
-
-            # Normalize keys for matching.
-            for col in ["trade_id", "TradeDay", "ContractName", "IntradayIndex"]:
-                if col not in journal_df.columns:
-                    journal_df[col] = ""
-            journal_df["trade_id"] = journal_df["trade_id"].fillna("").astype(str).str.strip()
-            journal_df["TradeDay"] = journal_df["TradeDay"].astype(str).str.strip()
-            journal_df["ContractName"] = journal_df["ContractName"].astype(str).str.strip()
-            journal_df["IntradayIndex"] = pd.to_numeric(journal_df["IntradayIndex"], errors="coerce").fillna(-1).astype(int).astype(str)
-            journal_df["__effective_key"] = tj.effective_key(journal_df)
+            if not os.path.exists(PERFORMANCE_CSV):
+                raise FileNotFoundError("performance data not found")
+            perf_df = ensure_trade_id(pd.read_csv(PERFORMANCE_CSV))
+            for col in ["TradeDay", "ContractName", "IntradayIndex", "Phase", "Context", "Setup", "SignalBar"]:
+                if col not in perf_df.columns:
+                    perf_df[col] = ""
+            perf_df["trade_id"] = perf_df["trade_id"].fillna("").astype(str).str.strip()
+            perf_df["TradeDay"] = perf_df["TradeDay"].fillna("").astype(str).str.strip()
+            perf_df["ContractName"] = perf_df["ContractName"].fillna("").astype(str).str.strip()
+            perf_df["IntradayIndex"] = pd.to_numeric(perf_df["IntradayIndex"], errors="coerce").fillna(-1).astype(int).astype(str)
+            perf_df["Phase"] = perf_df["Phase"].fillna("").astype(str).str.strip()
+            perf_df["Context"] = perf_df["Context"].fillna("").astype(str).str.strip()
+            perf_df["Setup"] = perf_df["Setup"].fillna("").astype(str).str.strip()
+            perf_df["SignalBar"] = perf_df["SignalBar"].fillna("").astype(str).str.strip()
+            perf_df["__effective_key"] = _effective_key(perf_df)
 
             def _normalize_setups(v: Any) -> str:
                 if isinstance(v, list):
@@ -541,7 +492,7 @@ def register_api(server):
                 return str(v or "").strip()
 
             updated = 0
-            inserted = 0
+            skipped = 0
             for row in rows:
                 if not isinstance(row, dict):
                     continue
@@ -570,47 +521,24 @@ def register_api(server):
                 key_df["TradeDay"] = key_df["TradeDay"].astype(str).str.strip()
                 key_df["ContractName"] = key_df["ContractName"].astype(str).str.strip()
                 key_df["IntradayIndex"] = pd.to_numeric(key_df["IntradayIndex"], errors="coerce").fillna(-1).astype(int).astype(str)
-                eff_key = tj.effective_key(key_df).iloc[0]
+                eff_key = _effective_key(key_df).iloc[0]
 
-                mask = journal_df["__effective_key"] == eff_key
+                mask = perf_df["__effective_key"] == eff_key
                 if mask.any():
-                    journal_df.loc[mask, "Setup"] = setups
+                    perf_df.loc[mask, "Setup"] = setups
                     if phase or ("Phase" in row):
-                        journal_df.loc[mask, "Phase"] = phase
+                        perf_df.loc[mask, "Phase"] = phase
                     if context or ("Context" in row):
-                        journal_df.loc[mask, "Context"] = context
+                        perf_df.loc[mask, "Context"] = context
                     if signal_bar or ("SignalBar" in row):
-                        journal_df.loc[mask, "SignalBar"] = signal_bar
+                        perf_df.loc[mask, "SignalBar"] = signal_bar
                     updated += 1
                 else:
-                    new_row = {c: "" for c in tj.JOURNAL_COLUMNS}
-                    new_row["trade_id"] = trade_id
-                    new_row["TradeDay"] = trade_day
-                    new_row["ContractName"] = contract
-                    new_row["IntradayIndex"] = intraday_idx
-                    new_row["Phase"] = phase
-                    new_row["Context"] = context
-                    new_row["Setup"] = setups
-                    new_row["SignalBar"] = signal_bar
-                    journal_df = pd.concat([journal_df, pd.DataFrame([new_row])], ignore_index=True)
-                    inserted += 1
+                    skipped += 1
 
-            # Persist via sync path to keep schema/ordering consistent.
-            journal_df = journal_df.drop(columns=["__effective_key"], errors="ignore")
-            for col in tj.JOURNAL_COLUMNS:
-                if col not in journal_df.columns:
-                    journal_df[col] = ""
-            journal_df = journal_df[tj.JOURNAL_COLUMNS].copy()
-            journal_df["trade_id"] = journal_df["trade_id"].fillna("").astype(str).str.strip()
-            journal_df["TradeDay"] = journal_df["TradeDay"].astype(str).str.strip()
-            journal_df["ContractName"] = journal_df["ContractName"].astype(str).str.strip()
-            journal_df["IntradayIndex"] = pd.to_numeric(journal_df["IntradayIndex"], errors="coerce").fillna(-1).astype(int).astype(str)
-            journal_df["__effective_key"] = tj.effective_key(journal_df)
-            journal_df = journal_df.drop_duplicates(subset=["__effective_key"], keep="last").drop(columns=["__effective_key"])
-            journal_df = journal_df.sort_values(["TradeDay", "ContractName", "IntradayIndex"]).reset_index(drop=True)
-            journal_df.to_csv(tj.TRADE_JOURNAL_CSV, index=False)
-
-            return jsonify({"ok": True, "updated": updated, "inserted": inserted}), 200
+            perf_df = perf_df.drop(columns=["__effective_key"], errors="ignore")
+            perf_df.to_csv(PERFORMANCE_CSV, index=False)
+            return jsonify({"ok": True, "updated": updated, "inserted": 0, "skipped": skipped}), 200
         except FileNotFoundError as exc:
             return jsonify({"error": str(exc)}), 404
         except ValueError as exc:
@@ -639,8 +567,7 @@ def register_api(server):
         try:
             default_start = "1900-01-01"
             default_end = "2100-01-01"
-            perf_df = load_performance(symbol, start_raw or default_start, end_raw or default_end, PERFORMANCE_CSV)
-            perf_df = merge_trade_journal(merge_trade_labels(ensure_trade_id(perf_df)))
+            perf_df = merge_trade_labels(ensure_trade_id(load_performance(symbol, start_raw or default_start, end_raw or default_end, PERFORMANCE_CSV)))
             fut_df = load_future(start_raw or default_start, end_raw or default_end, csv_path)
 
             # Stats from plots helper

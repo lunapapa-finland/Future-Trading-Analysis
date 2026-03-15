@@ -2,56 +2,82 @@ import pandas as pd
 
 from dashboard.app import app
 from dashboard.api import routes
-from dashboard.services.utils import trade_journal as tj
 
 
-def test_journal_validate_api_reports_violations(tmp_path, monkeypatch):
-    perf = pd.DataFrame(
+def _seed_perf_csv(path):
+    df = pd.DataFrame(
         {
+            "trade_id": ["t1", "t2"],
             "TradeDay": ["2025-11-01", "2025-11-01"],
-            "ContractName": ["MES", "MES"],
+            "ContractName": ["MESZ25", "MESZ25"],
             "IntradayIndex": [1, 2],
-            "EnteredAt": ["2025-11-01T10:00:00Z", "2025-11-01T10:30:00Z"],
-            "ExitedAt": ["2025-11-01T10:10:00Z", "2025-11-01T10:40:00Z"],
-            "PnL(Net)": [10, -5],
+            "EnteredAt": ["2025-11-01T10:00:00Z", "2025-11-01T11:00:00Z"],
+            "ExitedAt": ["2025-11-01T10:10:00Z", "2025-11-01T11:10:00Z"],
+            "PnL(Net)": [10.0, -5.0],
             "Type": ["Long", "Short"],
             "Size": [1, 1],
         }
     )
-    perf_csv = tmp_path / "perf.csv"
-    perf.to_csv(perf_csv, index=False)
+    df.to_csv(path, index=False)
+
+
+def test_journal_tags_updates_performance_sum_csv(tmp_path, monkeypatch):
+    perf_csv = tmp_path / "Performance_sum.csv"
+    _seed_perf_csv(perf_csv)
     monkeypatch.setattr(routes, "PERFORMANCE_CSV", str(perf_csv))
 
-    journal = pd.DataFrame(
-        {
-            "TradeDay": ["2025-11-01", "2025-11-01"],
-            "ContractName": ["MES", "MES"],
-            "IntradayIndex": [1, 2],
-            "Phase": ["", "Open"],
-            "Context": ["TR", "BAD"],
-            "Setup": ["Wedge", "Wedge"],
-            "SignalBar": ["Doji", "Doji"],
-            "Comments": ["", ""],
-        }
-    )
-    meta = pd.DataFrame(
-        [
-            {"Phase": "Open", "Context": "*", "Setup": "*", "SignalBar": "*", "Validity": "allowed", "RuleNote": ""},
-            {"Phase": "*", "Context": "TR", "Setup": "*", "SignalBar": "*", "Validity": "allowed", "RuleNote": ""},
-            {"Phase": "*", "Context": "*", "Setup": "Wedge", "SignalBar": "*", "Validity": "allowed", "RuleNote": ""},
-            {"Phase": "*", "Context": "*", "Setup": "*", "SignalBar": "Doji", "Validity": "allowed", "RuleNote": ""},
-        ]
-    )
-    journal_csv = tmp_path / "trade_journal.csv"
-    meta_csv = tmp_path / "trade_journal_metadata.csv"
-    journal.to_csv(journal_csv, index=False)
-    meta.to_csv(meta_csv, index=False)
-    monkeypatch.setattr(tj, "TRADE_JOURNAL_CSV", str(journal_csv))
-    monkeypatch.setattr(tj, "TRADE_JOURNAL_METADATA_CSV", str(meta_csv))
-
     client = app.test_client()
-    resp = client.get("/api/journal/validate")
+    resp = client.post(
+        "/api/journal/tags",
+        json={
+            "rows": [
+                {
+                    "trade_id": "t1",
+                    "Phase": "Open",
+                    "Context": "TR",
+                    "SignalBar": "Doji",
+                    "setups": ["Wedge", "DB/DT"],
+                }
+            ]
+        },
+    )
     assert resp.status_code == 200
     body = resp.get_json()
-    assert body["summary"]["RowsChecked"] == 2
-    assert body["summary"]["Violations"] == 2
+    assert body["ok"] is True
+    assert body["updated"] == 1
+    assert body["inserted"] == 0
+    assert body["skipped"] == 0
+
+    out = pd.read_csv(perf_csv)
+    row = out.loc[out["trade_id"] == "t1"].iloc[0]
+    assert row["Phase"] == "Open"
+    assert row["Context"] == "TR"
+    assert row["SignalBar"] == "Doji"
+    assert row["Setup"] == "Wedge | DB/DT"
+
+
+def test_journal_tags_skips_unknown_trade_keys(tmp_path, monkeypatch):
+    perf_csv = tmp_path / "Performance_sum.csv"
+    _seed_perf_csv(perf_csv)
+    monkeypatch.setattr(routes, "PERFORMANCE_CSV", str(perf_csv))
+
+    client = app.test_client()
+    resp = client.post(
+        "/api/journal/tags",
+        json={
+            "rows": [
+                {
+                    "trade_id": "not-found",
+                    "Phase": "Open",
+                    "Context": "TR",
+                    "SignalBar": "Doji",
+                    "setups": "Wedge",
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["updated"] == 0
+    assert body["inserted"] == 0
+    assert body["skipped"] == 1

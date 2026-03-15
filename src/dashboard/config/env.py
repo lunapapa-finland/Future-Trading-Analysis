@@ -8,6 +8,8 @@ import os
 import logging
 from pathlib import Path
 
+from dashboard.config.app_config import get_app_config
+
 log = logging.getLogger(__name__)
 
 
@@ -37,18 +39,19 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", BASE_DIR / "data"))
 PERFORMANCE_DIR = Path(os.environ.get("PERFORMANCE_DIR", DATA_DIR / "performance"))
 FUTURE_DIR = Path(os.environ.get("FUTURE_DIR", DATA_DIR / "future"))
 TEMP_PERF_DIR = Path(os.environ.get("TEMP_PERFORMANCE_DIR", DATA_DIR / "temp_performance"))
+METADATA_DIR = Path(os.environ.get("METADATA_DIR", DATA_DIR / "metadata"))
 
 # Ensure directories exist
-for d in (LOG_DIR, DATA_DIR, PERFORMANCE_DIR, FUTURE_DIR, TEMP_PERF_DIR):
+for d in (LOG_DIR, DATA_DIR, PERFORMANCE_DIR, FUTURE_DIR, TEMP_PERF_DIR, METADATA_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 DEBUG_FLAG = False  # Enable debug mode
 PORT = int(os.environ.get("PORT", "8050"))
-TIMEZONE = os.environ.get("TIMEZONE", "US/Central")
+TIMEZONE = os.environ.get("TIMEZONE", str(get_app_config().get("analysis", {}).get("timezone", "US/Central")))
 LOGGING_PATH = LOG_DIR / "app.log"
 
 # UI-facing timeframe options (chart intervals)
-TIMEFRAME_OPTIONS = ["5m", "15m", "30m", "1h", "4h", "1d", "1w"]
+TIMEFRAME_OPTIONS = list(get_app_config().get("ui", {}).get("timeframes", ["5m", "15m", "30m", "1h", "4h", "1d", "1w"]))
 
 # Playback speed presets (seconds per bar)
-PLAYBACK_SPEEDS = [15, 30, 45, 60]
+PLAYBACK_SPEEDS = list(get_app_config().get("ui", {}).get("playback_speeds", [15, 30, 45, 60]))

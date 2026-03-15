@@ -14,10 +14,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict
 
+from dashboard.config.app_config import get_app_config
+
 # Defaults used when symbol entries omit explicit values
 DEFAULT_EXCHANGE = "CME"
 DEFAULT_TIMEZONE = "US/Central"
-DEFAULT_PERFORMANCE_FILE = "data/performance/Combined_performance_for_dash_project.csv"
+DEFAULT_PERFORMANCE_FILE = str(get_app_config().get("symbols", {}).get("default_performance_file", "data/performance/Performance_sum.csv"))
 
 # Month codes for common futures conventions
 QUARTERLY_MONTHS = [3, 6, 9, 12]
