@@ -425,7 +425,6 @@ def upsert_live_journal_rows(rows: list[dict[str, Any]], *, actor: str = "api:/j
     now_iso = _now_local_iso()
     critical_fields = ["TradeDay", "Direction", "Size", "EnteredAt", "ExitedAt", "EntryPrice", "ExitPrice", "ContractName"]
     rematch_required_ids: set[str] = set()
-    inactivated_matches = 0
     point_values = _load_point_values()
 
     with advisory_file_lock(JOURNAL_LIVE_CSV):
@@ -554,24 +553,10 @@ def upsert_live_journal_rows(rows: list[dict[str, Any]], *, actor: str = "api:/j
             by_id[journal_id] = next_row
             changed_ids.append(journal_id)
 
-        if rematch_required_ids:
-            for row in matches_list:
-                if (
-                    _normalize_text(row.get("journal_id")) in rematch_required_ids
-                    and _normalize_text(row.get("Status")) == "active"
-                ):
-                    row["Status"] = "inactive"
-                    row["UpdatedAt"] = now_iso
-                    inactivated_matches += 1
-
         out_journal = _ensure_journal_schema(pd.DataFrame(list(by_id.values()), columns=JOURNAL_COLUMNS))
         out_adjustments = _ensure_adjustment_schema(pd.DataFrame(keep_adjustments, columns=ADJUSTMENT_COLUMNS))
         atomic_write_csv(out_journal, JOURNAL_LIVE_CSV)
         atomic_write_csv(out_adjustments, JOURNAL_ADJUSTMENTS_CSV)
-        if rematch_required_ids:
-            with advisory_file_lock(JOURNAL_MATCHES_CSV):
-                out_matches = _ensure_match_schema(pd.DataFrame(matches_list, columns=MATCH_COLUMNS))
-                atomic_write_csv(out_matches, JOURNAL_MATCHES_CSV)
 
     append_audit_event(
         "live_journal_upserted",
@@ -583,7 +568,7 @@ def upsert_live_journal_rows(rows: list[dict[str, Any]], *, actor: str = "api:/j
             "updated": updated,
             "journal_ids": changed_ids[:200],
             "needs_reconfirm_journal_ids": sorted(rematch_required_ids),
-            "inactivated_matches": inactivated_matches,
+            "inactivated_matches": 0,
         },
         actor=actor,
     )
@@ -774,3 +759,55 @@ def unlink_matches(
         actor=actor,
     )
     return {"inactivated": inactivated}
+
+
+def reconfirm_match(
+    journal_id: str,
+    *,
+    trade_id: str | None = None,
+    trade_day: str | None = None,
+    actor: str = "api:/journal/matching/reconfirm",
+) -> dict[str, int]:
+    j_id = _normalize_text(journal_id)
+    if not j_id:
+        raise ValueError("journal_id is required")
+    t_id = _normalize_text(trade_id)
+    day = _normalize_trade_day(trade_day) if _normalize_text(trade_day) else ""
+    now_iso = _now_local_iso()
+
+    matches = load_journal_matches()
+    active = matches[matches["Status"] == "active"].copy() if not matches.empty else pd.DataFrame(columns=MATCH_COLUMNS)
+    if active.empty:
+        raise ValueError("no active matches found")
+
+    check = active[active["journal_id"].astype(str) == j_id].copy()
+    if t_id:
+        check = check[check["trade_id"].astype(str) == t_id].copy()
+    if day:
+        check = check[check["TradeDay"].astype(str) == day].copy()
+    if check.empty:
+        raise ValueError("no active link found for reconfirmation")
+
+    with advisory_file_lock(JOURNAL_LIVE_CSV):
+        journal = load_journal_live()
+        if journal.empty:
+            raise ValueError("journal row not found")
+        mask = journal["journal_id"].astype(str) == j_id
+        if not mask.any():
+            raise ValueError("journal row not found")
+        changed = int(mask.sum())
+        journal.loc[mask, "MatchStatus"] = "matched"
+        journal.loc[mask, "UpdatedAt"] = now_iso
+        atomic_write_csv(_ensure_journal_schema(journal), JOURNAL_LIVE_CSV)
+
+    append_audit_event(
+        "journal_match_reconfirmed",
+        {
+            "journal_id": j_id,
+            "trade_id": t_id,
+            "trade_day": day,
+            "updated_rows": changed,
+        },
+        actor=actor,
+    )
+    return {"updated": changed}

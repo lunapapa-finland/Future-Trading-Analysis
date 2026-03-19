@@ -15,7 +15,7 @@ from dashboard.config.app_config import get_app_config
 from dashboard.config.settings import PERFORMANCE_DIR, TIMEZONE, PERFORMANCE_CSV, CONTRACT_SPECS_CSV
 from dashboard.config.env import TEMP_PERF_DIR
 from dashboard.services.portfolio import sync_trade_sum_from_performance_rows
-from dashboard.services.utils.trade_enrichment import ensure_trade_id, merge_trade_labels
+from dashboard.services.utils.trade_enrichment import ensure_trade_id
 from dashboard.services.utils.persistence import advisory_file_lock, atomic_write_csv, append_audit_event
 
 logger = logging.getLogger(__name__)
@@ -376,7 +376,6 @@ def generate_aggregated_data(valid_dataframes):
         if not past_performance_df.empty:
             past_performance_df = _dedupe_by_trade_signature(past_performance_df, label="past_performance")
             past_performance_df = ensure_trade_id(past_performance_df)
-            past_performance_df = merge_trade_labels(past_performance_df)
             past_performance_df['EnteredAt'] = pd.to_datetime(past_performance_df['EnteredAt'], utc=True).dt.tz_convert(TIMEZONE)
             past_performance_df['ExitedAt'] = pd.to_datetime(past_performance_df['ExitedAt'], utc=True).dt.tz_convert(TIMEZONE)
             past_performance_df['TradeDay'] = past_performance_df['EnteredAt'].dt.strftime('%Y-%m-%d')
@@ -472,13 +471,10 @@ def _generate_aggregated_data_inner(past_performance_df: pd.DataFrame, valid_dat
             if pd.notna(raw_day):
                 affected_dates.add(str(raw_day))
 
-    new_rows_df = merge_trade_labels(new_rows_df)
-
     # Concatenate old and new
     final_df = pd.concat([past_performance_df, new_rows_df], ignore_index=True)
     final_df = _dedupe_by_trade_signature(final_df, label="final_combined")
     final_df = ensure_trade_id(final_df)
-    final_df = merge_trade_labels(final_df)
     final_df = _apply_phase_tags(final_df)
     for col in ["Phase", "Context", "Setup", "SignalBar", "TradeIntent"]:
         if col not in final_df.columns:

@@ -33,7 +33,7 @@ from dashboard.config.runtime_manifest import runtime_manifest
 from dashboard.services.data.load_data import load_performance, load_future
 from dashboard.services.portfolio import equity_series, append_manual
 from dashboard.services.analysis.portfolio_metrics import portfolio_metrics
-from dashboard.services.utils.trade_enrichment import ensure_trade_id, merge_trade_labels
+from dashboard.services.utils.trade_enrichment import ensure_trade_id
 from dashboard.services.utils.tag_taxonomy import taxonomy_payload
 from dashboard.services.utils.day_plan_taxonomy import day_plan_taxonomy_payload
 from dashboard.services.utils.day_plan import list_day_plan, upsert_day_plan_rows
@@ -44,6 +44,7 @@ from dashboard.services.utils.journal_live import (
     confirm_matches,
     list_active_matches,
     unlink_matches,
+    reconfirm_match,
     load_journal_matches,
     load_journal_live,
     DIRECTION_VALUES,
@@ -523,7 +524,7 @@ def register_api(server):
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
         try:
-            df = merge_trade_labels(ensure_trade_id(pd.read_csv(PERFORMANCE_CSV)))
+            df = ensure_trade_id(pd.read_csv(PERFORMANCE_CSV))
             df = _apply_live_journal_labels(df, start, end)
             if start or end:
                 if "TradeDay" in df.columns:
@@ -546,7 +547,7 @@ def register_api(server):
     def _load_performance_df(payload: Dict[str, Any]) -> pd.DataFrame:
         if not os.path.exists(PERFORMANCE_CSV):
             raise FileNotFoundError("performance data not found")
-        df = merge_trade_labels(ensure_trade_id(pd.read_csv(PERFORMANCE_CSV)))
+        df = ensure_trade_id(pd.read_csv(PERFORMANCE_CSV))
         symbol = payload.get("symbol")
         start = payload.get("start_date")
         end = payload.get("end_date")
@@ -1310,6 +1311,7 @@ def register_api(server):
                         "Direction": str(r.get("Direction", "")),
                         "Size": str(r.get("Size", "")),
                         "TradeIntent": str(r.get("TradeIntent", "")),
+                        "MatchStatus": str(r.get("MatchStatus", "")),
                     }
 
             tmap: dict[str, dict[str, Any]] = {}
@@ -1374,6 +1376,29 @@ def register_api(server):
         except (KeyError, TypeError, pd.errors.ParserError, OSError) as exc:
             return jsonify({"error": f"matching unlink failed: {exc}"}), 500
 
+    @api.route("/journal/matching/reconfirm", methods=["POST", "OPTIONS"])
+    def journal_matching_reconfirm():
+        if request.method == "OPTIONS":
+            return _cors_headers(jsonify({"ok": True}), allowed_origin)
+        try:
+            payload = _require_json_object()
+            journal_id = payload.get("journal_id")
+            trade_id = payload.get("trade_id")
+            trade_day = payload.get("trade_day")
+            out = reconfirm_match(
+                str(journal_id or ""),
+                trade_id=str(trade_id or ""),
+                trade_day=str(trade_day or ""),
+                actor="api:/journal/matching/reconfirm",
+            )
+            return jsonify({"ok": True, **out}), 200
+        except FileNotFoundError as exc:
+            return jsonify({"error": str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except (KeyError, TypeError, pd.errors.ParserError, OSError) as exc:
+            return jsonify({"error": f"matching reconfirm failed: {exc}"}), 500
+
     @api.route("/trading/session", methods=["GET", "OPTIONS"])
     def trading_session():
         if request.method == "OPTIONS":
@@ -1395,7 +1420,7 @@ def register_api(server):
         try:
             default_start = "1900-01-01"
             default_end = "2100-01-01"
-            perf_df = merge_trade_labels(ensure_trade_id(load_performance(symbol, start_raw or default_start, end_raw or default_end, PERFORMANCE_CSV)))
+            perf_df = ensure_trade_id(load_performance(symbol, start_raw or default_start, end_raw or default_end, PERFORMANCE_CSV))
             fut_df = load_future(start_raw or default_start, end_raw or default_end, csv_path)
 
             # Stats from plots helper

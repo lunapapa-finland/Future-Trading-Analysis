@@ -62,7 +62,6 @@ class CMEHolidayCalendar(AbstractHolidayCalendar):
 EXCHANGE = [DEFAULT_EXCHANGE]
 _APP_PATHS = get_app_config().get("paths", {})
 PERFORMANCE_CSV = str(resolve_path(str(_APP_PATHS.get("performance_csv", PERFORMANCE_DIR / "Performance_sum.csv")), BASE_DIR))
-TRADE_LABELS_CSV = str(resolve_path(str(_APP_PATHS.get("trade_labels_csv", PERFORMANCE_DIR / "trade_labels.csv")), BASE_DIR))
 JOURNAL_LIVE_CSV = str(resolve_path(str(_APP_PATHS.get("journal_live_csv", PERFORMANCE_DIR / "journal_live.csv")), BASE_DIR))
 JOURNAL_ADJUSTMENTS_CSV = str(resolve_path(str(_APP_PATHS.get("journal_adjustments_csv", PERFORMANCE_DIR / "journal_adjustments.csv")), BASE_DIR))
 JOURNAL_MATCHES_CSV = str(resolve_path(str(_APP_PATHS.get("journal_matches_csv", PERFORMANCE_DIR / "journal_matches.csv")), BASE_DIR))

@@ -14,7 +14,6 @@ log = logging.getLogger(__name__)
 DEFAULT_APP_CONFIG: Dict[str, Any] = {
     "paths": {
         "performance_csv": "data/performance/Performance_sum.csv",
-        "trade_labels_csv": "data/performance/trade_labels.csv",
         "journal_live_csv": "data/performance/journal_live.csv",
         "journal_adjustments_csv": "data/performance/journal_adjustments.csv",
         "journal_matches_csv": "data/performance/journal_matches.csv",
