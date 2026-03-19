@@ -241,22 +241,22 @@ export default function TradingPage() {
     return "Swing";
   };
 
-  const passesFilters = (row: Record<string, unknown>): boolean => {
-    const direction = String(row["Type"] || "");
-    const holdType = holdTypeOf(row);
-    const sizeVal = Number(row["Size"] || 0);
-    const dirOk = !directionFilter || direction === directionFilter;
-    const typeOk = !typeFilter || holdType === typeFilter;
-    const sizeOk =
-      !sizeFilter ||
-      (sizeFilter === "S" && sizeVal <= 2) ||
-      (sizeFilter === "M" && sizeVal > 2 && sizeVal <= 5) ||
-      (sizeFilter === "L" && sizeVal > 5);
-    return dirOk && typeOk && sizeOk;
-  };
-
   const filteredPerformance = useMemo(
-    () => (data?.performance || []).filter((r) => passesFilters(r as Record<string, unknown>)),
+    () =>
+      (data?.performance || []).filter((r) => {
+        const row = r as Record<string, unknown>;
+        const direction = String(row["Type"] || "");
+        const holdType = holdTypeOf(row);
+        const sizeVal = Number(row["Size"] || 0);
+        const dirOk = !directionFilter || direction === directionFilter;
+        const typeOk = !typeFilter || holdType === typeFilter;
+        const sizeOk =
+          !sizeFilter ||
+          (sizeFilter === "S" && sizeVal <= 2) ||
+          (sizeFilter === "M" && sizeVal > 2 && sizeVal <= 5) ||
+          (sizeFilter === "L" && sizeVal > 5);
+        return dirOk && typeOk && sizeOk;
+      }),
     [data?.performance, directionFilter, typeFilter, sizeFilter]
   );
 
