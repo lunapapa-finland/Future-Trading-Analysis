@@ -1,4 +1,12 @@
-import { AnalysisPayload, AnalysisResponse, Candle, InsightsPayload, InsightsResponse, PerformanceRecord } from "./types";
+import {
+  AnalysisPayload,
+  AnalysisResponse,
+  Candle,
+  InsightsPayload,
+  InsightsResponse,
+  LiveJournalRow,
+  PerformanceRecord,
+} from "./types";
 import type { TradingSession } from "./types";
 
 export class ApiError extends Error {
@@ -220,5 +228,123 @@ export async function getDayPlanTaxonomy(): Promise<{
 }> {
   const url = new URL("/api/day-plan/taxonomy", API_BASE);
   const res = await fetch(url.toString(), withAuth({ cache: "no-store" }));
+  return handleResponse(res);
+}
+
+export async function getJournalLiveMeta(): Promise<{
+  phase: Array<{ value: string; hint?: string; order?: number }>;
+  context: Array<{ value: string; hint?: string; order?: number }>;
+  setup: Array<{ value: string; hint?: string; order?: number }>;
+  signal_bar: Array<{ value: string; hint?: string; order?: number }>;
+  trade_intent: Array<{ value: string; hint?: string; order?: number }>;
+  direction: Array<{ value: string }>;
+  contracts: Array<{ symbol: string; point_value: number }>;
+}> {
+  const url = new URL("/api/journal/live/meta", API_BASE);
+  const res = await fetch(url.toString(), withAuth({ cache: "no-store" }));
+  return handleResponse(res);
+}
+
+export async function getJournalLive(params?: { start?: string; end?: string }): Promise<{ rows: LiveJournalRow[] }> {
+  const url = new URL("/api/journal/live", API_BASE);
+  if (params?.start) url.searchParams.set("start", params.start);
+  if (params?.end) url.searchParams.set("end", params.end);
+  const res = await fetch(url.toString(), withAuth({ cache: "no-store" }));
+  return handleResponse(res);
+}
+
+export async function postJournalLive(payload: { rows: LiveJournalRow[] }): Promise<{ ok: boolean; inserted: number; updated: number }> {
+  const url = new URL("/api/journal/live", API_BASE);
+  const res = await fetch(
+    url.toString(),
+    withAuth({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload ?? { rows: [] }),
+    })
+  );
+  return handleResponse(res);
+}
+
+export async function postMatchingParsePreview(
+  files: File[],
+  options?: { archiveRaw?: boolean }
+): Promise<{
+  ok: boolean;
+  can_continue: boolean;
+  hard_blocked: boolean;
+  parse_logs: Array<Record<string, unknown>>;
+  unparseable_rows: Array<Record<string, unknown>>;
+  parsed_trades: Array<Record<string, unknown>>;
+  parsed_range: { start: string; end: string; days: string[] };
+  journal_rows: LiveJournalRow[];
+  suggestions: Array<Record<string, unknown>>;
+  archived_files?: string[];
+  removed_files?: string[];
+}> {
+  const url = new URL("/api/journal/matching/parse-preview", API_BASE);
+  const form = new FormData();
+  files.forEach((f) => form.append("files", f));
+  form.append("archive_raw", options?.archiveRaw ? "true" : "false");
+  const res = await fetch(
+    url.toString(),
+    withAuth({
+      method: "POST",
+      body: form,
+    })
+  );
+  return handleResponse(res);
+}
+
+export async function postMatchingCommit(payload: {
+  parsed_trades: Array<Record<string, unknown>>;
+  links: Array<Record<string, unknown>>;
+  replace_for_journal?: boolean;
+}): Promise<{
+  ok: boolean;
+  merged: boolean;
+  rows_before: number;
+  rows_after: number;
+  rows_delta: number;
+  matches_inserted: number;
+  matches_inactivated: number;
+}> {
+  const url = new URL("/api/journal/matching/commit", API_BASE);
+  const res = await fetch(
+    url.toString(),
+    withAuth({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload ?? { parsed_trades: [], links: [] }),
+    })
+  );
+  return handleResponse(res);
+}
+
+export async function getMatchingLinks(params?: { start?: string; end?: string }): Promise<{
+  ok: boolean;
+  rows: Array<Record<string, unknown>>;
+}> {
+  const url = new URL("/api/journal/matching/links", API_BASE);
+  if (params?.start) url.searchParams.set("start", params.start);
+  if (params?.end) url.searchParams.set("end", params.end);
+  const res = await fetch(url.toString(), withAuth({ cache: "no-store" }));
+  return handleResponse(res);
+}
+
+export async function postMatchingUnlink(payload: {
+  journal_id: string;
+  trade_id?: string;
+  trade_day?: string;
+}): Promise<{ ok: boolean; inactivated: number }> {
+  const url = new URL("/api/journal/matching/unlink", API_BASE);
+  const res = await fetch(
+    url.toString(),
+    withAuth({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload ?? {}),
+    })
+  );
   return handleResponse(res);
 }

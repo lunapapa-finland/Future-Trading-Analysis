@@ -9,6 +9,7 @@ Routes:
 
 import os
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
@@ -17,8 +18,9 @@ from flask import Blueprint, jsonify, request
 from dashboard.services.analysis import compute
 from dashboard.services.analysis.behavioral import behavior_heatmap
 from dashboard.services.analysis.plots import get_statistics
-from dashboard.config.settings import DATA_SOURCE_DROPDOWN, PERFORMANCE_CSV, SYMBOL_CATALOG
+from dashboard.config.settings import DATA_SOURCE_DROPDOWN, PERFORMANCE_CSV, SYMBOL_CATALOG, CONTRACT_SPECS_CSV
 from dashboard.config.env import TIMEFRAME_OPTIONS, PLAYBACK_SPEEDS
+from dashboard.config.env import TEMP_PERF_DIR
 from dashboard.config.analysis import (
     RISK_FREE_RATE,
     INITIAL_NET_LIQ,
@@ -35,6 +37,17 @@ from dashboard.services.utils.trade_enrichment import ensure_trade_id, merge_tra
 from dashboard.services.utils.tag_taxonomy import taxonomy_payload
 from dashboard.services.utils.day_plan_taxonomy import day_plan_taxonomy_payload
 from dashboard.services.utils.day_plan import list_day_plan, upsert_day_plan_rows
+from dashboard.services.utils.performance_acquisition import process_csv, generate_aggregated_data
+from dashboard.services.utils.journal_live import (
+    list_live_journal,
+    upsert_live_journal_rows,
+    confirm_matches,
+    list_active_matches,
+    unlink_matches,
+    load_journal_matches,
+    load_journal_live,
+    DIRECTION_VALUES,
+)
 from dashboard.services.utils.persistence import advisory_file_lock, atomic_write_csv, append_audit_event
 from dashboard.services.utils.datetime_utils import (
     parse_optional_timestamp_utc,
@@ -126,6 +139,130 @@ def _parse_range(start_raw: Optional[str], end_raw: Optional[str], *, normalize_
     return start, end
 
 
+def _to_float(v: object) -> Optional[float]:
+    n = pd.to_numeric(v, errors="coerce")
+    if pd.isna(n):
+        return None
+    return float(n)
+
+
+def _parse_ts_central(v: object) -> Optional[pd.Timestamp]:
+    s = str(v or "").strip()
+    if not s:
+        return None
+    ts = pd.to_datetime(s, errors="coerce")
+    if pd.isna(ts):
+        return None
+    if getattr(ts, "tzinfo", None) is None:
+        return ts.tz_localize(ANALYSIS_TIMEZONE)
+    return ts.tz_convert(ANALYSIS_TIMEZONE)
+
+
+def _pair_match_tiered(journal_row: dict[str, Any], perf_row: dict[str, Any], perf_index: int, journal_index: int) -> dict[str, Any]:
+    # Tier 1: journal-maintained time (fuzzy) + price (exact) signals.
+    j_entry_ts = _parse_ts_central(journal_row.get("EnteredAt"))
+    p_entry_ts = _parse_ts_central(perf_row.get("EnteredAt"))
+    j_exit_ts = _parse_ts_central(journal_row.get("ExitedAt"))
+    p_exit_ts = _parse_ts_central(perf_row.get("ExitedAt"))
+    j_entry_px = _to_float(journal_row.get("EntryPrice"))
+    p_entry_px = _to_float(perf_row.get("EntryPrice"))
+    j_exit_px = _to_float(journal_row.get("ExitPrice"))
+    p_exit_px = _to_float(perf_row.get("ExitPrice"))
+
+    tier1_evidence = any(x is not None for x in [j_entry_ts, j_exit_ts, j_entry_px, j_exit_px])
+    tier1_score = 0.0
+    reasons: list[str] = []
+    hard_conflict = False
+
+    if j_entry_ts is not None and p_entry_ts is not None:
+        diff_min = abs((j_entry_ts - p_entry_ts).total_seconds()) / 60.0
+        if diff_min <= 1:
+            tier1_score += 30
+        elif diff_min <= 3:
+            tier1_score += 24
+        elif diff_min <= 5:
+            tier1_score += 16
+        elif diff_min <= 10:
+            tier1_score += 8
+        reasons.append(f"entry_time_diff_min={diff_min:.2f}")
+    if j_exit_ts is not None and p_exit_ts is not None:
+        diff_min = abs((j_exit_ts - p_exit_ts).total_seconds()) / 60.0
+        if diff_min <= 1:
+            tier1_score += 30
+        elif diff_min <= 3:
+            tier1_score += 24
+        elif diff_min <= 5:
+            tier1_score += 16
+        elif diff_min <= 10:
+            tier1_score += 8
+        reasons.append(f"exit_time_diff_min={diff_min:.2f}")
+    if j_entry_px is not None and p_entry_px is not None:
+        if abs(j_entry_px - p_entry_px) < 1e-9:
+            tier1_score += 35
+            reasons.append("entry_price_exact=true")
+        else:
+            hard_conflict = True
+            tier1_score -= 120
+            reasons.append("entry_price_exact=false")
+    if j_exit_px is not None and p_exit_px is not None:
+        if abs(j_exit_px - p_exit_px) < 1e-9:
+            tier1_score += 35
+            reasons.append("exit_price_exact=true")
+        else:
+            hard_conflict = True
+            tier1_score -= 120
+            reasons.append("exit_price_exact=false")
+
+    # Tier 2: direction + size exact.
+    j_dir = str(journal_row.get("Direction", "")).strip().lower()
+    p_dir = str(perf_row.get("Type", "")).strip().lower()
+    j_size = _to_float(journal_row.get("Size"))
+    p_size = _to_float(perf_row.get("Size"))
+    dir_exact = bool(j_dir and p_dir and j_dir == p_dir)
+    size_exact = bool(j_size is not None and p_size is not None and abs(j_size - p_size) < 1e-9)
+
+    tier2_score = 0.0
+    if dir_exact:
+        tier2_score += 25
+    else:
+        tier2_score -= 8
+    if size_exact:
+        tier2_score += 25
+    else:
+        tier2_score -= 8
+    reasons.append(f"direction_exact={str(dir_exact).lower()}")
+    reasons.append(f"size_exact={str(size_exact).lower()}")
+
+    # Sequence fallback is tier 3 manual-assist only.
+    seq_gap = abs(journal_index - perf_index)
+    tier3_score = max(0.0, 15.0 - (seq_gap * 2.0))
+    reasons.append(f"sequence_gap={seq_gap}")
+
+    if tier1_evidence:
+        tier = 1
+        score = tier1_score + (0.25 * tier2_score) + (0.1 * tier3_score)
+        match_type = "tier1_time_price"
+    elif dir_exact or size_exact:
+        tier = 2
+        score = tier2_score + (0.25 * tier3_score)
+        match_type = "tier2_dir_size"
+    else:
+        tier = 3
+        score = tier3_score
+        match_type = "tier3_manual"
+
+    if hard_conflict:
+        score -= 1000.0
+
+    return {
+        "tier": tier,
+        "score": round(float(score), 4),
+        "match_type": match_type,
+        "hard_conflict": hard_conflict,
+        "reasons": reasons,
+    }
+
+
 def _validate_metric_payload(metric: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     if metric not in VALID_METRICS:
         raise ValueError(f"unknown metric {metric}")
@@ -144,11 +281,89 @@ def _validate_metric_payload(metric: str, payload: Dict[str, Any]) -> Dict[str, 
     if params is not None and not isinstance(params, dict):
         raise ValueError("params must be an object")
     payload["params"] = params or {}
+    payload["include_unmatched"] = bool(payload.get("include_unmatched", False))
     payload["symbol"] = _validate_symbol(payload.get("symbol"), required=False)
     start, end = _parse_range(payload.get("start_date"), payload.get("end_date"), normalize_date=True)
     payload["start_date"] = start
     payload["end_date"] = end
     return payload
+
+
+def _active_match_trade_ids(start: Optional[pd.Timestamp], end: Optional[pd.Timestamp]) -> set[str]:
+    matches = load_journal_matches()
+    if matches.empty:
+        return set()
+    active = matches[matches["Status"] == "active"].copy()
+    if active.empty:
+        return set()
+    if start is not None:
+        active = active[active["TradeDay"] >= start.date().isoformat()].copy()
+    if end is not None:
+        active = active[active["TradeDay"] <= end.date().isoformat()].copy()
+    if active.empty:
+        return set()
+    return set(active["trade_id"].fillna("").astype(str).str.strip())
+
+
+def _live_journal_label_map(start: Optional[pd.Timestamp], end: Optional[pd.Timestamp]) -> pd.DataFrame:
+    matches = load_journal_matches()
+    journal = load_journal_live()
+    if matches.empty or journal.empty:
+        return pd.DataFrame(columns=["trade_id", "Phase", "Context", "Setup", "SignalBar", "TradeIntent", "JournalId"])
+
+    active = matches[matches["Status"] == "active"].copy()
+    if active.empty:
+        return pd.DataFrame(columns=["trade_id", "Phase", "Context", "Setup", "SignalBar", "TradeIntent", "JournalId"])
+    if start is not None:
+        active = active[active["TradeDay"] >= start.date().isoformat()].copy()
+    if end is not None:
+        active = active[active["TradeDay"] <= end.date().isoformat()].copy()
+    if active.empty:
+        return pd.DataFrame(columns=["trade_id", "Phase", "Context", "Setup", "SignalBar", "TradeIntent", "JournalId"])
+
+    active["__primary"] = active["IsPrimary"].astype(str).str.lower().isin(["1", "true", "yes", "y"])
+    active["__updated"] = pd.to_datetime(active["UpdatedAt"], errors="coerce")
+    active = active.sort_values(["trade_id", "__primary", "__updated"], ascending=[True, False, False], kind="stable")
+    active = active.drop_duplicates(subset=["trade_id"], keep="first")
+
+    journal_cols = ["journal_id", "Phase", "Context", "Setup", "SignalBar", "TradeIntent"]
+    j = journal[journal_cols].copy()
+    j["journal_id"] = j["journal_id"].astype(str).str.strip()
+    merged = active.merge(j, on="journal_id", how="left")
+    merged["trade_id"] = merged["trade_id"].astype(str).str.strip()
+    out = merged.rename(columns={"journal_id": "JournalId"})[
+        ["trade_id", "Phase", "Context", "Setup", "SignalBar", "TradeIntent", "JournalId"]
+    ].copy()
+    for col in ["Phase", "Context", "Setup", "SignalBar", "TradeIntent", "JournalId"]:
+        out[col] = out[col].fillna("").astype(str).str.strip()
+    out = out[out["trade_id"] != ""].copy()
+    return out
+
+
+def _apply_live_journal_labels(df: pd.DataFrame, start: Optional[pd.Timestamp], end: Optional[pd.Timestamp]) -> pd.DataFrame:
+    if df.empty or "trade_id" not in df.columns:
+        return df
+    labels = _live_journal_label_map(start, end)
+    if labels.empty:
+        return df
+
+    merged = df.merge(labels, on="trade_id", how="left", suffixes=("", "__live"))
+    for col in ["Phase", "Context", "Setup", "SignalBar", "TradeIntent"]:
+        live_col = f"{col}__live"
+        if col not in merged.columns:
+            merged[col] = ""
+        if live_col in merged.columns:
+            merged[col] = np.where(
+                merged[live_col].fillna("").astype(str).str.strip() != "",
+                merged[live_col],
+                merged[col],
+            )
+            merged.drop(columns=[live_col], inplace=True, errors="ignore")
+    if "JournalId" not in merged.columns and "JournalId__live" in merged.columns:
+        merged = merged.rename(columns={"JournalId__live": "JournalId"})
+    elif "JournalId__live" in merged.columns:
+        merged.drop(columns=["JournalId__live"], inplace=True, errors="ignore")
+    return merged
 
 
 def register_api(server):
@@ -309,6 +524,7 @@ def register_api(server):
             return jsonify({"error": str(exc)}), 400
         try:
             df = merge_trade_labels(ensure_trade_id(pd.read_csv(PERFORMANCE_CSV)))
+            df = _apply_live_journal_labels(df, start, end)
             if start or end:
                 if "TradeDay" in df.columns:
                     df["TradeDay"] = normalize_series_to_timezone(df["TradeDay"], "TradeDay", ANALYSIS_TIMEZONE).dt.normalize()
@@ -334,6 +550,7 @@ def register_api(server):
         symbol = payload.get("symbol")
         start = payload.get("start_date")
         end = payload.get("end_date")
+        include_unmatched = bool(payload.get("include_unmatched", False))
         if start or end:
             if "TradeDay" in df.columns:
                 df["TradeDay"] = normalize_series_to_timezone(df["TradeDay"], "TradeDay", ANALYSIS_TIMEZONE).dt.normalize()
@@ -352,6 +569,14 @@ def register_api(server):
                 df = df[df["ContractName"].astype(str).str.startswith(symbol)]
             elif "Symbol" in df.columns:
                 df = df[df["Symbol"] == symbol]
+
+        df = _apply_live_journal_labels(df, start, end)
+        if not include_unmatched and "trade_id" in df.columns:
+            matched_ids = _active_match_trade_ids(start, end)
+            if matched_ids:
+                df = df[df["trade_id"].astype(str).isin(matched_ids)].copy()
+            else:
+                df = df.iloc[0:0].copy()
         return df
 
     def _to_records(df: pd.DataFrame) -> list[Dict[str, Any]]:
@@ -441,6 +666,7 @@ def register_api(server):
         try:
             payload = _require_json_object()
             payload["symbol"] = _validate_symbol(payload.get("symbol"), required=False)
+            payload["include_unmatched"] = bool(payload.get("include_unmatched", False))
             params = payload.get("params")
             if params is not None and not isinstance(params, dict):
                 raise ValueError("params must be an object")
@@ -642,6 +868,511 @@ def register_api(server):
             return jsonify({"error": str(exc)}), 400
         except (KeyError, TypeError, pd.errors.ParserError, OSError) as exc:
             return jsonify({"error": f"day plan update failed: {exc}"}), 500
+
+    @api.route("/journal/live/meta", methods=["GET", "OPTIONS"])
+    def journal_live_meta():
+        if request.method == "OPTIONS":
+            return _cors_headers(jsonify({"ok": True}), allowed_origin)
+        contracts: list[dict[str, Any]] = []
+        try:
+            specs = pd.read_csv(CONTRACT_SPECS_CSV)
+            if {"symbol", "point_value"}.issubset(set(specs.columns)):
+                for _, row in specs.iterrows():
+                    symbol = str(row.get("symbol", "")).strip()
+                    pv = pd.to_numeric(row.get("point_value"), errors="coerce")
+                    if symbol and pd.notna(pv):
+                        contracts.append({"symbol": symbol, "point_value": float(pv)})
+        except Exception:
+            contracts = []
+        taxonomy = taxonomy_payload()
+        return (
+            jsonify(
+                {
+                    "phase": taxonomy.get("phase", []),
+                    "context": taxonomy.get("context", []),
+                    "setup": taxonomy.get("setup", []),
+                    "signal_bar": taxonomy.get("signal_bar", []),
+                    "trade_intent": taxonomy.get("trade_intent", []),
+                    "direction": [{"value": x} for x in sorted(DIRECTION_VALUES)],
+                    "contracts": contracts,
+                }
+            ),
+            200,
+        )
+
+    @api.route("/journal/live", methods=["GET", "POST", "OPTIONS"])
+    def journal_live():
+        if request.method == "OPTIONS":
+            return _cors_headers(jsonify({"ok": True}), allowed_origin)
+        try:
+            if request.method == "GET":
+                start = request.args.get("start")
+                end = request.args.get("end")
+                return jsonify({"rows": list_live_journal(start=start, end=end)}), 200
+
+            payload = _require_json_object()
+            rows = payload.get("rows")
+            if not isinstance(rows, list):
+                raise ValueError("rows must be an array")
+
+            strict_mode = bool(get_app_config().get("tagging", {}).get("strict_mode", True))
+            taxonomy = taxonomy_payload()
+            allowed_phase = {str(x.get("value", "")).strip().lower(): str(x.get("value", "")).strip() for x in taxonomy.get("phase", [])}
+            allowed_context = {str(x.get("value", "")).strip().lower(): str(x.get("value", "")).strip() for x in taxonomy.get("context", [])}
+            allowed_setup = {str(x.get("value", "")).strip().lower(): str(x.get("value", "")).strip() for x in taxonomy.get("setup", [])}
+            allowed_signal = {str(x.get("value", "")).strip().lower(): str(x.get("value", "")).strip() for x in taxonomy.get("signal_bar", [])}
+            allowed_intent = {str(x.get("value", "")).strip().lower(): str(x.get("value", "")).strip() for x in taxonomy.get("trade_intent", [])}
+
+            def _norm_tax(val: object, allowed_map: Dict[str, str], field: str) -> str:
+                v = str(val or "").strip()
+                if not strict_mode or v == "" or not allowed_map:
+                    return v
+                key = v.lower()
+                if key not in allowed_map:
+                    raise ValueError(f"invalid {field}: {v}")
+                return allowed_map[key]
+
+            normalized_rows: list[Dict[str, Any]] = []
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                next_row = dict(row)
+                next_row["Phase"] = _norm_tax(row.get("Phase"), allowed_phase, "Phase")
+                next_row["Context"] = _norm_tax(row.get("Context"), allowed_context, "Context")
+                next_row["SignalBar"] = _norm_tax(row.get("SignalBar"), allowed_signal, "SignalBar")
+                next_row["TradeIntent"] = _norm_tax(row.get("TradeIntent"), allowed_intent, "TradeIntent")
+                setup = str(row.get("Setup", "")).strip()
+                if setup and strict_mode and allowed_setup:
+                    parts = [p.strip() for p in setup.replace(";", "|").replace(",", "|").split("|") if p.strip()]
+                    for part in parts:
+                        if part.lower() not in allowed_setup:
+                            raise ValueError(f"invalid Setup: {part}")
+                    next_row["Setup"] = " | ".join(dict.fromkeys([allowed_setup[p.lower()] for p in parts]))
+                normalized_rows.append(next_row)
+
+            out = upsert_live_journal_rows(normalized_rows, actor="api:/journal/live")
+            return jsonify({"ok": True, **out}), 200
+        except FileNotFoundError as exc:
+            return jsonify({"error": str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except (KeyError, TypeError, pd.errors.ParserError, OSError) as exc:
+            return jsonify({"error": f"live journal update failed: {exc}"}), 500
+
+    @api.route("/journal/matching/parse-preview", methods=["POST", "OPTIONS"])
+    def journal_matching_parse_preview():
+        if request.method == "OPTIONS":
+            return _cors_headers(jsonify({"ok": True}), allowed_origin)
+        try:
+            files = request.files.getlist("files")
+            if not files:
+                single = request.files.get("file")
+                if single is not None:
+                    files = [single]
+            if not files:
+                raise ValueError("no CSV files uploaded")
+
+            raw_archive = str(request.form.get("archive_raw", "false")).strip().lower()
+            archive_raw = raw_archive in {"1", "true", "yes", "y", "on"}
+
+            saved_paths: list[str] = []
+            parse_logs: list[dict[str, Any]] = []
+            unparseable_rows: list[dict[str, Any]] = []
+            parsed_frames: list[pd.DataFrame] = []
+
+            Path(TEMP_PERF_DIR).mkdir(parents=True, exist_ok=True)
+            stamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+            for idx, f in enumerate(files):
+                if f is None:
+                    continue
+                raw_name = str(getattr(f, "filename", "") or "").strip()
+                if not raw_name:
+                    continue
+                safe_name = os.path.basename(raw_name).replace(" ", "_")
+                if not safe_name.lower().endswith(".csv"):
+                    raise ValueError(f"only CSV files are allowed: {raw_name}")
+                target = Path(TEMP_PERF_DIR) / f"preview_{stamp}_{idx}_{safe_name}"
+                f.save(str(target))
+                saved_paths.append(str(target))
+
+                # Parse diagnostics first from raw rows.
+                try:
+                    raw_df = pd.read_csv(target)
+                    required = {"Date/Time", "Symbol", "Quantity"}
+                    missing = sorted(list(required.difference(set(raw_df.columns))))
+                    if missing:
+                        unparseable_rows.append(
+                            {
+                                "file": safe_name,
+                                "row_number": None,
+                                "reason": f"missing required columns: {', '.join(missing)}",
+                                "row": {},
+                            }
+                        )
+                        parse_logs.append({"file": safe_name, "status": "failed", "parsed_rows": 0, "reason": "missing_columns"})
+                        continue
+
+                    qty = pd.to_numeric(raw_df["Quantity"], errors="coerce").fillna(0.0)
+                    raw_df["__qty"] = qty
+                    by_symbol = raw_df.groupby(raw_df["Symbol"].astype(str), observed=True)["__qty"].sum()
+                    bad_symbols = by_symbol[by_symbol != 0]
+                    if not bad_symbols.empty:
+                        for symbol, net_qty in bad_symbols.items():
+                            bad_rows = raw_df[raw_df["Symbol"].astype(str) == str(symbol)].copy()
+                            for ridx, row in bad_rows.iterrows():
+                                unparseable_rows.append(
+                                    {
+                                        "file": safe_name,
+                                        "row_number": int(ridx) + 2,  # CSV header offset
+                                        "reason": f"symbol net quantity is not zero ({net_qty}); incomplete round-trip set",
+                                        "row": {k: (None if pd.isna(v) else str(v)) for k, v in row.to_dict().items() if not str(k).startswith("__")},
+                                    }
+                                )
+                        parse_logs.append(
+                            {
+                                "file": safe_name,
+                                "status": "failed",
+                                "parsed_rows": 0,
+                                "reason": "net_quantity_not_zero",
+                                "bad_symbols": [{"symbol": str(k), "net_qty": float(v)} for k, v in bad_symbols.items()],
+                            }
+                        )
+                        continue
+                except Exception as exc:
+                    unparseable_rows.append(
+                        {
+                            "file": safe_name,
+                            "row_number": None,
+                            "reason": f"failed to read raw csv: {exc}",
+                            "row": {},
+                        }
+                    )
+                    parse_logs.append({"file": safe_name, "status": "failed", "parsed_rows": 0, "reason": "read_error"})
+                    continue
+
+                # Convert raw fills to round-trip trades (preview only).
+                try:
+                    parsed_df = process_csv(str(target))
+                    if parsed_df.empty:
+                        unparseable_rows.append(
+                            {
+                                "file": safe_name,
+                                "row_number": None,
+                                "reason": "no round-trip trades parsed from file",
+                                "row": {},
+                            }
+                        )
+                        parse_logs.append({"file": safe_name, "status": "failed", "parsed_rows": 0, "reason": "empty_parse"})
+                        continue
+                    parsed_frames.append(parsed_df)
+                    parse_logs.append({"file": safe_name, "status": "ok", "parsed_rows": int(len(parsed_df))})
+                except Exception as exc:
+                    unparseable_rows.append(
+                        {
+                            "file": safe_name,
+                            "row_number": None,
+                            "reason": f"parse error: {exc}",
+                            "row": {},
+                        }
+                    )
+                    parse_logs.append({"file": safe_name, "status": "failed", "parsed_rows": 0, "reason": "parse_error"})
+
+            # cleanup/archive raw uploads from preview stage
+            archived_files: list[str] = []
+            removed_files: list[str] = []
+            archive_dir = Path(TEMP_PERF_DIR) / "archive"
+            if archive_raw:
+                archive_dir.mkdir(parents=True, exist_ok=True)
+            for p in saved_paths:
+                pp = Path(p)
+                if not pp.exists():
+                    continue
+                try:
+                    if archive_raw:
+                        dst = archive_dir / pp.name
+                        pp.replace(dst)
+                        archived_files.append(str(dst))
+                    else:
+                        pp.unlink()
+                        removed_files.append(str(pp))
+                except OSError:
+                    pass
+
+            parsed_trades: list[dict[str, Any]] = []
+            if parsed_frames:
+                combined = pd.concat(parsed_frames, ignore_index=True)
+                combined = ensure_trade_id(combined)
+                for _, row in combined.iterrows():
+                    rec = row.to_dict()
+                    rec["preview_trade_id"] = str(rec.get("trade_id", ""))
+                    parsed_trades.append({k: (None if pd.isna(v) else v) for k, v in rec.items()})
+
+            parsed_days = sorted(
+                {
+                    str(r.get("TradeDay", "")).strip()
+                    for r in parsed_trades
+                    if str(r.get("TradeDay", "")).strip() != ""
+                }
+            )
+            range_start = parsed_days[0] if parsed_days else ""
+            range_end = parsed_days[-1] if parsed_days else ""
+            journal_rows = list_live_journal(start=range_start or None, end=range_end or None) if parsed_days else []
+
+            suggestions: list[dict[str, Any]] = []
+            if parsed_days and journal_rows and parsed_trades:
+                trades_by_day: dict[str, list[dict[str, Any]]] = {}
+                for t in parsed_trades:
+                    d = str(t.get("TradeDay", "")).strip()
+                    if not d:
+                        continue
+                    trades_by_day.setdefault(d, []).append(t)
+                journals_by_day: dict[str, list[dict[str, Any]]] = {}
+                for j in journal_rows:
+                    d = str(j.get("TradeDay", "")).strip()
+                    if not d:
+                        continue
+                    journals_by_day.setdefault(d, []).append(j)
+                for day in sorted(set(trades_by_day.keys()).intersection(set(journals_by_day.keys()))):
+                    jrows = sorted(journals_by_day[day], key=lambda x: int(pd.to_numeric(x.get("SeqInDay"), errors="coerce") or 0))
+                    prows = sorted(trades_by_day[day], key=lambda x: (str(x.get("EnteredAt", "")), str(x.get("preview_trade_id", ""))))
+                    for j_idx, j in enumerate(jrows):
+                        best: list[dict[str, Any]] = []
+                        for p_idx, p in enumerate(prows):
+                            pair = _pair_match_tiered(j, p, p_idx, j_idx)
+                            best.append(
+                                {
+                                    "trade_day": day,
+                                    "journal_id": str(j.get("journal_id", "")),
+                                    "preview_trade_id": str(p.get("preview_trade_id", "")),
+                                    "score": pair["score"],
+                                    "match_type": pair["match_type"],
+                                    "tier": pair["tier"],
+                                    "hard_conflict": pair["hard_conflict"],
+                                    "reasons": pair["reasons"],
+                                }
+                            )
+                        ranked = sorted(
+                            best,
+                            key=lambda x: (int(x.get("tier", 9)), -float(x.get("score", -1e9)), bool(x.get("hard_conflict", False))),
+                        )[:5]
+                        if ranked:
+                            ranked[0]["recommended"] = True
+                        suggestions.extend(ranked)
+
+            can_continue = bool(parsed_trades) and (len(unparseable_rows) == 0)
+            return (
+                jsonify(
+                    {
+                        "ok": True,
+                        "can_continue": can_continue,
+                        "hard_blocked": not can_continue,
+                        "saved_files": saved_paths,
+                        "archived_files": archived_files,
+                        "removed_files": removed_files,
+                        "parse_logs": parse_logs,
+                        "unparseable_rows": unparseable_rows,
+                        "parsed_trades": parsed_trades,
+                        "parsed_range": {"start": range_start, "end": range_end, "days": parsed_days},
+                        "journal_rows": journal_rows,
+                        "suggestions": suggestions,
+                    }
+                ),
+                200,
+            )
+        except FileNotFoundError as exc:
+            return jsonify({"error": str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except (KeyError, TypeError, pd.errors.ParserError, OSError) as exc:
+            return jsonify({"error": f"parse preview failed: {exc}"}), 500
+
+    @api.route("/journal/matching/commit", methods=["POST", "OPTIONS"])
+    def journal_matching_commit():
+        if request.method == "OPTIONS":
+            return _cors_headers(jsonify({"ok": True}), allowed_origin)
+        try:
+            payload = _require_json_object()
+            parsed_trades = payload.get("parsed_trades")
+            links = payload.get("links", [])
+            replace_for_journal = bool(payload.get("replace_for_journal", True))
+            if not isinstance(parsed_trades, list) or not parsed_trades:
+                raise ValueError("parsed_trades must be a non-empty array")
+            if not isinstance(links, list):
+                raise ValueError("links must be an array")
+
+            incoming_df = pd.DataFrame(parsed_trades)
+            required_cols = ["ContractName", "EnteredAt", "ExitedAt", "EntryPrice", "ExitPrice", "Fees", "PnL", "Size", "Type", "TradeDay", "TradeDuration"]
+            missing = [c for c in required_cols if c not in incoming_df.columns]
+            if missing:
+                raise ValueError(f"parsed_trades missing required columns: {', '.join(missing)}")
+
+            preview_id_col = "preview_trade_id" if "preview_trade_id" in incoming_df.columns else ("trade_id" if "trade_id" in incoming_df.columns else "")
+            if not preview_id_col:
+                raise ValueError("parsed_trades must include preview_trade_id or trade_id")
+
+            id_df = ensure_trade_id(incoming_df.copy())
+            preview_to_trade_id = {
+                str(row.get(preview_id_col, "")).strip(): str(row.get("trade_id", "")).strip()
+                for _, row in id_df.iterrows()
+                if str(row.get(preview_id_col, "")).strip()
+            }
+            trade_id_to_day = {
+                str(row.get("trade_id", "")).strip(): str(row.get("TradeDay", "")).strip()
+                for _, row in id_df.iterrows()
+                if str(row.get("trade_id", "")).strip()
+            }
+
+            pre_rows = 0
+            if os.path.exists(PERFORMANCE_CSV):
+                try:
+                    pre_rows = int(len(pd.read_csv(PERFORMANCE_CSV)))
+                except Exception:
+                    pre_rows = 0
+
+            merged_df = generate_aggregated_data([incoming_df[required_cols].copy()])
+            post_rows = int(len(merged_df))
+
+            inserted_matches = 0
+            inactivated_matches = 0
+            links_by_day: dict[str, list[dict[str, Any]]] = {}
+            for raw in links:
+                if not isinstance(raw, dict):
+                    continue
+                journal_id = str(raw.get("journal_id", "")).strip()
+                preview_trade_id = str(raw.get("preview_trade_id", raw.get("trade_id", ""))).strip()
+                if not journal_id or not preview_trade_id:
+                    continue
+                trade_id = preview_to_trade_id.get(preview_trade_id, "")
+                if not trade_id:
+                    raise ValueError(f"preview trade id not found in parsed set: {preview_trade_id}")
+                day = trade_id_to_day.get(trade_id, "")
+                if not day:
+                    raise ValueError(f"trade day missing for trade id: {trade_id}")
+                links_by_day.setdefault(day, []).append(
+                    {
+                        "journal_id": journal_id,
+                        "trade_id": trade_id,
+                        "score": raw.get("score", 0),
+                        "match_type": raw.get("match_type", "manual"),
+                        "is_primary": bool(raw.get("is_primary", True)),
+                    }
+                )
+
+            for day, day_links in links_by_day.items():
+                out = confirm_matches(
+                    day,
+                    day_links,
+                    replace_for_journal=replace_for_journal,
+                    actor="api:/journal/matching/commit",
+                )
+                inserted_matches += int(out.get("inserted", 0))
+                inactivated_matches += int(out.get("inactivated", 0))
+
+            return (
+                jsonify(
+                    {
+                        "ok": True,
+                        "merged": True,
+                        "rows_before": pre_rows,
+                        "rows_after": post_rows,
+                        "rows_delta": post_rows - pre_rows,
+                        "matches_inserted": inserted_matches,
+                        "matches_inactivated": inactivated_matches,
+                    }
+                ),
+                200,
+            )
+        except FileNotFoundError as exc:
+            return jsonify({"error": str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except (KeyError, TypeError, pd.errors.ParserError, OSError) as exc:
+            return jsonify({"error": f"matching commit failed: {exc}"}), 500
+
+    @api.route("/journal/matching/links", methods=["GET", "OPTIONS"])
+    def journal_matching_links():
+        if request.method == "OPTIONS":
+            return _cors_headers(jsonify({"ok": True}), allowed_origin)
+        try:
+            start = request.args.get("start")
+            end = request.args.get("end")
+            rows = list_active_matches(start=start, end=end)
+
+            journal = load_journal_live()
+            jmap = {}
+            if not journal.empty:
+                for _, r in journal.iterrows():
+                    jmap[str(r.get("journal_id", ""))] = {
+                        "journal_id": str(r.get("journal_id", "")),
+                        "TradeDay": str(r.get("TradeDay", "")),
+                        "SeqInDay": str(r.get("SeqInDay", "")),
+                        "ContractName": str(r.get("ContractName", "")),
+                        "Direction": str(r.get("Direction", "")),
+                        "Size": str(r.get("Size", "")),
+                        "TradeIntent": str(r.get("TradeIntent", "")),
+                    }
+
+            tmap: dict[str, dict[str, Any]] = {}
+            if os.path.exists(PERFORMANCE_CSV):
+                try:
+                    perf = ensure_trade_id(pd.read_csv(PERFORMANCE_CSV))
+                    for _, r in perf.iterrows():
+                        tid = str(r.get("trade_id", "")).strip()
+                        if not tid:
+                            continue
+                        tmap[tid] = {
+                            "trade_id": tid,
+                            "TradeDay": str(r.get("TradeDay", "")),
+                            "ContractName": str(r.get("ContractName", "")),
+                            "Type": str(r.get("Type", "")),
+                            "Size": str(r.get("Size", "")),
+                            "EntryPrice": str(r.get("EntryPrice", "")),
+                            "ExitPrice": str(r.get("ExitPrice", "")),
+                        }
+                except Exception:
+                    tmap = {}
+
+            out = []
+            for r in rows:
+                jid = str(r.get("journal_id", ""))
+                tid = str(r.get("trade_id", ""))
+                out.append(
+                    {
+                        **r,
+                        "journal": jmap.get(jid, {}),
+                        "trade": tmap.get(tid, {}),
+                    }
+                )
+            return jsonify({"ok": True, "rows": out}), 200
+        except FileNotFoundError as exc:
+            return jsonify({"error": str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except (KeyError, TypeError, pd.errors.ParserError, OSError) as exc:
+            return jsonify({"error": f"matching links load failed: {exc}"}), 500
+
+    @api.route("/journal/matching/unlink", methods=["POST", "OPTIONS"])
+    def journal_matching_unlink():
+        if request.method == "OPTIONS":
+            return _cors_headers(jsonify({"ok": True}), allowed_origin)
+        try:
+            payload = _require_json_object()
+            journal_id = payload.get("journal_id")
+            trade_id = payload.get("trade_id")
+            trade_day = payload.get("trade_day")
+            out = unlink_matches(
+                str(journal_id or ""),
+                trade_id=str(trade_id or ""),
+                trade_day=str(trade_day or ""),
+                actor="api:/journal/matching/unlink",
+            )
+            return jsonify({"ok": True, **out}), 200
+        except FileNotFoundError as exc:
+            return jsonify({"error": str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except (KeyError, TypeError, pd.errors.ParserError, OSError) as exc:
+            return jsonify({"error": f"matching unlink failed: {exc}"}), 500
 
     @api.route("/trading/session", methods=["GET", "OPTIONS"])
     def trading_session():

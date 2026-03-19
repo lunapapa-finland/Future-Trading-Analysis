@@ -20,6 +20,7 @@ export interface AnalysisPayload {
   symbol?: string;
   start_date?: string;
   end_date?: string;
+  include_unmatched?: boolean;
 }
 
 export interface AnalysisSeriesPoint {
@@ -38,6 +39,7 @@ export interface InsightsPayload {
   start_date?: string;
   end_date?: string;
   params?: Record<string, unknown>;
+  include_unmatched?: boolean;
 }
 
 export interface InsightsResponse {
@@ -100,4 +102,49 @@ export interface TradeMarker {
   pnl: number;
   type?: string;
   size?: number;
+}
+
+export interface JournalAdjustment {
+  adjustment_id?: string;
+  LegIndex?: number | string;
+  Qty: string;
+  EntryPrice: string;
+  TakeProfitPrice: string;
+  StopLossPrice: string;
+  ExitPrice?: string;
+  EnteredAt?: string;
+  ExitedAt?: string;
+  RiskUSD?: string;
+  RewardUSD?: string;
+  WinLossRatio?: string;
+  Note?: string;
+}
+
+export interface LiveJournalRow {
+  journal_id?: string;
+  TradeDay: string;
+  SeqInDay?: number | string;
+  ContractName?: string;
+  Phase: string;
+  Context: string;
+  Setup: string;
+  SignalBar: string;
+  TradeIntent: string;
+  Direction: "Long" | "Short";
+  Size: number | string;
+  MaxLossUSD?: number | string;
+  EnteredAt?: string;
+  ExitedAt?: string;
+  EntryPrice?: number | string;
+  TakeProfitPrice?: number | string;
+  StopLossPrice?: number | string;
+  ExitPrice?: number | string;
+  PotentialRiskUSD?: number | string;
+  PotentialRewardUSD?: number | string;
+  WinLossRatio?: number | string;
+  RuleStatus?: string;
+  Notes?: string;
+  MatchStatus?: string;
+  adjustments_mode?: "append" | "replace";
+  adjustments?: JournalAdjustment[];
 }
