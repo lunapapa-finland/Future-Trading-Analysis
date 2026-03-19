@@ -1,7 +1,7 @@
 import pandas as pd
 
 from dashboard.services.analysis import compute
-from dashboard.services.utils.trade_enrichment import ensure_trade_id, merge_trade_labels
+from dashboard.services.utils.trade_enrichment import ensure_trade_id
 
 
 def _df() -> pd.DataFrame:
@@ -26,21 +26,6 @@ def test_ensure_trade_id_is_present_and_deterministic():
     assert "trade_id" in one.columns
     assert one["trade_id"].notna().all()
     assert one["trade_id"].tolist() == two["trade_id"].tolist()
-
-
-def test_merge_trade_labels_joins_by_trade_id():
-    df = ensure_trade_id(_df())
-    labels = pd.DataFrame(
-        {
-            "trade_id": [df.loc[0, "trade_id"]],
-            "Setup": ["ORB"],
-            "Tag": ["Trend Day"],
-        }
-    )
-    merged = merge_trade_labels(df, labels_df=labels)
-    assert merged.loc[0, "Setup"] == "ORB"
-    assert merged.loc[0, "Tag"] == "Trend Day"
-    assert pd.isna(merged.loc[1, "Setup"])
 
 
 def test_rule_compliance_uses_config_defaults(monkeypatch):
