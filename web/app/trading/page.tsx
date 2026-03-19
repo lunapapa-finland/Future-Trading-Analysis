@@ -5,9 +5,9 @@ import { Card } from "@/components/ui/card";
 import { CandlesChart } from "@/components/charts/candles-chart";
 import { SymbolSelect } from "@/components/forms/symbol-select";
 import { TimeframeSelect } from "@/components/forms/timeframe-select";
-import { getDayPlan, getTradingSession } from "@/lib/api";
+import { getDayPlan, getJournalLive, getMatchingLinks, getTradingSession } from "@/lib/api";
 import { resampleCandles } from "@/lib/timeframes";
-import { Candle, Timeframe, TradeMarker } from "@/lib/types";
+import { Candle, LiveJournalRow, Timeframe, TradeMarker } from "@/lib/types";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { StatGrid } from "@/components/ui/stat-grid";
@@ -35,6 +35,7 @@ export default function TradingPage() {
   const [sizeFilter, setSizeFilter] = useState("");
   const [playbackSlice, setPlaybackSlice] = useState<Candle[]>([]);
   const [playbackIndex, setPlaybackIndex] = useState(0);
+  const [activeJournalTradeId, setActiveJournalTradeId] = useState("");
   const today = localDateYmd(new Date());
   const [planDate, setPlanDate] = useState(today);
   const [startDate, setStartDate] = useState(today);
@@ -49,6 +50,20 @@ export default function TradingPage() {
   const { data: dayPlanRange } = useQuery({
     queryKey: ["day-plan-range", startDate, endDate],
     queryFn: () => getDayPlan({ start: startDate, end: endDate }),
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+  });
+  const { data: liveJournalRange } = useQuery({
+    queryKey: ["live-journal-range", startDate, endDate],
+    queryFn: () => getJournalLive({ start: startDate, end: endDate }),
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+  });
+  const { data: linkRange } = useQuery({
+    queryKey: ["matching-links-range", startDate, endDate],
+    queryFn: () => getMatchingLinks({ start: startDate, end: endDate }),
     staleTime: 0,
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
@@ -213,13 +228,69 @@ export default function TradingPage() {
     return { open, high, low, close };
   }, [viewData]);
 
-  const splitSetupValues = (v: string) =>
-    String(v || "")
-      .replace(/;/g, "|")
-      .replace(/,/g, "|")
-      .split("|")
-      .map((s) => s.trim())
-      .filter(Boolean);
+  const tradeIdOf = (row: Record<string, unknown>): string =>
+    String(row["trade_id"] || row["tradeId"] || "").trim();
+
+  const holdTypeOf = (row: Record<string, unknown>): string => {
+    const enter = new Date(String(row["EnteredAt"] || "")).getTime();
+    const exit = new Date(String(row["ExitedAt"] || "")).getTime();
+    const mins = !Number.isNaN(enter) && !Number.isNaN(exit) ? (exit - enter) / 60000 : null;
+    if (mins == null) return "N/A";
+    if (mins <= 5) return "Scalp";
+    if (mins < 30) return "Scalp/Swing";
+    return "Swing";
+  };
+
+  const passesFilters = (row: Record<string, unknown>): boolean => {
+    const direction = String(row["Type"] || "");
+    const holdType = holdTypeOf(row);
+    const sizeVal = Number(row["Size"] || 0);
+    const dirOk = !directionFilter || direction === directionFilter;
+    const typeOk = !typeFilter || holdType === typeFilter;
+    const sizeOk =
+      !sizeFilter ||
+      (sizeFilter === "S" && sizeVal <= 2) ||
+      (sizeFilter === "M" && sizeVal > 2 && sizeVal <= 5) ||
+      (sizeFilter === "L" && sizeVal > 5);
+    return dirOk && typeOk && sizeOk;
+  };
+
+  const filteredPerformance = useMemo(
+    () => (data?.performance || []).filter((r) => passesFilters(r as Record<string, unknown>)),
+    [data?.performance, directionFilter, typeFilter, sizeFilter]
+  );
+
+  const liveJournalById = useMemo(() => {
+    const out = new Map<string, LiveJournalRow>();
+    (liveJournalRange?.rows || []).forEach((r) => {
+      const id = String(r.journal_id || "").trim();
+      if (id) out.set(id, r);
+    });
+    return out;
+  }, [liveJournalRange?.rows]);
+
+  const journalIdsByTradeId = useMemo(() => {
+    const out = new Map<string, string[]>();
+    (linkRange?.rows || []).forEach((row) => {
+      const tradeId = String((row as Record<string, unknown>)["trade_id"] || "").trim();
+      const journalId = String((row as Record<string, unknown>)["journal_id"] || "").trim();
+      if (!tradeId || !journalId) return;
+      const list = out.get(tradeId) || [];
+      if (!list.includes(journalId)) list.push(journalId);
+      out.set(tradeId, list);
+    });
+    return out;
+  }, [linkRange?.rows]);
+
+  const activeJournalRows = useMemo(
+    () => (journalIdsByTradeId.get(activeJournalTradeId) || []).map((id) => liveJournalById.get(id)).filter(Boolean) as LiveJournalRow[],
+    [activeJournalTradeId, journalIdsByTradeId, liveJournalById]
+  );
+  const activeNeedsReconfirmCount = useMemo(
+    () =>
+      activeJournalRows.filter((j) => String(j.MatchStatus || "").trim().toLowerCase() === "needs_reconfirm").length,
+    [activeJournalRows]
+  );
 
 
   useEffect(() => {
@@ -476,7 +547,7 @@ export default function TradingPage() {
             </div>
               <div className="space-y-2 rounded-lg border border-white/5 p-3">
               <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300">
-                Per-trade tags are shown in display mode (maintained in Trading Live and Trading Match workflow).
+                Trades are linked to journal record(s). Use View to inspect attached journal details.
               </div>
               <div className="grid gap-2 text-sm text-slate-200 sm:flex sm:flex-wrap sm:gap-3">
                 <label className="flex items-center justify-between gap-2 sm:justify-start">
@@ -519,28 +590,12 @@ export default function TradingPage() {
                 </label>
               </div>
               <div className="space-y-2 md:hidden">
-                {(data.performance || []).map((row, idx) => {
-                  const enter = new Date(String(row["EnteredAt"] || "")).getTime();
-                  const exit = new Date(String(row["ExitedAt"] || "")).getTime();
-                  const mins = !Number.isNaN(enter) && !Number.isNaN(exit) ? (exit - enter) / 60000 : null;
-                  const holdType =
-                    mins == null ? "N/A" : mins <= 5 ? "Scalp" : mins < 30 ? "Scalp/Swing" : "Swing";
+                {filteredPerformance.map((row, idx) => {
+                  const holdType = holdTypeOf(row as Record<string, unknown>);
                   const direction = String(row["Type"] || "");
                   const sizeVal = Number(row["Size"] || 0);
-                  const phase = String(row["Phase"] || "").trim();
-                  const context = String(row["Context"] || "").trim();
-                  const signalBar = String(row["SignalBar"] || "").trim();
-                  const tradeIntent = String(row["TradeIntent"] || "").trim();
-                  const setups = splitSetupValues(String(row["Setup"] || ""));
-
-                  const dirOk = !directionFilter || direction === directionFilter;
-                  const typeOk = !typeFilter || holdType === typeFilter;
-                  const sizeOk =
-                    !sizeFilter ||
-                    (sizeFilter === "S" && sizeVal <= 2) ||
-                    (sizeFilter === "M" && sizeVal > 2 && sizeVal <= 5) ||
-                    (sizeFilter === "L" && sizeVal > 5);
-                  if (!dirOk || !typeOk || !sizeOk) return null;
+                  const tradeId = tradeIdOf(row as Record<string, unknown>);
+                  const linkedCount = tradeId ? (journalIdsByTradeId.get(tradeId) || []).length : 0;
                   return (
                     <div key={idx} className="rounded-lg border border-white/10 bg-white/5 p-2 text-xs text-slate-200">
                       <div className="grid grid-cols-[96px_1fr] gap-2 py-0.5"><span className="text-slate-400">#</span><span>{idx + 1}</span></div>
@@ -550,18 +605,18 @@ export default function TradingPage() {
                       <div className="grid grid-cols-[96px_1fr] gap-2 py-0.5"><span className="text-slate-400">Size</span><span>{sizeVal}</span></div>
                       <div className="grid grid-cols-[96px_1fr] gap-2 py-0.5"><span className="text-slate-400">Direction</span><span>{direction}</span></div>
                       <div className="grid grid-cols-[96px_1fr] gap-2 py-0.5"><span className="text-slate-400">Type</span><span>{holdType}</span></div>
-                      <div className="rounded border border-white/10 bg-white/5 p-2">
-                        <p className="mb-1 text-[10px] uppercase tracking-[0.15em] text-slate-400">Tags</p>
-                        <div className="space-y-1 text-[11px]">
-                          <p><span className="text-slate-400">Phase:</span> {phase || "-"}</p>
-                          <p><span className="text-slate-400">Context:</span> {context || "-"}</p>
-                          <p><span className="text-slate-400">SignalBar:</span> {signalBar || "-"}</p>
-                          <p><span className="text-slate-400">TradeIntent:</span> {tradeIntent || "-"}</p>
-                          <div className="flex flex-wrap gap-1 pt-1">
-                            {setups.length ? setups.map((s) => (
-                              <span key={s} className="rounded-full border border-white/20 bg-white/5 px-2 py-0.5 text-[10px] text-slate-200">{s}</span>
-                            )) : <span className="text-slate-500">Setup: -</span>}
-                          </div>
+                      <div className="grid grid-cols-[96px_1fr] items-center gap-2 py-0.5">
+                        <span className="text-slate-400">Journals</span>
+                        <div className="flex items-center gap-2">
+                          <span>{linkedCount}</span>
+                          <button
+                            type="button"
+                            disabled={!tradeId || linkedCount === 0}
+                            onClick={() => setActiveJournalTradeId(tradeId)}
+                            className="rounded border border-accent/40 px-2 py-0.5 text-[11px] text-accent disabled:border-white/15 disabled:text-slate-500"
+                          >
+                            View
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -589,38 +644,16 @@ export default function TradingPage() {
                       <th className="px-1 py-1 text-right">Size</th>
                       <th className="px-1 py-1 text-left">Direction</th>
                       <th className="px-1 py-1 text-left">Type</th>
-                      <th className="px-1 py-1 text-left">Tags</th>
+                      <th className="px-1 py-1 text-left">Journals</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
-                    {(data.performance || []).map((row, idx) => {
-                      const enter = new Date(String(row["EnteredAt"] || "")).getTime();
-                      const exit = new Date(String(row["ExitedAt"] || "")).getTime();
-                      const mins = !Number.isNaN(enter) && !Number.isNaN(exit) ? (exit - enter) / 60000 : null;
-                      const holdType =
-                        mins == null
-                          ? "N/A"
-                          : mins <= 5
-                            ? "Scalp"
-                            : mins < 30
-                              ? "Scalp/Swing"
-                              : "Swing";
+                    {filteredPerformance.map((row, idx) => {
+                      const holdType = holdTypeOf(row as Record<string, unknown>);
                       const direction = String(row["Type"] || "");
                       const sizeVal = Number(row["Size"] || 0);
-                      const phase = String(row["Phase"] || "").trim();
-                      const context = String(row["Context"] || "").trim();
-                      const signalBar = String(row["SignalBar"] || "").trim();
-                      const tradeIntent = String(row["TradeIntent"] || "").trim();
-                      const setups = splitSetupValues(String(row["Setup"] || ""));
-
-                      const dirOk = !directionFilter || direction === directionFilter;
-                      const typeOk = !typeFilter || holdType === typeFilter;
-                      const sizeOk =
-                        !sizeFilter ||
-                        (sizeFilter === "S" && sizeVal <= 2) ||
-                        (sizeFilter === "M" && sizeVal > 2 && sizeVal <= 5) ||
-                        (sizeFilter === "L" && sizeVal > 5);
-                      if (!dirOk || !typeOk || !sizeOk) return null;
+                      const tradeId = tradeIdOf(row as Record<string, unknown>);
+                      const linkedCount = tradeId ? (journalIdsByTradeId.get(tradeId) || []).length : 0;
                       return (
                         <tr key={idx} className="hover:bg-white/5">
                           <td className="px-1 py-1 text-slate-400 align-middle">{idx + 1}</td>
@@ -647,18 +680,16 @@ export default function TradingPage() {
                           <td className="px-1 py-1 text-[12px] align-middle whitespace-nowrap overflow-hidden text-ellipsis">{String(row["Type"] || "")}</td>
                           <td className="px-1 py-1 text-[12px] align-middle whitespace-nowrap overflow-hidden text-ellipsis">{holdType}</td>
                           <td className="px-1 py-1 align-middle">
-                            <div className="w-full rounded border border-white/10 bg-white/5 p-1">
-                              <div className="space-y-1 text-[11px]">
-                                <p><span className="text-slate-400">Phase:</span> {phase || "-"}</p>
-                                <p><span className="text-slate-400">Context:</span> {context || "-"}</p>
-                                <p><span className="text-slate-400">SignalBar:</span> {signalBar || "-"}</p>
-                                <p><span className="text-slate-400">TradeIntent:</span> {tradeIntent || "-"}</p>
-                                <div className="flex flex-wrap gap-1 pt-1">
-                                  {setups.length ? setups.map((s) => (
-                                    <span key={s} className="rounded-full border border-white/20 bg-white/5 px-2 py-0.5 text-[10px] text-slate-200">{s}</span>
-                                  )) : <span className="text-slate-500">Setup: -</span>}
-                                </div>
-                              </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-slate-300">{linkedCount}</span>
+                              <button
+                                type="button"
+                                disabled={!tradeId || linkedCount === 0}
+                                onClick={() => setActiveJournalTradeId(tradeId)}
+                                className="rounded border border-accent/40 px-2 py-0.5 text-[11px] text-accent disabled:border-white/15 disabled:text-slate-500"
+                              >
+                                View
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -674,6 +705,90 @@ export default function TradingPage() {
           <p className="text-slate-400">No data yet.</p>
         )}
       </Card>
+      {activeJournalTradeId ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3">
+          <div className="w-full max-w-4xl rounded-xl border border-white/15 bg-surface p-4 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Attached Journals</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm text-white">Trade ID: {activeJournalTradeId}</p>
+                  {activeNeedsReconfirmCount > 0 ? (
+                    <span className="rounded-full border border-amber-300/50 bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-200">
+                      needs reconfirm: {activeNeedsReconfirmCount}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveJournalTradeId("")}
+                className="rounded border border-white/20 px-2 py-1 text-xs text-slate-200"
+              >
+                Close
+              </button>
+            </div>
+            <div className="max-h-[70vh] space-y-3 overflow-auto pr-1">
+              {activeJournalRows.length ? (
+                activeJournalRows.map((j) => (
+                  <div key={String(j.journal_id || "")} className="rounded border border-white/10 bg-white/5 p-3 text-xs text-slate-200">
+                    <div className="grid gap-2 md:grid-cols-4">
+                      <p><span className="text-slate-400">Journal ID:</span> {String(j.journal_id || "")}</p>
+                      <p><span className="text-slate-400">TradeDay:</span> {String(j.TradeDay || "")}</p>
+                      <p><span className="text-slate-400">Seq:</span> {String(j.SeqInDay || "")}</p>
+                      <p><span className="text-slate-400">Contract:</span> {String(j.ContractName || "")}</p>
+                      <p><span className="text-slate-400">Direction:</span> {String(j.Direction || "")}</p>
+                      <p><span className="text-slate-400">Size:</span> {String(j.Size || "")}</p>
+                      <p><span className="text-slate-400">Intent:</span> {String(j.TradeIntent || "")}</p>
+                      <p className="flex items-center gap-2">
+                        <span className="text-slate-400">Match:</span>
+                        {String(j.MatchStatus || "").trim().toLowerCase() === "needs_reconfirm" ? (
+                          <span className="rounded-full border border-amber-300/50 bg-amber-500/15 px-2 py-0.5 text-[11px] text-amber-200">
+                            needs_reconfirm
+                          </span>
+                        ) : String(j.MatchStatus || "").trim() ? (
+                          <span className="rounded-full border border-emerald-300/40 bg-emerald-500/15 px-2 py-0.5 text-[11px] text-emerald-200">
+                            {String(j.MatchStatus || "")}
+                          </span>
+                        ) : (
+                          <span>-</span>
+                        )}
+                      </p>
+                    </div>
+                    <div className="mt-2 grid gap-2 md:grid-cols-3">
+                      <p><span className="text-slate-400">Entry:</span> {String(j.EntryPrice || "-")}</p>
+                      <p><span className="text-slate-400">TP:</span> {String(j.TakeProfitPrice || "-")}</p>
+                      <p><span className="text-slate-400">SL:</span> {String(j.StopLossPrice || "-")}</p>
+                      <p><span className="text-slate-400">Exit:</span> {String(j.ExitPrice || "-")}</p>
+                      <p><span className="text-slate-400">Expected Risk:</span> {String(j.PotentialRiskUSD || "-")}</p>
+                      <p><span className="text-slate-400">Expected Reward:</span> {String(j.PotentialRewardUSD || "-")}</p>
+                    </div>
+                    <div className="mt-2 rounded border border-white/10 bg-surface p-2">
+                      <p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-400">Detail Rows</p>
+                      {Array.isArray(j.adjustments) && j.adjustments.length ? (
+                        <div className="space-y-1 text-[11px]">
+                          {j.adjustments.map((a, i) => (
+                            <p key={String(a.adjustment_id || `${j.journal_id}-adj-${i}`)}>
+                              L{String(a.LegIndex || i + 1)} qty {String(a.Qty || "")} @ {String(a.EntryPrice || "")} tp {String(a.TakeProfitPrice || "")} sl {String(a.StopLossPrice || "")}{String(a.ExitPrice || "").trim() ? ` exit ${String(a.ExitPrice || "")}` : ""}
+                            </p>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-slate-400">No detail rows.</p>
+                      )}
+                    </div>
+                    {String(j.Notes || "").trim() ? (
+                      <p className="mt-2 text-[11px]"><span className="text-slate-400">Notes:</span> {String(j.Notes || "")}</p>
+                    ) : null}
+                  </div>
+                ))
+              ) : (
+                <p className="text-xs text-slate-400">No journal rows loaded for this trade link in selected date range.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </AppShell>
   );
 }

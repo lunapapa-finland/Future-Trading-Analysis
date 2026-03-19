@@ -605,7 +605,7 @@ export default function LivePage() {
                     <input value={String(d.ExitedAt || "")} onChange={(e) => updateDetail(idx, { ExitedAt: e.target.value })} placeholder="ExitedAt (optional, final shared)" className="h-9 rounded border border-white/10 bg-surface px-2 text-white" />
                     <input value={String(d.Note || "")} onChange={(e) => updateDetail(idx, { Note: e.target.value })} placeholder="Note" className="h-9 rounded border border-white/10 bg-surface px-2 text-white" />
                   </div>
-                  <div className="mt-2 text-[11px] text-slate-400">Risk ${fmt(risk)} | Reward ${fmt(reward)} | R:R {rr > 0 ? rr.toFixed(3) : "-"}</div>
+                  <div className="mt-2 text-[11px] text-slate-400">Expected Risk ${fmt(risk)} | Expected Reward ${fmt(reward)} | Expected R:R {rr > 0 ? rr.toFixed(3) : "-"}</div>
                   {err.row ? <div className="mt-1 text-[11px] text-rose-300">{err.row}</div> : null}
                   {err.qty || err.entry || err.tp || err.sl || err.exit ? (
                     <div className="mt-1 text-[11px] text-rose-300">{[err.qty, err.entry, err.tp, err.sl, err.exit].filter(Boolean).join(" ")}</div>
@@ -616,7 +616,7 @@ export default function LivePage() {
           </div>
 
           <div className="mt-3 rounded border border-white/10 bg-surface/40 p-2 text-xs text-slate-300">
-            <div>Total Risk: ${fmt(detailValidation.totalRisk)} | Total Reward: ${fmt(detailValidation.totalReward)} | R:R {detailValidation.rr || "-"}</div>
+            <div>Expected Total Risk: ${fmt(detailValidation.totalRisk)} | Expected Total Reward: ${fmt(detailValidation.totalReward)} | Expected R:R {detailValidation.rr || "-"}</div>
             <div className={detailValidation.ruleViolation ? "text-rose-300" : "text-emerald-300"}>
               Rule Check (MaxLoss ${fmt(num(draft.MaxLossUSD) ?? 200)}): {detailValidation.ruleViolation ? "VIOLATION" : "OK"}
             </div>
@@ -653,7 +653,7 @@ export default function LivePage() {
                 <span>{r.MatchStatus || "unmatched"}</span>
               </div>
               <div className="mt-1 text-slate-400">Setup: {r.Setup}</div>
-              <div className="mt-1 text-slate-400">Risk ${r.PotentialRiskUSD || "-"} | Reward ${r.PotentialRewardUSD || "-"} | R:R {r.WinLossRatio || "-"} | Rule {r.RuleStatus || "-"}</div>
+              <div className="mt-1 text-slate-400">Expected Risk ${r.PotentialRiskUSD || "-"} | Expected Reward ${r.PotentialRewardUSD || "-"} | Expected R:R {r.WinLossRatio || "-"} | Rule {r.RuleStatus || "-"}</div>
               {Array.isArray(r.adjustments) && r.adjustments.length ? (
                 <div className="mt-1 text-slate-400">Details: {r.adjustments.map((a, i) => <span key={a.adjustment_id || `${r.journal_id}-d-${i}`}>{i ? " | " : ""}L{a.LegIndex}: qty {a.Qty} @ {a.EntryPrice} tp {a.TakeProfitPrice} sl {a.StopLossPrice}{a.ExitPrice ? ` exit ${a.ExitPrice}` : ""}</span>)}</div>
               ) : null}

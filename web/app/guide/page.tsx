@@ -204,30 +204,30 @@ export default function GuidePage() {
                   <li key={item}>{item}</li>
                 ))}
               </ul>
+              <div className="mt-3 space-y-3">
+                {!dayTaxonomyReady ? (
+                  <p className="text-xs text-amber-300">
+                    Day-plan taxonomy is empty or not loaded from backend metadata.
+                  </p>
+                ) : (
+                  <>
+                    <div>
+                      <p className="mb-1 text-xs text-slate-400">Bias</p>
+                      <HintChipGroup items={biasItems} tone="amber" hintLabel="Bias hint" />
+                    </div>
+                    <div>
+                      <p className="mb-1 text-xs text-slate-400">Day Type (used for both expected and actual)</p>
+                      <HintChipGroup items={expectedDayTypeItems} tone="emerald" hintLabel="Day-type hint" />
+                    </div>
+                  </>
+                )}
+              </div>
               <p className="mt-3 text-xs uppercase tracking-[0.12em] text-slate-400">After Session</p>
               <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-slate-200">
                 {afterSession.map((item) => (
                   <li key={item}>{item}</li>
                 ))}
               </ul>
-            </Card>
-            <Card title="Day Type Classification (Daily Sum)">
-              {!dayTaxonomyReady ? (
-                <p className="text-xs text-amber-300">
-                  Day-plan taxonomy is empty or not loaded from backend metadata.
-                </p>
-              ) : (
-                <div className="space-y-3">
-                  <div>
-                    <p className="mb-1 text-xs text-slate-400">Bias</p>
-                    <HintChipGroup items={biasItems} tone="amber" hintLabel="Bias hint" />
-                  </div>
-                  <div>
-                    <p className="mb-1 text-xs text-slate-400">Day Type (used for both expected and actual)</p>
-                    <HintChipGroup items={expectedDayTypeItems} tone="emerald" hintLabel="Day-type hint" />
-                  </div>
-                </div>
-              )}
             </Card>
             <Card title="Phase">
               <HintChipGroup items={phaseItems} tone="amber" hintLabel="Phase hint" />

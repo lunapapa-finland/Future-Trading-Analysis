@@ -2,7 +2,7 @@
 
 import { AppShell } from "@/components/layout/app-shell";
 import { Card } from "@/components/ui/card";
-import { getMatchingLinks, postMatchingCommit, postMatchingParsePreview, postMatchingUnlink } from "@/lib/api";
+import { getMatchingLinks, postMatchingCommit, postMatchingParsePreview, postMatchingReconfirm, postMatchingUnlink } from "@/lib/api";
 import { LiveJournalRow } from "@/lib/types";
 import { useMemo, useState } from "react";
 
@@ -41,6 +41,7 @@ export default function MatchingPage() {
   const [linkEnd, setLinkEnd] = useState(thisDay);
   const [loadingLinks, setLoadingLinks] = useState(false);
   const [unlinkingKey, setUnlinkingKey] = useState("");
+  const [reconfirmingKey, setReconfirmingKey] = useState("");
   const [activeLinks, setActiveLinks] = useState<Array<Record<string, unknown>>>([]);
 
   const parsedTrades = useMemo(() => preview?.parsed_trades || [], [preview?.parsed_trades]);
@@ -149,6 +150,10 @@ export default function MatchingPage() {
       setMessage("Step 1 is blocked. Fix raw data first.");
       return;
     }
+    if (!links.length) {
+      setMessage("Step 3 is blocked. Create at least one journal-trade link in Step 2.");
+      return;
+    }
     setBusyCommit(true);
     setMessage("");
     try {
@@ -205,6 +210,33 @@ export default function MatchingPage() {
       setMessage(`Unlink failed: ${(e as Error).message}`);
     } finally {
       setUnlinkingKey("");
+    }
+  }
+
+  async function reconfirmOne(row: Record<string, unknown>) {
+    const journalId = String(row["journal_id"] || "");
+    const tradeId = String(row["trade_id"] || "");
+    const day = String(row["TradeDay"] || "");
+    if (!journalId) return;
+    const key = `${journalId}|${tradeId}|${day}`;
+    setReconfirmingKey(key);
+    setMessage("");
+    try {
+      const resp = await postMatchingReconfirm({ journal_id: journalId, trade_id: tradeId, trade_day: day });
+      setMessage(`Reconfirmed: ${resp.updated}`);
+      setActiveLinks((prev) =>
+        prev.map((x) => {
+          if (!(String(x["journal_id"] || "") === journalId && String(x["trade_id"] || "") === tradeId && String(x["TradeDay"] || "") === day)) {
+            return x;
+          }
+          const journal = ((x["journal"] as Record<string, unknown>) || {});
+          return { ...x, journal: { ...journal, MatchStatus: "matched" } };
+        })
+      );
+    } catch (e) {
+      setMessage(`Reconfirm failed: ${(e as Error).message}`);
+    } finally {
+      setReconfirmingKey("");
     }
   }
 
@@ -437,7 +469,7 @@ export default function MatchingPage() {
 
       <Card title="Link Manager (No Upload Needed)">
         <p className="mb-3 text-xs text-slate-400">
-          Load existing active journal-trade links by date range, then unlink directly here.
+          Load existing active journal-trade links by date range. Reconfirm marks `needs_reconfirm` back to `matched` without re-upload.
         </p>
         <div className="mb-3 grid gap-2 md:grid-cols-4">
           <label className="text-xs text-slate-300">
@@ -461,6 +493,7 @@ export default function MatchingPage() {
             const journalId = String(r["journal_id"] || "");
             const tradeId = String(r["trade_id"] || "");
             const day = String(r["TradeDay"] || "");
+            const matchStatus = String(journal["MatchStatus"] || "").trim().toLowerCase();
             const key = `${journalId}|${tradeId}|${day}`;
             return (
               <div key={`${key}|${i}`} className="rounded border border-white/10 bg-white/5 p-3 text-xs">
@@ -468,15 +501,29 @@ export default function MatchingPage() {
                   <span>{day}</span>
                   <span>{journalId}</span>
                   <span>{tradeId}</span>
-                  <span>{String(journal["Direction"] || "")} / {String(journal["Size"] || "")}</span>
+                  <span>
+                    {String(journal["Direction"] || "")} / {String(journal["Size"] || "")}
+                    <span className={`ml-2 rounded border px-1 py-0.5 text-[10px] ${matchStatus === "needs_reconfirm" ? "border-amber-300/40 text-amber-200" : "border-emerald-300/40 text-emerald-200"}`}>
+                      {matchStatus || "unknown"}
+                    </span>
+                  </span>
                   <span>{String(trade["Type"] || "")} / {String(trade["Size"] || "")}</span>
-                  <button
-                    onClick={() => unlinkOne(r)}
-                    disabled={unlinkingKey === key}
-                    className="rounded border border-red-300/40 px-2 py-1 text-[11px] text-red-200 disabled:opacity-60"
-                  >
-                    {unlinkingKey === key ? "Unlinking..." : "Unlink"}
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => reconfirmOne(r)}
+                      disabled={reconfirmingKey === key || matchStatus !== "needs_reconfirm"}
+                      className="rounded border border-emerald-300/40 px-2 py-1 text-[11px] text-emerald-200 disabled:opacity-60"
+                    >
+                      {reconfirmingKey === key ? "Reconfirming..." : "Reconfirm"}
+                    </button>
+                    <button
+                      onClick={() => unlinkOne(r)}
+                      disabled={unlinkingKey === key}
+                      className="rounded border border-red-300/40 px-2 py-1 text-[11px] text-red-200 disabled:opacity-60"
+                    >
+                      {unlinkingKey === key ? "Unlinking..." : "Unlink"}
+                    </button>
+                  </div>
                 </div>
               </div>
             );
@@ -497,7 +544,7 @@ export default function MatchingPage() {
           </p>
           <button
             onClick={commitAll}
-            disabled={busyCommit || !(preview?.can_continue ?? false)}
+            disabled={busyCommit || !(preview?.can_continue ?? false) || links.length === 0}
             className="rounded bg-accent px-4 py-2 text-sm text-white disabled:opacity-60"
           >
             {busyCommit ? "Committing..." : "Commit Parsed Trades + Matches"}

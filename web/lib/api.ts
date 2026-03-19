@@ -348,3 +348,20 @@ export async function postMatchingUnlink(payload: {
   );
   return handleResponse(res);
 }
+
+export async function postMatchingReconfirm(payload: {
+  journal_id: string;
+  trade_id?: string;
+  trade_day?: string;
+}): Promise<{ ok: boolean; updated: number }> {
+  const url = new URL("/api/journal/matching/reconfirm", API_BASE);
+  const res = await fetch(
+    url.toString(),
+    withAuth({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload ?? {}),
+    })
+  );
+  return handleResponse(res);
+}
