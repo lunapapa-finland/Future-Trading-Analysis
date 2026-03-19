@@ -75,7 +75,6 @@ def test_generate_aggregated_data_updates_existing_trade_on_corrections(tmp_path
 
     monkeypatch.setattr(pa, "PERFORMANCE_CSV", str(perf_csv))
     monkeypatch.setattr(pa, "sync_trade_sum_from_performance_rows", lambda *args, **kwargs: None)
-    monkeypatch.setattr(pa, "merge_trade_labels", lambda df: df)
 
     final_df = pa.generate_aggregated_data([incoming])
     assert len(final_df) == 1
@@ -129,7 +128,6 @@ def test_generate_aggregated_data_handles_duplicate_trade_ids_without_crash(tmp_
 
     monkeypatch.setattr(pa, "PERFORMANCE_CSV", str(perf_csv))
     monkeypatch.setattr(pa, "sync_trade_sum_from_performance_rows", lambda *args, **kwargs: None)
-    monkeypatch.setattr(pa, "merge_trade_labels", lambda df: df)
 
     out = pa.generate_aggregated_data([incoming])
     assert not out.empty
@@ -179,7 +177,6 @@ def test_generate_aggregated_data_preserves_distinct_trade_ids_with_same_signatu
     )
     monkeypatch.setattr(pa, "PERFORMANCE_CSV", str(perf_csv))
     monkeypatch.setattr(pa, "sync_trade_sum_from_performance_rows", lambda *args, **kwargs: None)
-    monkeypatch.setattr(pa, "merge_trade_labels", lambda df: df)
 
     out = pa.generate_aggregated_data([incoming])
     assert "trade_id" in out.columns
@@ -233,7 +230,6 @@ def test_generate_aggregated_data_sorts_chronologically(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(pa, "PERFORMANCE_CSV", str(perf_csv))
     monkeypatch.setattr(pa, "sync_trade_sum_from_performance_rows", lambda *args, **kwargs: None)
-    monkeypatch.setattr(pa, "merge_trade_labels", lambda df: df)
     out = pa.generate_aggregated_data([incoming])
     entered = pd.to_datetime(out["EnteredAt"], utc=True)
     assert entered.is_monotonic_increasing
@@ -320,7 +316,6 @@ def test_generate_aggregated_data_syncs_trade_sum_for_affected_days_only(tmp_pat
     )
 
     monkeypatch.setattr(pa, "PERFORMANCE_CSV", str(perf_csv))
-    monkeypatch.setattr(pa, "merge_trade_labels", lambda df: df)
     monkeypatch.setattr(portfolio, "TRADE_SUM_CSV", trade_sum_csv)
     monkeypatch.setattr(portfolio, "CASHFLOW_CSV", cashflow_csv)
 
@@ -384,7 +379,6 @@ def test_generate_aggregated_data_writes_audit_event(tmp_path, monkeypatch):
     events = []
     monkeypatch.setattr(pa, "PERFORMANCE_CSV", str(perf_csv))
     monkeypatch.setattr(pa, "sync_trade_sum_from_performance_rows", lambda *args, **kwargs: None)
-    monkeypatch.setattr(pa, "merge_trade_labels", lambda df: df)
     monkeypatch.setattr(pa, "append_audit_event", lambda *args, **kwargs: events.append((args, kwargs)))
 
     out = pa.generate_aggregated_data([incoming])
