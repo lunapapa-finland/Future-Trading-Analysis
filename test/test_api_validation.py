@@ -84,7 +84,10 @@ def test_analysis_date_filter_uses_trading_timezone_day_boundaries(tmp_path, mon
     monkeypatch.setattr(routes, "PERFORMANCE_CSV", str(perf_csv))
 
     client = app.test_client()
-    resp = client.post("/api/analysis/drawdown", json={"start_date": "2025-11-01", "end_date": "2025-11-01"})
+    resp = client.post(
+        "/api/analysis/drawdown",
+        json={"start_date": "2025-11-01", "end_date": "2025-11-01", "include_unmatched": True},
+    )
     assert resp.status_code == 200
     out = resp.get_json()
     assert isinstance(out, list)
@@ -111,7 +114,10 @@ def test_analysis_date_filter_handles_dst_boundary_in_us_central(tmp_path, monke
     monkeypatch.setattr(routes, "PERFORMANCE_CSV", str(perf_csv))
 
     client = app.test_client()
-    resp = client.post("/api/analysis/drawdown", json={"start_date": "2026-03-08", "end_date": "2026-03-08"})
+    resp = client.post(
+        "/api/analysis/drawdown",
+        json={"start_date": "2026-03-08", "end_date": "2026-03-08", "include_unmatched": True},
+    )
     assert resp.status_code == 200
     out = resp.get_json()
     assert isinstance(out, list)

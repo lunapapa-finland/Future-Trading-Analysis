@@ -136,9 +136,9 @@ def test_journal_tags_updates_trade_intent(tmp_path, monkeypatch):
     client = app.test_client()
     resp = client.post(
         "/api/journal/tags",
-        json={"rows": [{"trade_id": "t1", "TradeIntent": "Runner", "setups": "Wedge"}]},
+        json={"rows": [{"trade_id": "t1", "TradeIntent": "Swing", "setups": "Wedge"}]},
     )
     assert resp.status_code == 200
     out = pd.read_csv(perf_csv)
     row = out.loc[out["trade_id"] == "t1"].iloc[0]
-    assert row["TradeIntent"] == "Runner"
+    assert row["TradeIntent"] == "Swing"
