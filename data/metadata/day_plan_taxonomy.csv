@@ -1,9 +1,0 @@
-Field,Value,Hint,SortOrder,Enabled
-Bias,Bullish,Bias favors long-side opportunities unless invalidated.,1,True
-Bias,Bearish,Bias favors short-side opportunities unless invalidated.,2,True
-Bias,Neutral,No strong directional bias; react to structure.,3,True
-ExpectedDayType,Trend day,Sustained directional behavior with limited deep pullbacks.,1,True
-ExpectedDayType,TR day,Two-sided rotation dominates most of the session.,2,True
-ExpectedDayType,Trend from open,Direction establishes early and stays dominant.,3,True
-ExpectedDayType,Spike and channel,Initial spike transitions into a channel structure.,4,True
-ExpectedDayType,Double distribution,Two balance areas form with transition between them.,5,True

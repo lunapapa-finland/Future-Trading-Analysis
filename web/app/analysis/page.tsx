@@ -168,6 +168,7 @@ export default function AnalysisPage() {
   const [setupTagFilters, setSetupTagFilters] = useState<string[]>([]);
   const [signalBarFilters, setSignalBarFilters] = useState<string[]>([]);
   const [tradeIntentFilters, setTradeIntentFilters] = useState<string[]>([]);
+  const [includeUnmatched, setIncludeUnmatched] = useState(false);
   const [breachesOnly, setBreachesOnly] = useState(false);
   const [defaultsHydrated, setDefaultsHydrated] = useState(false);
   const [tagFiltersHydrated, setTagFiltersHydrated] = useState(false);
@@ -220,6 +221,7 @@ export default function AnalysisPage() {
       coreGranularity,
       capLossPerTrade,
       capTradesAfterBigLoss,
+      includeUnmatched,
       symbol,
       coreStartDate,
       coreEndDate,
@@ -232,6 +234,7 @@ export default function AnalysisPage() {
         symbol,
         start_date: coreStartDate,
         end_date: coreEndDate,
+        include_unmatched: includeUnmatched,
         params:
           metric === "overtrading_detection"
             ? {
@@ -289,10 +292,11 @@ export default function AnalysisPage() {
   ]);
 
   const { data: insights, isFetching: insightsFetching, error: insightsError } = useQuery<InsightsResponse>({
-    queryKey: ["insights", symbol, insightsMonth, insightsParams, mode],
+    queryKey: ["insights", symbol, insightsMonth, insightsParams, includeUnmatched, mode],
     queryFn: () =>
       postInsights({
         symbol,
+        include_unmatched: includeUnmatched,
         params: insightsParams,
       }),
     enabled: Boolean(symbol) && mode === "advanced",
@@ -494,6 +498,14 @@ export default function AnalysisPage() {
                 <label className="flex items-center gap-2 text-sm text-slate-300 sm:mt-6">
                   <input
                     type="checkbox"
+                    checked={includeUnmatched}
+                    onChange={(e) => setIncludeUnmatched(e.target.checked)}
+                  />
+                  Include unmatched trades
+                </label>
+                <label className="flex items-center gap-2 text-sm text-slate-300 sm:mt-6">
+                  <input
+                    type="checkbox"
                     checked={breachesOnly}
                     onChange={(e) => setBreachesOnly(e.target.checked)}
                   />
@@ -591,6 +603,7 @@ export default function AnalysisPage() {
                 </p>
                 {showGranularity ? <p>Granularity: {coreGranularity}</p> : null}
                 {showWindow ? <p>Window: {window}</p> : null}
+                <p>Include unmatched: {includeUnmatched ? "Yes" : "No (default)"}</p>
                 {metric === "overtrading_detection" ? (
                   <>
                     <p>Cap Loss / Trade: {capLossPerTrade}</p>
@@ -604,6 +617,7 @@ export default function AnalysisPage() {
               <>
                 <p>Min Trades: {insightsMinTrades}</p>
                 <p>Month: {insightsMonth}</p>
+                <p>Include unmatched: {includeUnmatched ? "Yes" : "No (default)"}</p>
                 {insightsFetching ? <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Computing insights…</p> : null}
                 {insightsError && !insightsNoData ? (
                   <p className="text-red-300">Error: {(insightsError as Error).message}</p>

@@ -15,8 +15,10 @@ DEFAULT_APP_CONFIG: Dict[str, Any] = {
     "paths": {
         "performance_csv": "data/performance/Performance_sum.csv",
         "trade_labels_csv": "data/performance/trade_labels.csv",
-        "tag_taxonomy_csv": "data/metadata/tag_taxonomy.csv",
-        "day_plan_taxonomy_csv": "data/metadata/day_plan_taxonomy.csv",
+        "journal_live_csv": "data/performance/journal_live.csv",
+        "journal_adjustments_csv": "data/performance/journal_adjustments.csv",
+        "journal_matches_csv": "data/performance/journal_matches.csv",
+        "taxonomy_csv": "data/metadata/taxonomy.csv",
         "contract_specs_csv": "data/metadata/contract_specs.csv",
         "day_plan_csv": "data/performance/day_plan.csv",
         "cashflow_csv": "data/portfolio/cashflow.csv",

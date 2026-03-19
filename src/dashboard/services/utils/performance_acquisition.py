@@ -20,6 +20,8 @@ from dashboard.services.utils.persistence import advisory_file_lock, atomic_writ
 
 logger = logging.getLogger(__name__)
 
+RANGE_FILE_PATTERN = re.compile(r"^Performance_\d{4}-\d{2}-\d{2}_to_\d{4}-\d{2}-\d{2}\.csv$")
+
 TRADE_SIGNATURE_COLUMNS = [
     "ContractName",
     "EnteredAt",
@@ -534,15 +536,20 @@ def acquire_missing_performance():
     """Acquire missing performace data"""
     try:
         all_dataframes = []
+        aggregate_name = os.path.basename(PERFORMANCE_CSV)
         for filename in os.listdir(PERFORMANCE_DIR):
-            if filename.startswith('Performance_') and filename.endswith('.csv'):
-                file_path = os.path.join(PERFORMANCE_DIR, filename)
-                try:
-                    df = pd.read_csv(file_path)
-                    if not df.empty:
-                        all_dataframes.append(df)
-                except (pd.errors.ParserError, OSError, ValueError) as e:
-                    logger.error(f"Failed to read {filename}: {e}")
+            if filename == aggregate_name:
+                # Never treat the aggregate output file as a raw source input.
+                continue
+            if not RANGE_FILE_PATTERN.match(filename):
+                continue
+            file_path = os.path.join(PERFORMANCE_DIR, filename)
+            try:
+                df = pd.read_csv(file_path)
+                if not df.empty:
+                    all_dataframes.append(df)
+            except (pd.errors.ParserError, OSError, ValueError) as e:
+                logger.error(f"Failed to read {filename}: {e}")
         # Concatenate all dataframes
         valid_dataframes = [df for df in all_dataframes if not df.empty]
         if valid_dataframes:
@@ -552,6 +559,69 @@ def acquire_missing_performance():
     except Exception:
         logger.exception("Performance merge pipeline failed unexpectedly")
         raise
+
+
+def merge_uploaded_temp_files(file_paths: list[str], archive_raw: bool = False) -> dict[str, object]:
+    """Direct interactive merge path for uploaded raw CSV files.
+
+    This bypasses the intermediate Performance_YYYY... range files and merges
+    directly from uploaded raw broker exports into PERFORMANCE_CSV.
+    """
+    if not file_paths:
+        raise ValueError("no uploaded files to merge")
+
+    valid_dataframes: list[pd.DataFrame] = []
+    saved_paths: list[str] = []
+    archived_paths: list[str] = []
+    removed_paths: list[str] = []
+    failed_files: list[dict[str, str]] = []
+
+    archive_dir = Path(TEMP_PERF_DIR) / "archive"
+    if archive_raw:
+        archive_dir.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d%H%M%S", time.gmtime())
+
+    for raw_path in file_paths:
+        p = Path(raw_path)
+        if not p.exists():
+            failed_files.append({"file": str(p), "error": "file not found"})
+            continue
+        try:
+            converted = process_csv(str(p))
+            if converted.empty:
+                failed_files.append({"file": str(p), "error": "no round-trip rows produced"})
+                continue
+            valid_dataframes.append(converted)
+            saved_paths.append(str(p))
+        except Exception as exc:
+            failed_files.append({"file": str(p), "error": str(exc)})
+            continue
+        finally:
+            # Raw upload lifecycle is explicit and immediate in interactive mode.
+            if p.exists():
+                try:
+                    if archive_raw:
+                        target = archive_dir / f"{stamp}_{p.name}"
+                        p.replace(target)
+                        archived_paths.append(str(target))
+                    else:
+                        p.unlink()
+                        removed_paths.append(str(p))
+                except OSError as exc:
+                    failed_files.append({"file": str(p), "error": f"cleanup failed: {exc}"})
+
+    if not valid_dataframes:
+        detail = "; ".join([f"{f['file']}: {f['error']}" for f in failed_files]) or "no valid files"
+        raise ValueError(f"upload merge failed: {detail}")
+
+    merged_df = generate_aggregated_data(valid_dataframes)
+    return {
+        "processed_files": saved_paths,
+        "archived_files": archived_paths,
+        "removed_files": removed_paths,
+        "failed_files": failed_files,
+        "merged_rows": int(len(merged_df)),
+    }
 
 
 if __name__ == "__main__":

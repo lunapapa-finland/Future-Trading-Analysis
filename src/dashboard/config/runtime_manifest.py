@@ -8,9 +8,11 @@ import pandas as pd
 from dashboard.config.env import DATA_DIR, FUTURE_DIR, PERFORMANCE_DIR, METADATA_DIR
 from dashboard.config.app_config import public_app_config
 from dashboard.config.settings import (
+    TAXONOMY_CSV,
     PERFORMANCE_CSV,
-    TRADE_TAG_TAXONOMY_CSV,
-    DAY_PLAN_TAXONOMY_CSV,
+    JOURNAL_LIVE_CSV,
+    JOURNAL_ADJUSTMENTS_CSV,
+    JOURNAL_MATCHES_CSV,
     CONTRACT_SPECS_CSV,
     DAY_PLAN_CSV,
 )
@@ -48,8 +50,10 @@ def runtime_manifest() -> dict[str, Any]:
         },
         "sources": {
             "performance_sum": _csv_info(Path(PERFORMANCE_CSV)),
-            "tag_taxonomy": _csv_info(Path(TRADE_TAG_TAXONOMY_CSV)),
-            "day_plan_taxonomy": _csv_info(Path(DAY_PLAN_TAXONOMY_CSV)),
+            "journal_live": _csv_info(Path(JOURNAL_LIVE_CSV)),
+            "journal_adjustments": _csv_info(Path(JOURNAL_ADJUSTMENTS_CSV)),
+            "journal_matches": _csv_info(Path(JOURNAL_MATCHES_CSV)),
+            "taxonomy": _csv_info(Path(TAXONOMY_CSV)),
             "contract_specs": _csv_info(Path(CONTRACT_SPECS_CSV)),
             "day_plan": _csv_info(Path(DAY_PLAN_CSV)),
             "cashflow": _csv_info(Path(CASHFLOW_CSV)),

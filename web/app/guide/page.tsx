@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { Card } from "@/components/ui/card";
-import { getTagTaxonomy } from "@/lib/api";
+import { getDayPlanTaxonomy, getTagTaxonomy } from "@/lib/api";
 import { useQuery } from "@tanstack/react-query";
 
 const workflow = [
@@ -34,70 +34,13 @@ const workflow = [
 ];
 
 const beforeSession = [
-  "Look at your weekly analysis every day before any intraday decision.",
-  "Map major S/R from last 5-10 sessions using HTF and RTH structure with HLOC.",
-  "Use 0-DTE call/put wall context: OI > 3000, volume > 3000, and OI ratio > 6 as dynamic levels.",
+  "Set Bias and expected Day Type.",
+  "Write key levels and primary plan.",
 ];
 
-const fallbackPhaseItems = [
-  {
-    text: "Open",
-    hint: "Classify trend vs TR quickly, identify opening reversal vs continuation at major S/R, and watch for MM potential after pullbacks.",
-  },
-  {
-    text: "Middle",
-    hint: "Re-check continuation vs transition. Keep context updated (trend or TR) and favor trend-side setups unless reversal confluence is strong.",
-  },
-  {
-    text: "End",
-    hint: "Expect magnet behavior to key S/R/open, faster movement, tighter execution window, and faster TP decisions.",
-  },
-];
-
-const fallbackContextItems = [
-  { text: "TTR", hint: "Very tight range. Prefer patience and tight-risk scalp logic." },
-  { text: "TR", hint: "Two-leg or multi-leg behavior. Avoid treating every move as trend." },
-  { text: "Stair Channel", hint: "Trend with pauses/retests; monitor step quality." },
-  { text: "Gap Channel", hint: "Persistent gap pressure with trend continuation bias." },
-  { text: "Strong Trend", hint: "Trend-side setups favored; counter-trend quality must be exceptional." },
-];
-
-const fallbackSetupItems = [
-  { text: "Wedge", hint: "Confluence reversal/continuation pattern. Confirm context and signal quality before entry." },
-  { text: "DB/DT", hint: "Double bottom/top pattern. Wait for clear confirmation at key levels." },
-  { text: "Big Surprise bar w/ follow-through", hint: "Momentum pattern with continuation confirmation." },
-  { text: "Big Surprise bar w/o follow-through", hint: "Potential failed breakout; tighten criteria." },
-  { text: "Climax (often leads to TR, not instant reversal)", hint: "Exhaustion behavior often transitions to range first." },
-  { text: "Final Flag (one more push)", hint: "Continuation attempt near trend end; manage risk tightly." },
-  { text: "2nd Leg (in TR)", hint: "Second-leg behavior in ranges; avoid overconfidence on first leg." },
-  { text: "BO + Follow-through", hint: "Breakout plus continuation bar quality required." },
-  { text: "BO + PB + 2nd Entry", hint: "Breakout, pullback, and quality second entry alignment." },
-  { text: "ii / iii / ioi", hint: "Inside-bar sequence. Confirm break direction with context." },
-  { text: "Expanding Triangle", hint: "Volatility expansion; prefer clear risk boundaries." },
-  { text: "Converging Triangle", hint: "Compression setup; wait for quality breakout." },
-  { text: "TBTL", hint: "Two-bar/two-leg behavior; require context confirmation." },
-  { text: "20 Bars Rule (trend diminishing)", hint: "Trend aging signal; avoid late momentum chasing." },
-  { text: "HH/HL Major Trend Reversal", hint: "Major reversal context with stronger confirmation needs." },
-  { text: "HH/HL Minor TR (scalp only)", hint: "Minor reversal in range; scalp bias only." },
-  { text: "Round Number", hint: "Psychological level; watch rejection/break quality." },
-  { text: "50% Pullback (mainly strong trend context)", hint: "Trend pullback setup; validate trend strength first." },
-];
-
-const fallbackSignalItems = [
-  { text: "Close at High", hint: "Momentum confirmation for long-side strength." },
-  { text: "Close at Middle", hint: "Neutral close, needs stronger context confirmation." },
-  { text: "Close at Low", hint: "Momentum confirmation for short-side strength." },
-  { text: "Long Tail", hint: "Reversal pressure / rejection context." },
-  { text: "No Tail", hint: "Breakout intent in trend direction." },
-  { text: "Doji", hint: "Indecision; avoid forcing entry without extra confirmation." },
-];
-
-const fallbackDayTypeItems = [
-  { text: "Trend day", hint: "Sustained directional behavior with limited deep pullback." },
-  { text: "TR day", hint: "Range behavior dominates; fade extremes and avoid chasing." },
-  { text: "Trend from open", hint: "Direction establishes early and stays dominant." },
-  { text: "Spike and channel", hint: "Initial spike then channel continuation structure." },
-  { text: "Double distribution", hint: "Two distinct balance areas with transition between them." },
+const afterSession = [
+  "Confirm actual Day Type.",
+  "Adjust notes and finalize daily summary.",
 ];
 
 const entryRules = [
@@ -130,24 +73,45 @@ export default function GuidePage() {
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
   });
+  const { data: dayPlanTaxonomy } = useQuery({
+    queryKey: ["day-plan-taxonomy"],
+    queryFn: () => getDayPlanTaxonomy(),
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+  });
   const activeMeta = workflow[activeStep];
   const phaseItems = useMemo(() => {
     const fromApi = (taxonomy?.phase ?? []).map((x) => ({ text: x.value, hint: x.hint || "" }));
-    return fromApi.length ? fromApi : fallbackPhaseItems;
+    return fromApi;
   }, [taxonomy?.phase]);
   const contextItems = useMemo(() => {
     const fromApi = (taxonomy?.context ?? []).map((x) => ({ text: x.value, hint: x.hint || "" }));
-    return fromApi.length ? fromApi : fallbackContextItems;
+    return fromApi;
   }, [taxonomy?.context]);
   const setupItems = useMemo(() => {
     const fromApi = (taxonomy?.setup ?? []).map((x) => ({ text: x.value, hint: x.hint || "" }));
-    return fromApi.length ? fromApi : fallbackSetupItems;
+    return fromApi;
   }, [taxonomy?.setup]);
   const signalItems = useMemo(() => {
     const fromApi = (taxonomy?.signal_bar ?? []).map((x) => ({ text: x.value, hint: x.hint || "" }));
-    return fromApi.length ? fromApi : fallbackSignalItems;
+    return fromApi;
   }, [taxonomy?.signal_bar]);
-  const dayTypeItems = fallbackDayTypeItems;
+  const tradeIntentItems = useMemo(() => {
+    const fromApi = (taxonomy?.trade_intent ?? []).map((x) => ({ text: x.value, hint: x.hint || "" }));
+    return fromApi;
+  }, [taxonomy?.trade_intent]);
+  const biasItems = useMemo(() => {
+    const fromApi = (dayPlanTaxonomy?.bias ?? []).map((x) => ({ text: x.value, hint: x.hint || "" }));
+    return fromApi;
+  }, [dayPlanTaxonomy?.bias]);
+  const expectedDayTypeItems = useMemo(() => {
+    const fromApi = (dayPlanTaxonomy?.expected_day_type ?? []).map((x) => ({ text: x.value, hint: x.hint || "" }));
+    return fromApi;
+  }, [dayPlanTaxonomy?.expected_day_type]);
+  const taxonomyReady = phaseItems.length > 0 && contextItems.length > 0 && setupItems.length > 0 && signalItems.length > 0;
+  const dayTaxonomyReady = biasItems.length > 0 && expectedDayTypeItems.length > 0;
+  const intentTaxonomyReady = tradeIntentItems.length > 0;
   const progressPct = useMemo(() => ((activeStep + 1) / workflow.length) * 100, [activeStep]);
   const contractValuePerPoint = pricePerTick * ticksPerPoint;
   const onQuarterTick = (v: number) => Number.isFinite(v) && Math.abs(v * 4 - Math.round(v * 4)) < 1e-9;
@@ -226,21 +190,48 @@ export default function GuidePage() {
 
       {activeStep === 0 ? (
         <>
-          <div className="grid gap-4 lg:grid-cols-2">
-            <Card title="Before Session">
+          {!taxonomyReady ? (
+            <Card title="Taxonomy Status">
+              <p className="text-sm text-amber-300">
+                Tag taxonomy is empty or not loaded from backend. Check `data/metadata/taxonomy.csv` and backend runtime config.
+              </p>
+            </Card>
+          ) : null}
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <Card title="Before and After Session">
               <ul className="list-disc space-y-1 pl-5 text-sm text-slate-200">
                 {beforeSession.map((item) => (
                   <li key={item}>{item}</li>
                 ))}
               </ul>
+              <p className="mt-3 text-xs uppercase tracking-[0.12em] text-slate-400">After Session</p>
+              <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-slate-200">
+                {afterSession.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
             </Card>
-
+            <Card title="Day Type Classification (Daily Sum)">
+              {!dayTaxonomyReady ? (
+                <p className="text-xs text-amber-300">
+                  Day-plan taxonomy is empty or not loaded from backend metadata.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  <div>
+                    <p className="mb-1 text-xs text-slate-400">Bias</p>
+                    <HintChipGroup items={biasItems} tone="amber" hintLabel="Bias hint" />
+                  </div>
+                  <div>
+                    <p className="mb-1 text-xs text-slate-400">Day Type (used for both expected and actual)</p>
+                    <HintChipGroup items={expectedDayTypeItems} tone="emerald" hintLabel="Day-type hint" />
+                  </div>
+                </div>
+              )}
+            </Card>
             <Card title="Phase">
               <HintChipGroup items={phaseItems} tone="amber" hintLabel="Phase hint" />
             </Card>
-          </div>
-
-          <div className="mt-2 grid gap-4 xl:grid-cols-3">
             <Card title="Context">
               <HintChipGroup items={contextItems} tone="cyan" hintLabel="Context hint" />
             </Card>
@@ -255,11 +246,6 @@ export default function GuidePage() {
 
             <Card title="Signal Bar">
               <HintChipGroup items={signalItems} tone="fuchsia" hintLabel="Signal hint" />
-            </Card>
-          </div>
-          <div className="mt-2">
-            <Card title="Day Type Classification">
-              <HintChipGroup items={dayTypeItems} tone="emerald" hintLabel="Day type hint" />
             </Card>
           </div>
         </>
@@ -292,10 +278,14 @@ export default function GuidePage() {
             </ul>
           </Card>
           <Card title="Trade Type Decision">
-            <ul className="list-disc space-y-1 pl-5 text-sm text-slate-200">
-              <li>Swing: stop-order-first mindset, confirm trend bars without prominent tails.</li>
-              <li>Scalp: limit-order-first, high-probability only, risk width depends on TR vs TTR.</li>
-              <li>Set trade type before entry; do not switch type emotionally after entry.</li>
+            {!intentTaxonomyReady ? (
+              <p className="text-sm text-amber-300">TradeIntent taxonomy is empty or not loaded from backend metadata.</p>
+            ) : (
+              <HintChipGroup items={tradeIntentItems} tone="emerald" hintLabel="TradeIntent hint" />
+            )}
+            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-slate-200">
+              <li>Choose TradeIntent before entry and treat it as execution discipline.</li>
+              <li>Do not switch intent emotionally after entry unless structure is invalidated.</li>
             </ul>
           </Card>
         </div>

@@ -4,9 +4,9 @@ from typing import Any
 
 import pandas as pd
 
-from dashboard.config.settings import TRADE_TAG_TAXONOMY_CSV
+from dashboard.config.settings import TAXONOMY_CSV
 
-TAXONOMY_COLUMNS = ["Field", "Value", "Hint", "SortOrder", "Enabled"]
+TAXONOMY_COLUMNS = ["Domain", "Field", "Value", "Hint", "SortOrder", "Enabled"]
 FIELDS = ["Phase", "Context", "Setup", "SignalBar", "TradeIntent"]
 
 
@@ -15,7 +15,7 @@ def _empty_taxonomy_df() -> pd.DataFrame:
 
 
 def load_tag_taxonomy(path: str | None = None) -> pd.DataFrame:
-    target = path or TRADE_TAG_TAXONOMY_CSV
+    target = path or TAXONOMY_CSV
     try:
         df = pd.read_csv(target)
     except FileNotFoundError:
@@ -27,13 +27,14 @@ def load_tag_taxonomy(path: str | None = None) -> pd.DataFrame:
     for col in TAXONOMY_COLUMNS:
         if col not in out.columns:
             out[col] = "" if col != "Enabled" else True
+    out["Domain"] = out["Domain"].fillna("").astype(str).str.strip().str.lower()
     out["Field"] = out["Field"].astype(str).str.strip()
     out["Value"] = out["Value"].astype(str).str.strip()
     out["Hint"] = out["Hint"].fillna("").astype(str).str.strip()
     out["SortOrder"] = pd.to_numeric(out["SortOrder"], errors="coerce").fillna(9999).astype(int)
     out["Enabled"] = out["Enabled"].astype(str).str.strip().str.lower().isin(["1", "true", "yes", "y"])
-    out = out[out["Field"].isin(FIELDS) & (out["Value"] != "")].copy()
-    out = out.sort_values(["Field", "SortOrder", "Value"], kind="stable").reset_index(drop=True)
+    out = out[(out["Domain"] == "trade") & out["Field"].isin(FIELDS) & (out["Value"] != "")].copy()
+    out = out.sort_values(["Field", "SortOrder", "Value"], kind="stable").drop_duplicates(subset=["Field", "Value"], keep="last").reset_index(drop=True)
     return out[TAXONOMY_COLUMNS]
 
 

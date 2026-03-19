@@ -16,8 +16,7 @@ Futures trading workspace with replay, analysis, portfolio tracking, and taxonom
 
 ## Current Source of Truth
 - Trade performance + trade tags: `data/performance/Performance_sum.csv`
-- Trade tag taxonomy: `data/metadata/tag_taxonomy.csv`
-- Day-plan taxonomy: `data/metadata/day_plan_taxonomy.csv`
+- Unified taxonomy (trade + day-plan): `data/metadata/taxonomy.csv`
 - Day-level journal rows: `data/performance/day_plan.csv`
 - Portfolio inputs: `data/portfolio/trade_sum.csv`, `data/portfolio/cashflow.csv`
 
@@ -41,11 +40,11 @@ Hooked at app boot:
 ## Tagging + Day Plan Model
 ### Trade-level (Trading tab)
 - `Phase`, `Context`, `Setup` (multi), `SignalBar`, `TradeIntent`
-- Tag options come from `data/metadata/tag_taxonomy.csv`
+- Tag options come from unified taxonomy rows where `Domain=trade`
 
 ### Day-level (Trading tab)
 - `Date`, `Bias`, `ExpectedDayType`, `ActualDayType`, `KeyLevelsHTFContext`, `PrimaryPlan`, `AvoidancePlan`
-- Day-type/bias options come from `data/metadata/day_plan_taxonomy.csv`
+- Day-type/bias options come from unified taxonomy rows where `Domain=day_plan`
 - Date selection is business-day constrained in UI (Mon-Fri options only) and enforced again in backend validation.
 
 ### Guide tab
@@ -104,6 +103,12 @@ Build and start:
 ```bash
 docker compose build --no-cache
 docker compose up -d
+```
+
+Raspberry Pi deploy/upgrade:
+```bash
+docker compose -f docker-compose.yml -f docker-compose.rpi.yml pull
+docker compose -f docker-compose.yml -f docker-compose.rpi.yml up -d
 ```
 
 Useful commands:

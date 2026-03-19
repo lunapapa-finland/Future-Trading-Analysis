@@ -4,18 +4,10 @@ from typing import Any
 
 import pandas as pd
 
-from dashboard.config.settings import DAY_PLAN_TAXONOMY_CSV
+from dashboard.config.settings import TAXONOMY_CSV
 
-TAXONOMY_COLUMNS = ["Field", "Value", "Hint", "SortOrder", "Enabled"]
+TAXONOMY_COLUMNS = ["Domain", "Field", "Value", "Hint", "SortOrder", "Enabled"]
 FIELDS = ["Bias", "ExpectedDayType"]
-DEFAULT_DAY_TYPES = [
-    "Trend day",
-    "TR day",
-    "Trend from open",
-    "Spike and channel",
-    "Double distribution",
-]
-DEFAULT_BIAS = ["Bullish", "Bearish", "Neutral"]
 
 
 def _empty_taxonomy_df() -> pd.DataFrame:
@@ -23,7 +15,7 @@ def _empty_taxonomy_df() -> pd.DataFrame:
 
 
 def load_day_plan_taxonomy(path: str | None = None) -> pd.DataFrame:
-    target = path or DAY_PLAN_TAXONOMY_CSV
+    target = path or TAXONOMY_CSV
     try:
         df = pd.read_csv(target)
     except FileNotFoundError:
@@ -35,13 +27,14 @@ def load_day_plan_taxonomy(path: str | None = None) -> pd.DataFrame:
     for col in TAXONOMY_COLUMNS:
         if col not in out.columns:
             out[col] = "" if col != "Enabled" else True
+    out["Domain"] = out["Domain"].fillna("").astype(str).str.strip().str.lower()
     out["Field"] = out["Field"].astype(str).str.strip()
     out["Value"] = out["Value"].astype(str).str.strip()
     out["Hint"] = out["Hint"].fillna("").astype(str).str.strip()
     out["SortOrder"] = pd.to_numeric(out["SortOrder"], errors="coerce").fillna(9999).astype(int)
     out["Enabled"] = out["Enabled"].astype(str).str.strip().str.lower().isin(["1", "true", "yes", "y"])
-    out = out[out["Field"].isin(FIELDS) & (out["Value"] != "")].copy()
-    out = out.sort_values(["Field", "SortOrder", "Value"], kind="stable").reset_index(drop=True)
+    out = out[(out["Domain"] == "day_plan") & out["Field"].isin(FIELDS) & (out["Value"] != "")].copy()
+    out = out.sort_values(["Field", "SortOrder", "Value"], kind="stable").drop_duplicates(subset=["Field", "Value"], keep="last").reset_index(drop=True)
     return out[TAXONOMY_COLUMNS]
 
 
@@ -62,11 +55,6 @@ def day_plan_taxonomy_payload() -> dict[str, Any]:
 
     for f in FIELDS:
         by_field[f] = sorted(by_field[f], key=lambda x: (x["order"], x["value"]))
-
-    if not by_field["ExpectedDayType"]:
-        by_field["ExpectedDayType"] = [{"value": x, "hint": "", "order": i + 1} for i, x in enumerate(DEFAULT_DAY_TYPES)]
-    if not by_field["Bias"]:
-        by_field["Bias"] = [{"value": x, "hint": "", "order": i + 1} for i, x in enumerate(DEFAULT_BIAS)]
 
     return {
         "bias": by_field["Bias"],

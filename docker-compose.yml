@@ -21,6 +21,7 @@ services:
       - ./data/future:/app/data/future
       - ./data/performance:/app/data/performance
       - ./data/temp_performance:/app/data/temp_performance
+      - ./data/metadata:/app/data/metadata
       - ./data/portfolio:/app/data/portfolio
       - ./log:/app/log
     ports:
@@ -41,6 +42,7 @@ services:
       - ./data/future:/app/data/future
       - ./data/performance:/app/data/performance
       - ./data/temp_performance:/app/data/temp_performance
+      - ./data/metadata:/app/data/metadata
       - ./data/portfolio:/app/data/portfolio
       - ./log:/app/log
     command: ["/bin/bash","-lc","cron -f"]

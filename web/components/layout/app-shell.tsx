@@ -6,11 +6,12 @@ import { useRouter } from "next/navigation";
 import clsx from "clsx";
 
 const navLinks = [
-  { href: "/guide", label: "Guide" },
-  { href: "/trading", label: "Trading" },
-  { href: "/analysis", label: "Analysis" },
-  { href: "/portfolio", label: "Portfolio" },
-  { href: "/config", label: "Config" }
+  { href: "/guide", label: "Trading Guide" },
+  { href: "/live", label: "Trading Live" },
+  { href: "/matching", label: "Trading Match" },
+  { href: "/trading", label: "Trading Details" },
+  { href: "/analysis", label: "Trading Analysis" },
+  { href: "/system", label: "System Config" }
 ];
 
 export function AppShell({
@@ -25,10 +26,18 @@ export function AppShell({
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const title =
     active === "/guide"
-      ? "Intraday Guide"
-      : active === "/analysis"
-        ? "Analytics Dashboard"
-        : "Trade Dashboard";
+      ? "Trading Guide"
+      : active === "/live"
+      ? "Trading Live"
+      : active === "/matching"
+        ? "Trade Matching"
+        : active === "/trading"
+          ? "Trading Details"
+          : active === "/analysis"
+          ? "Trading Analysis"
+          : active === "/system"
+            ? "System Config"
+            : "Trade Dashboard";
   const router = useRouter();
 
   async function handleSignOut() {

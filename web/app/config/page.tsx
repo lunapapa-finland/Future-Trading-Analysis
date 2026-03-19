@@ -31,7 +31,7 @@ export default function ConfigPage() {
   }, []);
 
   return (
-    <AppShell active="/config">
+    <AppShell active="/system">
       <div className="space-y-4">
         <div className="flex flex-col gap-1">
           <p className="text-xs uppercase tracking-[0.2em] text-accent sm:text-sm">Configuration</p>
