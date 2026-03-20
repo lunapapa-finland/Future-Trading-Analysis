@@ -3,7 +3,7 @@
 import { AppShell } from "@/components/layout/app-shell";
 import { Card } from "@/components/ui/card";
 import { fetchConfig } from "@/lib/config";
-import { getDayPlan, getDayPlanTaxonomy, getJournalLive, getJournalLiveMeta, postDayPlan, postJournalLive } from "@/lib/api";
+import { deleteJournalLive, getDayPlan, getDayPlanTaxonomy, getJournalLive, getJournalLiveMeta, postDayPlan, postJournalLive } from "@/lib/api";
 import { JournalAdjustment, LiveJournalRow } from "@/lib/types";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
@@ -101,6 +101,7 @@ export default function LivePage() {
   const [journalMessage, setJournalMessage] = useState("");
   const [planMessage, setPlanMessage] = useState("");
   const [savingJournal, setSavingJournal] = useState(false);
+  const [deletingJournalId, setDeletingJournalId] = useState("");
   const [savingPlan, setSavingPlan] = useState(false);
   const [dailyOpen, setDailyOpen] = useState(true);
 
@@ -389,6 +390,11 @@ export default function LivePage() {
   }
 
   function startEdit(row: LiveJournalRow) {
+    const hasActiveLinks = Array.isArray(row.matches) && row.matches.length > 0;
+    if (hasActiveLinks) {
+      setJournalMessage("Edit blocked: this journal is linked to an active trade. Unlink first in Trading Match.");
+      return;
+    }
     setEditingJournalId(String(row.journal_id || ""));
     const incoming = (Array.isArray(row.adjustments) ? row.adjustments : []).map((a, idx) => ({
       adjustment_id: a.adjustment_id,
@@ -418,6 +424,38 @@ export default function LivePage() {
       Notes: row.Notes || "",
       adjustments: incoming.length ? incoming : [emptyDetail(1)],
     });
+  }
+
+  async function removeJournal(row: LiveJournalRow) {
+    const journalId = String(row.journal_id || "").trim();
+    if (!journalId) return;
+    const status = String(row.MatchStatus || "").trim().toLowerCase() || "unmatched";
+    const hasActiveLinks = Array.isArray(row.matches) && row.matches.length > 0;
+    if (hasActiveLinks) {
+      setJournalMessage("Delete blocked: this journal still has active link(s). Unlink first in Trading Match.");
+      return;
+    }
+    if (!["initial", "unmatched", "needs_reconfirm"].includes(status)) {
+      setJournalMessage("Delete blocked: only initial/unmatched or needs_reconfirm rows can be deleted.");
+      return;
+    }
+    const ok = window.confirm(`Delete journal ${journalId}? This also deletes its execution detail rows.`);
+    if (!ok) return;
+    setDeletingJournalId(journalId);
+    setJournalMessage("");
+    try {
+      const resp = await deleteJournalLive({ journal_id: journalId });
+      setJournalMessage(`Deleted ${resp.deleted} journal row, removed ${resp.deleted_adjustments} detail row(s).`);
+      if (editingJournalId === journalId) {
+        setEditingJournalId("");
+        setDraft(emptyDraft(tradeDay));
+      }
+      await refetchJournal();
+    } catch (e) {
+      setJournalMessage(`Delete failed: ${(e as Error).message}`);
+    } finally {
+      setDeletingJournalId("");
+    }
   }
 
   const contractOptions = useMemo(() => {
@@ -658,7 +696,20 @@ export default function LivePage() {
                 <div className="mt-1 text-slate-400">Details: {r.adjustments.map((a, i) => <span key={a.adjustment_id || `${r.journal_id}-d-${i}`}>{i ? " | " : ""}L{a.LegIndex}: qty {a.Qty} @ {a.EntryPrice} tp {a.TakeProfitPrice} sl {a.StopLossPrice}{a.ExitPrice ? ` exit ${a.ExitPrice}` : ""}</span>)}</div>
               ) : null}
               <div className="mt-2">
-                <button onClick={() => startEdit(r)} className="rounded border border-accent/50 px-2 py-1 text-[11px] text-accent">Edit</button>
+                <button
+                  onClick={() => startEdit(r)}
+                  disabled={Array.isArray(r.matches) && r.matches.length > 0}
+                  className="rounded border border-accent/50 px-2 py-1 text-[11px] text-accent disabled:opacity-50"
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={() => removeJournal(r)}
+                  disabled={deletingJournalId === String(r.journal_id || "")}
+                  className="ml-2 rounded border border-rose-400/50 px-2 py-1 text-[11px] text-rose-300 disabled:opacity-60"
+                >
+                  {deletingJournalId === String(r.journal_id || "") ? "Deleting..." : "Delete"}
+                </button>
               </div>
             </div>
           ))}

@@ -2,7 +2,7 @@
 
 import { AppShell } from "@/components/layout/app-shell";
 import { Card } from "@/components/ui/card";
-import { getMatchingLinks, postMatchingCommit, postMatchingParsePreview, postMatchingReconfirm, postMatchingUnlink } from "@/lib/api";
+import { getMatchingRelinkPreview, postMatchingCommit, postMatchingReconfirm, postMatchingUnlink } from "@/lib/api";
 import { LiveJournalRow } from "@/lib/types";
 import { useMemo, useState } from "react";
 
@@ -28,9 +28,6 @@ type LinkRow = {
 export default function MatchingPage() {
   const now = new Date();
   const thisDay = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
-  const [archiveRaw, setArchiveRaw] = useState(false);
-  const [busyParse, setBusyParse] = useState(false);
   const [busyCommit, setBusyCommit] = useState(false);
   const [message, setMessage] = useState("");
   const [preview, setPreview] = useState<ParsePreview | null>(null);
@@ -39,10 +36,9 @@ export default function MatchingPage() {
   const [links, setLinks] = useState<LinkRow[]>([]);
   const [linkStart, setLinkStart] = useState(thisDay);
   const [linkEnd, setLinkEnd] = useState(thisDay);
-  const [loadingLinks, setLoadingLinks] = useState(false);
   const [unlinkingKey, setUnlinkingKey] = useState("");
   const [reconfirmingKey, setReconfirmingKey] = useState("");
-  const [activeLinks, setActiveLinks] = useState<Array<Record<string, unknown>>>([]);
+  const [loadingRelinkPreview, setLoadingRelinkPreview] = useState(false);
 
   const parsedTrades = useMemo(() => preview?.parsed_trades || [], [preview?.parsed_trades]);
   const journalRows = useMemo(() => preview?.journal_rows || [], [preview?.journal_rows]);
@@ -96,25 +92,20 @@ export default function MatchingPage() {
     [preview?.suggestions, selectedJournalId]
   );
 
-  async function runParsePreview() {
-    if (!uploadFiles.length) {
-      setMessage("Select at least one CSV file.");
-      return;
-    }
-    setBusyParse(true);
+  async function loadRelinkPreview() {
+    setLoadingRelinkPreview(true);
     setMessage("");
     try {
-      const resp = await postMatchingParsePreview(uploadFiles, { archiveRaw });
+      const resp = await getMatchingRelinkPreview({ start: linkStart, end: linkEnd });
       setPreview(resp);
       setLinks([]);
       setSelectedJournalId("");
       setDragJournalId("");
-      setMessage(`Parsed trades: ${resp.parsed_trades.length}. Unparseable rows: ${resp.unparseable_rows.length}.`);
-      setUploadFiles([]);
+      setMessage(`Relink workspace loaded. Trades: ${resp.parsed_trades.length}. Journals: ${resp.journal_rows.length}.`);
     } catch (e) {
-      setMessage(`Parse preview failed: ${(e as Error).message}`);
+      setMessage(`Relink preview failed: ${(e as Error).message}`);
     } finally {
-      setBusyParse(false);
+      setLoadingRelinkPreview(false);
     }
   }
 
@@ -146,8 +137,8 @@ export default function MatchingPage() {
 
   async function commitAll() {
     if (!preview) return;
-    if (preview.hard_blocked || !preview.can_continue) {
-      setMessage("Step 1 is blocked. Fix raw data first.");
+    if (!preview.can_continue) {
+      setMessage("Step 1 is blocked. Load a date range with available trades.");
       return;
     }
     if (!links.length) {
@@ -162,7 +153,7 @@ export default function MatchingPage() {
         links,
         replace_for_journal: true,
       });
-      setMessage(`Committed. Performance rows delta: ${resp.rows_delta}. Matches inserted: ${resp.matches_inserted}, inactivated: ${resp.matches_inactivated}.`);
+      setMessage(`Matches persisted. Inserted: ${resp.matches_inserted}, inactivated: ${resp.matches_inactivated}.`);
     } catch (e) {
       setMessage(`Commit failed: ${(e as Error).message}`);
     } finally {
@@ -170,24 +161,12 @@ export default function MatchingPage() {
     }
   }
 
-  async function loadActiveLinks() {
-    setLoadingLinks(true);
-    setMessage("");
-    try {
-      const resp = await getMatchingLinks({ start: linkStart, end: linkEnd });
-      setActiveLinks(resp.rows || []);
-      setMessage(`Loaded active links: ${(resp.rows || []).length}`);
-    } catch (e) {
-      setMessage(`Load links failed: ${(e as Error).message}`);
-    } finally {
-      setLoadingLinks(false);
-    }
-  }
-
-  async function unlinkOne(row: Record<string, unknown>) {
-    const journalId = String(row["journal_id"] || "");
-    const tradeId = String(row["trade_id"] || "");
-    const day = String(row["TradeDay"] || "");
+  async function unlinkLockedJournal(row: LiveJournalRow) {
+    const journalId = String(row.journal_id || "").trim();
+    const matches = Array.isArray(row.matches) ? row.matches : [];
+    const first = (matches[0] as Record<string, unknown>) || {};
+    const tradeId = String(first["trade_id"] || "").trim();
+    const day = String(first["TradeDay"] || row.TradeDay || "").trim();
     if (!journalId) return;
     const key = `${journalId}|${tradeId}|${day}`;
     setUnlinkingKey(key);
@@ -195,14 +174,11 @@ export default function MatchingPage() {
     try {
       const resp = await postMatchingUnlink({ journal_id: journalId, trade_id: tradeId, trade_day: day });
       setMessage(`Unlinked: ${resp.inactivated}`);
-      setActiveLinks((prev) => prev.filter((x) => !(String(x["journal_id"] || "") === journalId && String(x["trade_id"] || "") === tradeId && String(x["TradeDay"] || "") === day)));
       setPreview((prev) => {
         if (!prev) return prev;
         const nextRows = (prev.journal_rows || []).map((j) => {
           if (String(j.journal_id || "") !== journalId) return j;
-          const matches = Array.isArray((j as any).matches) ? ((j as any).matches as Array<Record<string, unknown>>) : [];
-          const kept = matches.filter((m) => !(String(m["trade_id"] || "") === tradeId && String(m["TradeDay"] || "") === day && String(m["Status"] || "").toLowerCase() === "active"));
-          return { ...j, matches: kept };
+          return { ...j, matches: [], MatchStatus: "unmatched" };
         });
         return { ...prev, journal_rows: nextRows };
       });
@@ -213,10 +189,12 @@ export default function MatchingPage() {
     }
   }
 
-  async function reconfirmOne(row: Record<string, unknown>) {
-    const journalId = String(row["journal_id"] || "");
-    const tradeId = String(row["trade_id"] || "");
-    const day = String(row["TradeDay"] || "");
+  async function reconfirmLockedJournal(row: LiveJournalRow) {
+    const journalId = String(row.journal_id || "").trim();
+    const matches = Array.isArray(row.matches) ? row.matches : [];
+    const first = (matches[0] as Record<string, unknown>) || {};
+    const tradeId = String(first["trade_id"] || "").trim();
+    const day = String(first["TradeDay"] || row.TradeDay || "").trim();
     if (!journalId) return;
     const key = `${journalId}|${tradeId}|${day}`;
     setReconfirmingKey(key);
@@ -224,15 +202,14 @@ export default function MatchingPage() {
     try {
       const resp = await postMatchingReconfirm({ journal_id: journalId, trade_id: tradeId, trade_day: day });
       setMessage(`Reconfirmed: ${resp.updated}`);
-      setActiveLinks((prev) =>
-        prev.map((x) => {
-          if (!(String(x["journal_id"] || "") === journalId && String(x["trade_id"] || "") === tradeId && String(x["TradeDay"] || "") === day)) {
-            return x;
-          }
-          const journal = ((x["journal"] as Record<string, unknown>) || {});
-          return { ...x, journal: { ...journal, MatchStatus: "matched" } };
-        })
-      );
+      setPreview((prev) => {
+        if (!prev) return prev;
+        const nextRows = (prev.journal_rows || []).map((j) => {
+          if (String(j.journal_id || "") !== journalId) return j;
+          return { ...j, MatchStatus: "matched" };
+        });
+        return { ...prev, journal_rows: nextRows };
+      });
     } catch (e) {
       setMessage(`Reconfirm failed: ${(e as Error).message}`);
     } finally {
@@ -242,69 +219,40 @@ export default function MatchingPage() {
 
   return (
     <AppShell active="/matching">
-      <Card title="Step 1: Upload and Parse Preview">
+      <Card title="Step 1: Load Match Workspace">
         <div className="space-y-3">
           <p className="text-xs text-slate-400">
-            Parse only. No persistence in this step. Continuation is blocked if any raw row is unparseable.
+            Source of truth is existing `Performance_sum`. Load trades + journals by date range, then link/unlink.
           </p>
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              type="file"
-              accept=".csv"
-              multiple
-              onChange={(e) => setUploadFiles(Array.from(e.target.files || []))}
-              className="rounded border border-white/10 bg-surface px-2 py-1 text-xs text-slate-200"
-            />
-            <label className="inline-flex items-center gap-2 text-xs text-slate-300">
-              <input type="checkbox" checked={archiveRaw} onChange={(e) => setArchiveRaw(e.target.checked)} />
-              Archive raw uploads
+          <div className="grid gap-2 md:grid-cols-4">
+            <label className="text-xs text-slate-300">
+              Start
+              <input type="date" value={linkStart} onChange={(e) => setLinkStart(e.target.value)} className="mt-1 h-9 w-full rounded border border-white/10 bg-surface px-2 text-white" />
             </label>
-            <button
-              onClick={runParsePreview}
-              disabled={busyParse}
-              className="rounded border border-emerald-400/50 px-3 py-2 text-xs text-emerald-200 disabled:opacity-60"
-            >
-              {busyParse ? "Parsing..." : "Upload + Parse Preview"}
-            </button>
-            <span className="text-xs text-slate-400">{uploadFiles.length ? `${uploadFiles.length} file(s) selected` : "No files selected"}</span>
+            <label className="text-xs text-slate-300">
+              End
+              <input type="date" value={linkEnd} onChange={(e) => setLinkEnd(e.target.value)} className="mt-1 h-9 w-full rounded border border-white/10 bg-surface px-2 text-white" />
+            </label>
+            <div className="md:col-span-2 flex items-end">
+              <button
+                onClick={loadRelinkPreview}
+                disabled={loadingRelinkPreview}
+                className="rounded border border-cyan-300/40 px-3 py-2 text-xs text-cyan-200 disabled:opacity-60"
+              >
+                {loadingRelinkPreview ? "Loading..." : "Load Workspace"}
+              </button>
+            </div>
           </div>
 
           {preview ? (
             <div className="space-y-2 rounded border border-white/10 bg-white/5 p-3 text-xs">
               <p>
-                Parsed trades: <span className="text-white">{preview.parsed_trades.length}</span> | Range:{" "}
+                Trades: <span className="text-white">{preview.parsed_trades.length}</span> | Journals: <span className="text-white">{preview.journal_rows.length}</span> | Range:{" "}
                 <span className="text-white">{preview.parsed_range.start || "-"} → {preview.parsed_range.end || "-"}</span>
               </p>
               <p>
-                Status:{" "}
-                <span className={preview.can_continue ? "text-emerald-300" : "text-red-300"}>{preview.can_continue ? "Ready for Step 2/3" : "Blocked"}</span>
+                Status: <span className={preview.can_continue ? "text-emerald-300" : "text-red-300"}>{preview.can_continue ? "Ready for matching" : "No trades in range"}</span>
               </p>
-            </div>
-          ) : null}
-
-          {preview?.parse_logs?.length ? (
-            <div className="rounded border border-white/10 bg-white/5 p-3">
-              <p className="mb-2 text-xs uppercase tracking-[0.12em] text-slate-400">Parse Logs</p>
-              <div className="space-y-1 text-xs text-slate-200">
-                {preview.parse_logs.map((r, i) => (
-                  <div key={i} className="rounded border border-white/10 bg-surface px-2 py-1">
-                    {JSON.stringify(r)}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          {preview?.unparseable_rows?.length ? (
-            <div className="rounded border border-red-400/30 bg-red-500/10 p-3">
-              <p className="mb-2 text-xs uppercase tracking-[0.12em] text-red-300">Unparseable Rows (Hard Block)</p>
-              <div className="max-h-56 space-y-1 overflow-auto text-xs text-red-100">
-                {preview.unparseable_rows.map((r, i) => (
-                  <div key={i} className="rounded border border-red-300/30 px-2 py-1">
-                    {JSON.stringify(r)}
-                  </div>
-                ))}
-              </div>
             </div>
           ) : null}
         </div>
@@ -312,7 +260,7 @@ export default function MatchingPage() {
 
       <Card title="Step 2: Truth-Board Matching">
         <p className="mb-3 text-xs text-slate-400">
-          Truth side is parsed trades (right). Journal pool is left. Drag journal cards onto a truth trade card to assign. Remove sends them back to pool.
+          Truth side is persisted performance trades (right). Journal pool is left. Drag journal cards onto a truth trade card to assign. Remove sends them back to pool.
         </p>
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="space-y-2">
@@ -333,30 +281,51 @@ export default function MatchingPage() {
                 const jid = String(r.journal_id || "");
                 const selected = selectedJournalId === jid;
                 const locked = existingMatchByJournalId.get(jid);
+                const key = `${jid}|${locked?.trade_id || ""}|${locked?.trade_day || ""}`;
+                const status = String(r.MatchStatus || "").trim().toLowerCase();
                 return (
-                  <button
-                    key={jid}
-                    onClick={() => setSelectedJournalId(jid)}
-                    draggable={!locked}
-                    onDragStart={() => {
-                      if (!locked) setDragJournalId(jid);
-                    }}
-                    onDragEnd={() => setDragJournalId("")}
-                    className={`w-full rounded border p-3 text-left text-xs ${selected ? "border-accent bg-accent/10" : "border-white/10 bg-white/5"}`}
-                  >
-                    <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-                      <span>{String(r.TradeDay || "")}</span>
-                      <span>Seq {String(r.SeqInDay || "")}</span>
-                      <span>{String(r.Direction || "")}</span>
-                      <span>Size {String(r.Size || "")}</span>
-                    </div>
-                    <div className="mt-1 text-slate-300">Setup: {String(r.Setup || "")}</div>
+                  <div key={jid} className="space-y-1">
+                    <button
+                      onClick={() => setSelectedJournalId(jid)}
+                      draggable={!locked}
+                      onDragStart={() => {
+                        if (!locked) setDragJournalId(jid);
+                      }}
+                      onDragEnd={() => setDragJournalId("")}
+                      className={`w-full rounded border p-3 text-left text-xs ${selected ? "border-accent bg-accent/10" : "border-white/10 bg-white/5"}`}
+                    >
+                      <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                        <span>{String(r.TradeDay || "")}</span>
+                        <span>Seq {String(r.SeqInDay || "")}</span>
+                        <span>{String(r.Direction || "")}</span>
+                        <span>Size {String(r.Size || "")}</span>
+                      </div>
+                      <div className="mt-1 text-slate-300">Setup: {String(r.Setup || "")}</div>
+                      {locked ? (
+                        <div className="mt-1 text-[11px] text-amber-300">
+                          Locked: linked {locked.trade_day ? `on ${locked.trade_day}` : ""} {locked.trade_id ? `to ${locked.trade_id}` : ""}
+                        </div>
+                      ) : null}
+                    </button>
                     {locked ? (
-                      <div className="mt-1 text-[11px] text-amber-300">
-                        Locked: linked {locked.trade_day ? `on ${locked.trade_day}` : ""} {locked.trade_id ? `to ${locked.trade_id}` : ""}
+                      <div className="flex items-center gap-1 pl-1">
+                        <button
+                          onClick={() => reconfirmLockedJournal(r)}
+                          disabled={reconfirmingKey === key || status !== "needs_reconfirm"}
+                          className="rounded border border-emerald-300/40 px-2 py-1 text-[11px] text-emerald-200 disabled:opacity-60"
+                        >
+                          {reconfirmingKey === key ? "Reconfirming..." : "Reconfirm"}
+                        </button>
+                        <button
+                          onClick={() => unlinkLockedJournal(r)}
+                          disabled={unlinkingKey === key}
+                          className="rounded border border-red-300/40 px-2 py-1 text-[11px] text-red-200 disabled:opacity-60"
+                        >
+                          {unlinkingKey === key ? "Unlinking..." : "Unlink"}
+                        </button>
                       </div>
                     ) : null}
-                  </button>
+                  </div>
                 );
               })}
               {!poolJournals.length ? <p className="text-xs text-slate-500">Pool is empty.</p> : null}
@@ -467,79 +436,15 @@ export default function MatchingPage() {
         ) : null}
       </Card>
 
-      <Card title="Link Manager (No Upload Needed)">
-        <p className="mb-3 text-xs text-slate-400">
-          Load existing active journal-trade links by date range. Reconfirm marks `needs_reconfirm` back to `matched` without re-upload.
-        </p>
-        <div className="mb-3 grid gap-2 md:grid-cols-4">
-          <label className="text-xs text-slate-300">
-            Start
-            <input type="date" value={linkStart} onChange={(e) => setLinkStart(e.target.value)} className="mt-1 h-9 w-full rounded border border-white/10 bg-surface px-2 text-white" />
-          </label>
-          <label className="text-xs text-slate-300">
-            End
-            <input type="date" value={linkEnd} onChange={(e) => setLinkEnd(e.target.value)} className="mt-1 h-9 w-full rounded border border-white/10 bg-surface px-2 text-white" />
-          </label>
-          <div className="md:col-span-2 flex items-end">
-            <button onClick={loadActiveLinks} disabled={loadingLinks} className="rounded border border-amber-300/40 px-3 py-2 text-xs text-amber-200 disabled:opacity-60">
-              {loadingLinks ? "Loading..." : "Load Active Links"}
-            </button>
-          </div>
-        </div>
-        <div className="space-y-2">
-          {activeLinks.map((r, i) => {
-            const journal = (r["journal"] as Record<string, unknown>) || {};
-            const trade = (r["trade"] as Record<string, unknown>) || {};
-            const journalId = String(r["journal_id"] || "");
-            const tradeId = String(r["trade_id"] || "");
-            const day = String(r["TradeDay"] || "");
-            const matchStatus = String(journal["MatchStatus"] || "").trim().toLowerCase();
-            const key = `${journalId}|${tradeId}|${day}`;
-            return (
-              <div key={`${key}|${i}`} className="rounded border border-white/10 bg-white/5 p-3 text-xs">
-                <div className="grid grid-cols-2 gap-2 md:grid-cols-6">
-                  <span>{day}</span>
-                  <span>{journalId}</span>
-                  <span>{tradeId}</span>
-                  <span>
-                    {String(journal["Direction"] || "")} / {String(journal["Size"] || "")}
-                    <span className={`ml-2 rounded border px-1 py-0.5 text-[10px] ${matchStatus === "needs_reconfirm" ? "border-amber-300/40 text-amber-200" : "border-emerald-300/40 text-emerald-200"}`}>
-                      {matchStatus || "unknown"}
-                    </span>
-                  </span>
-                  <span>{String(trade["Type"] || "")} / {String(trade["Size"] || "")}</span>
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => reconfirmOne(r)}
-                      disabled={reconfirmingKey === key || matchStatus !== "needs_reconfirm"}
-                      className="rounded border border-emerald-300/40 px-2 py-1 text-[11px] text-emerald-200 disabled:opacity-60"
-                    >
-                      {reconfirmingKey === key ? "Reconfirming..." : "Reconfirm"}
-                    </button>
-                    <button
-                      onClick={() => unlinkOne(r)}
-                      disabled={unlinkingKey === key}
-                      className="rounded border border-red-300/40 px-2 py-1 text-[11px] text-red-200 disabled:opacity-60"
-                    >
-                      {unlinkingKey === key ? "Unlinking..." : "Unlink"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-          {!activeLinks.length ? <p className="text-xs text-slate-500">No loaded links.</p> : null}
-        </div>
-      </Card>
-
-      <Card title="Step 3: Commit to Performance and Persist Matches">
+      <Card title="Step 3: Persist Matches">
         <div className="space-y-2 text-xs text-slate-300">
+          <p>Commit mode: <span className="text-white">link-only (no performance merge)</span></p>
           <p>Parsed trades to commit: <span className="text-white">{parsedTrades.length}</span></p>
           <p>Match links to persist: <span className="text-white">{links.length}</span></p>
           <p>
             Gate:{" "}
             <span className={(preview?.can_continue ?? false) ? "text-emerald-300" : "text-red-300"}>
-              {(preview?.can_continue ?? false) ? "open" : "blocked (fix Step 1 raw data)"}
+              {(preview?.can_continue ?? false) ? "open" : "blocked (no trades loaded)"}
             </span>
           </p>
           <button
@@ -547,7 +452,7 @@ export default function MatchingPage() {
             disabled={busyCommit || !(preview?.can_continue ?? false) || links.length === 0}
             className="rounded bg-accent px-4 py-2 text-sm text-white disabled:opacity-60"
           >
-            {busyCommit ? "Committing..." : "Commit Parsed Trades + Matches"}
+            {busyCommit ? "Persisting..." : "Persist Match Links"}
           </button>
         </div>
       </Card>

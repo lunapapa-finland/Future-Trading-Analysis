@@ -79,7 +79,7 @@ export default function PortfolioPage() {
   const series = data?.series || [];
 
   return (
-    <AppShell active="/system">
+    <AppShell active="/portfolio">
       <div className="space-y-4">
         <div className="flex flex-col gap-1">
           <p className="text-sm uppercase tracking-[0.2em] text-accent">Portfolio</p>

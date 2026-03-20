@@ -2,7 +2,6 @@ import base64
 import hashlib
 import hmac
 import json
-import time
 
 import pytest
 
@@ -13,8 +12,8 @@ def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode("utf-8").rstrip("=")
 
 
-def _signed_session_token(secret: str, exp: int) -> str:
-    payload = {"v": 1, "sub": "test-user", "iat": int(time.time()), "exp": exp, "n": "abc123"}
+def _signed_session_token(secret: str) -> str:
+    payload = {"v": 1, "sub": "test-user", "iat": 0, "n": "abc123"}
     payload_b64 = _b64url(json.dumps(payload).encode("utf-8"))
     sig = hmac.new(secret.encode("utf-8"), payload_b64.encode("utf-8"), hashlib.sha256).hexdigest()
     return f"v1.{payload_b64}.{sig}"
@@ -44,14 +43,14 @@ def test_api_accepts_basic_auth(auth_client):
 
 
 def test_api_accepts_valid_signed_session_cookie(auth_client):
-    token = _signed_session_token(secret="test-session-secret", exp=int(time.time()) + 3600)
+    token = _signed_session_token(secret="test-session-secret")
     auth_client.set_cookie(key="fta_session", value=token, domain="localhost")
     resp = auth_client.get("/api/config")
     assert resp.status_code == 200
 
 
-def test_api_rejects_expired_signed_session_cookie(auth_client):
-    token = _signed_session_token(secret="test-session-secret", exp=int(time.time()) - 10)
+def test_api_rejects_invalid_signature_signed_session_cookie(auth_client):
+    token = _signed_session_token(secret="wrong-secret")
     auth_client.set_cookie(key="fta_session", value=token, domain="localhost")
     resp = auth_client.get("/api/config")
     assert resp.status_code == 401

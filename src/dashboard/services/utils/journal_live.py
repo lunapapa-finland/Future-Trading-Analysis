@@ -416,6 +416,57 @@ def list_active_matches(start: str | None = None, end: str | None = None) -> lis
     return out.to_dict(orient="records")
 
 
+def delete_live_journal_row(journal_id: str, *, actor: str = "api:/journal/live/delete") -> dict[str, int]:
+    j_id = _normalize_text(journal_id)
+    if not j_id:
+        raise ValueError("journal_id is required")
+    now_iso = _now_local_iso()
+
+    with advisory_file_lock(JOURNAL_MATCHES_CSV):
+        matches = load_journal_matches()
+        if not matches.empty:
+            active = matches[
+                (matches["journal_id"].astype(str) == j_id)
+                & (matches["Status"].astype(str).str.strip().str.lower() == "active")
+            ]
+            if not active.empty:
+                raise ValueError("journal has active match links; unlink first before delete")
+
+    with advisory_file_lock(JOURNAL_LIVE_CSV):
+        journal = load_journal_live()
+        if journal.empty:
+            raise ValueError("journal row not found")
+        mask = journal["journal_id"].astype(str) == j_id
+        if not mask.any():
+            raise ValueError("journal row not found")
+        status = _normalize_text(journal.loc[mask, "MatchStatus"].iloc[0]).lower() or "unmatched"
+        if status not in {"initial", "unmatched", "needs_reconfirm"}:
+            raise ValueError("journal delete is restricted to initial/unmatched or needs_reconfirm status")
+        deleted = int(mask.sum())
+        out_journal = journal.loc[~mask].copy()
+        atomic_write_csv(_ensure_journal_schema(out_journal), JOURNAL_LIVE_CSV)
+
+    deleted_adjustments = 0
+    with advisory_file_lock(JOURNAL_ADJUSTMENTS_CSV):
+        adjustments = load_journal_adjustments()
+        if not adjustments.empty:
+            amask = adjustments["journal_id"].astype(str) == j_id
+            deleted_adjustments = int(amask.sum())
+            out_adj = adjustments.loc[~amask].copy()
+            atomic_write_csv(_ensure_adjustment_schema(out_adj), JOURNAL_ADJUSTMENTS_CSV)
+
+    append_audit_event(
+        "live_journal_deleted",
+        {
+            "journal_id": j_id,
+            "deleted": deleted,
+            "deleted_adjustments": deleted_adjustments,
+        },
+        actor=actor,
+    )
+    return {"deleted": deleted, "deleted_adjustments": deleted_adjustments}
+
+
 def upsert_live_journal_rows(rows: list[dict[str, Any]], *, actor: str = "api:/journal/live") -> dict[str, int]:
     if not isinstance(rows, list):
         raise ValueError("rows must be an array")
@@ -423,8 +474,6 @@ def upsert_live_journal_rows(rows: list[dict[str, Any]], *, actor: str = "api:/j
     updated = 0
     changed_ids: list[str] = []
     now_iso = _now_local_iso()
-    critical_fields = ["TradeDay", "Direction", "Size", "EnteredAt", "ExitedAt", "EntryPrice", "ExitPrice", "ContractName"]
-    rematch_required_ids: set[str] = set()
     point_values = _load_point_values()
 
     with advisory_file_lock(JOURNAL_LIVE_CSV):
@@ -541,10 +590,8 @@ def upsert_live_journal_rows(rows: list[dict[str, Any]], *, actor: str = "api:/j
                 raise ValueError(f"missing required fields: {', '.join(missing)}")
 
             if existing:
-                changed_critical = any(_normalize_text(existing.get(f, "")) != _normalize_text(next_row.get(f, "")) for f in critical_fields)
-                if changed_critical and journal_id in active_journal_ids:
-                    next_row["MatchStatus"] = "needs_reconfirm"
-                    rematch_required_ids.add(journal_id)
+                if journal_id in active_journal_ids:
+                    raise ValueError("journal is linked to an active trade; unlink first before editing")
 
             if journal_id in by_id:
                 updated += 1
@@ -567,7 +614,7 @@ def upsert_live_journal_rows(rows: list[dict[str, Any]], *, actor: str = "api:/j
             "inserted": inserted,
             "updated": updated,
             "journal_ids": changed_ids[:200],
-            "needs_reconfirm_journal_ids": sorted(rematch_required_ids),
+            "needs_reconfirm_journal_ids": [],
             "inactivated_matches": 0,
         },
         actor=actor,

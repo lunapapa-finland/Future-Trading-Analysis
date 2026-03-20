@@ -237,7 +237,48 @@ def test_matching_confirm_and_unlink(tmp_path, monkeypatch):
     assert unlink.get_json()["inactivated"] == 1
 
 
-def test_critical_edit_marks_needs_reconfirm_and_keeps_active_match(tmp_path, monkeypatch):
+def test_live_journal_delete_allowed_for_unmatched(tmp_path, monkeypatch):
+    _patch_journal_storage(monkeypatch, tmp_path)
+    client = app.test_client()
+
+    create = client.post("/api/journal/live", json={"rows": [_valid_live_row()]})
+    assert create.status_code == 200
+    row = client.get("/api/journal/live?start=2026-03-16&end=2026-03-16").get_json()["rows"][0]
+    journal_id = row["journal_id"]
+
+    deleted = client.delete("/api/journal/live", json={"journal_id": journal_id})
+    assert deleted.status_code == 200
+    body = deleted.get_json()
+    assert body["deleted"] == 1
+    assert body["deleted_adjustments"] == 1
+
+    listed = client.get("/api/journal/live?start=2026-03-16&end=2026-03-16").get_json()["rows"]
+    assert listed == []
+
+
+def test_live_journal_delete_rejects_active_matched(tmp_path, monkeypatch):
+    perf_csv = tmp_path / "Performance_sum.csv"
+    _seed_perf_csv(perf_csv)
+    monkeypatch.setattr(routes, "PERFORMANCE_CSV", str(perf_csv))
+    _patch_journal_storage(monkeypatch, tmp_path)
+    client = app.test_client()
+
+    create = client.post("/api/journal/live", json={"rows": [_valid_live_row()]})
+    assert create.status_code == 200
+    journal_id = client.get("/api/journal/live?start=2026-03-16&end=2026-03-16").get_json()["rows"][0]["journal_id"]
+    out = journal_live.confirm_matches(
+        "2026-03-16",
+        [{"journal_id": journal_id, "trade_id": "t1", "is_primary": True}],
+        replace_for_journal=True,
+    )
+    assert out["inserted"] == 1
+
+    deleted = client.delete("/api/journal/live", json={"journal_id": journal_id})
+    assert deleted.status_code == 400
+    assert "unlink first" in deleted.get_json()["error"]
+
+
+def test_edit_rejects_when_journal_has_active_match(tmp_path, monkeypatch):
     perf_csv = tmp_path / "Performance_sum.csv"
     _seed_perf_csv(perf_csv)
     monkeypatch.setattr(routes, "PERFORMANCE_CSV", str(perf_csv))
@@ -267,12 +308,11 @@ def test_critical_edit_marks_needs_reconfirm_and_keeps_active_match(tmp_path, mo
             ]
         },
     )
-    assert edit.status_code == 200
+    assert edit.status_code == 400
+    assert "unlink first before editing" in edit.get_json()["error"]
 
     links_after = client.get("/api/journal/matching/links?start=2026-03-16&end=2026-03-16").get_json()["rows"]
     assert len(links_after) == 1
-    row = client.get("/api/journal/live?start=2026-03-16&end=2026-03-16").get_json()["rows"][0]
-    assert row["MatchStatus"] == "needs_reconfirm"
 
 
 def test_analysis_excludes_unmatched_by_default_when_matches_exist(tmp_path, monkeypatch):
@@ -372,7 +412,7 @@ def test_combined_performance_projects_matched_live_journal_labels(tmp_path, mon
     assert t1.get("TradeIntent") == "Swing"
 
 
-def test_matching_parse_preview_endpoint_returns_preview_and_blocks_on_unbalanced_qty(tmp_path, monkeypatch):
+def test_trade_upload_parse_preview_endpoint_returns_preview_and_blocks_on_unbalanced_qty(tmp_path, monkeypatch):
     temp_perf = tmp_path / "temp_performance"
     temp_perf.mkdir(parents=True, exist_ok=True)
 
@@ -382,7 +422,7 @@ def test_matching_parse_preview_endpoint_returns_preview_and_blocks_on_unbalance
     data = {
         "files": (io.BytesIO(b"Date/Time,Symbol,Price,Quantity\n20260318;152815,MES,5000,1\n"), "upload.csv"),
     }
-    resp = client.post("/api/journal/matching/parse-preview", data=data, content_type="multipart/form-data")
+    resp = client.post("/api/trade-upload/parse-preview", data=data, content_type="multipart/form-data")
     assert resp.status_code == 200
     body = resp.get_json()
     assert body["ok"] is True
@@ -392,7 +432,7 @@ def test_matching_parse_preview_endpoint_returns_preview_and_blocks_on_unbalance
     assert len(body["unparseable_rows"]) >= 1
 
 
-def test_matching_parse_preview_endpoint_archive_flag(tmp_path, monkeypatch):
+def test_trade_upload_parse_preview_endpoint_archive_flag(tmp_path, monkeypatch):
     temp_perf = tmp_path / "temp_performance"
     temp_perf.mkdir(parents=True, exist_ok=True)
 
@@ -403,7 +443,71 @@ def test_matching_parse_preview_endpoint_archive_flag(tmp_path, monkeypatch):
         "files": (io.BytesIO(b"Date/Time,Symbol,Price,Quantity\n20260318;152815,MES,5000,1\n"), "upload.csv"),
         "archive_raw": "true",
     }
-    resp = client.post("/api/journal/matching/parse-preview", data=data, content_type="multipart/form-data")
+    resp = client.post("/api/trade-upload/parse-preview", data=data, content_type="multipart/form-data")
     assert resp.status_code == 200
     body = resp.get_json()
     assert len(body.get("archived_files", [])) == 1
+
+
+def test_matching_relink_preview_loads_from_performance_sum(tmp_path, monkeypatch):
+    perf_csv = tmp_path / "Performance_sum.csv"
+    _seed_perf_csv(perf_csv)
+    monkeypatch.setattr(routes, "PERFORMANCE_CSV", str(perf_csv))
+    _patch_journal_storage(monkeypatch, tmp_path)
+    client = app.test_client()
+
+    create = client.post("/api/journal/live", json={"rows": [_valid_live_row()]})
+    assert create.status_code == 200
+
+    resp = client.get("/api/journal/matching/relink-preview?start=2026-03-16&end=2026-03-16")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["ok"] is True
+    assert len(body["parsed_trades"]) == 2
+    assert len(body["journal_rows"]) == 1
+    assert body["can_continue"] is True
+
+
+def test_trade_upload_commit_merges_performance(tmp_path, monkeypatch):
+    perf_csv = tmp_path / "Performance_sum.csv"
+    _seed_perf_csv(perf_csv)
+    monkeypatch.setattr(routes, "PERFORMANCE_CSV", str(perf_csv))
+    client = app.test_client()
+
+    commit = client.post(
+        "/api/trade-upload/commit",
+        json={
+            "parsed_trades": _commit_payload_with_ids(),
+        },
+    )
+    assert commit.status_code == 200
+    body = commit.get_json()
+    assert body["ok"] is True
+    assert body["merged"] is True
+
+
+def test_matching_commit_link_only_skips_performance_merge(tmp_path, monkeypatch):
+    perf_csv = tmp_path / "Performance_sum.csv"
+    _seed_perf_csv(perf_csv)
+    monkeypatch.setattr(routes, "PERFORMANCE_CSV", str(perf_csv))
+    _patch_journal_storage(monkeypatch, tmp_path)
+    client = app.test_client()
+
+    create = client.post("/api/journal/live", json={"rows": [_valid_live_row()]})
+    assert create.status_code == 200
+    journal_id = client.get("/api/journal/live?start=2026-03-16&end=2026-03-16").get_json()["rows"][0]["journal_id"]
+
+    commit = client.post(
+        "/api/journal/matching/commit",
+        json={
+            "parsed_trades": _commit_payload_with_ids(),
+            "links": [{"journal_id": journal_id, "preview_trade_id": "t1", "is_primary": True}],
+            "replace_for_journal": True,
+        },
+    )
+    assert commit.status_code == 200
+    body = commit.get_json()
+    assert body["ok"] is True
+    assert body["merged"] is False
+    assert body["rows_delta"] == 0
+    assert body["matches_inserted"] == 1

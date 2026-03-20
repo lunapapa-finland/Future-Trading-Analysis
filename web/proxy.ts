@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 const SESSION_COOKIE = "fta_session";
-const PROTECTED_PATHS = ["/guide", "/trading", "/analysis", "/portfolio", "/config"];
+const PROTECTED_PATHS = ["/guide", "/live", "/upload", "/matching", "/trading", "/analysis", "/portfolio", "/config"];
 
 const encoder = new TextEncoder();
 
@@ -24,12 +24,12 @@ async function signHmacSHA256(message: string, secret: string): Promise<string> 
   return hex(sig);
 }
 
-function decodePayload(payloadB64: string): { exp?: number } | null {
+function decodePayload(payloadB64: string): Record<string, unknown> | null {
   try {
     const normalized = payloadB64.replace(/-/g, "+").replace(/_/g, "/");
     const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
     const json = atob(padded);
-    return JSON.parse(json) as { exp?: number };
+    return JSON.parse(json) as Record<string, unknown>;
   } catch {
     return null;
   }
@@ -45,9 +45,7 @@ async function hasValidSessionToken(rawToken: string | undefined): Promise<boole
   if (!secret) return false;
   const expectedSig = await signHmacSHA256(payloadB64, secret);
   if (sig !== expectedSig) return false;
-  const payload = decodePayload(payloadB64);
-  if (!payload?.exp || typeof payload.exp !== "number") return false;
-  return payload.exp > Math.floor(Date.now() / 1000);
+  return !!decodePayload(payloadB64);
 }
 
 export async function proxy(request: NextRequest) {

@@ -16,12 +16,11 @@ function makeProxyRequest(pathname: string, cookieValue?: string) {
   } as any;
 }
 
-function signedToken(secret: string, exp: number): string {
+function signedToken(secret: string): string {
   const payload = {
     v: 1,
     sub: "test-user",
-    iat: Math.floor(Date.now() / 1000),
-    exp,
+    iat: 0,
     n: "nonce"
   };
   const payloadB64 = Buffer.from(JSON.stringify(payload)).toString("base64url");
@@ -67,7 +66,7 @@ describe("auth flow", () => {
   });
 
   it("allows protected route when session token is valid", async () => {
-    const token = signedToken("test-session-secret", Math.floor(Date.now() / 1000) + 3600);
+    const token = signedToken("test-session-secret");
     const res = await proxy(makeProxyRequest("/analysis", token));
     expect(res.status).toBe(200);
     expect(res.headers.get("location")).toBeNull();

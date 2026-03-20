@@ -126,6 +126,8 @@ REQUIRED_TAXONOMY: dict[str, list[str]] = {
     "day_plan": ["Bias", "ExpectedDayType"],
 }
 
+DEFAULT_TAXONOMY_TEMPLATE = Path(__file__).resolve().parents[2] / "config" / "default_taxonomy.csv"
+
 
 def ensure_required_csvs() -> list[str]:
     created: list[str] = []
@@ -140,7 +142,31 @@ def ensure_required_csvs() -> list[str]:
         created.append(str(path))
     if created:
         log.info("Initialized missing CSV files: %s", ", ".join(created))
+    _ensure_taxonomy_seed_content()
     return created
+
+
+def _ensure_taxonomy_seed_content() -> None:
+    target = Path(TAXONOMY_CSV)
+    if not target.exists():
+        return
+    try:
+        df = pd.read_csv(target)
+    except Exception:
+        df = pd.DataFrame()
+    has_rows = not df.empty and "Value" in df.columns and df["Value"].fillna("").astype(str).str.strip().ne("").any()
+    if has_rows:
+        return
+    if not DEFAULT_TAXONOMY_TEMPLATE.exists():
+        log.warning("Default taxonomy template missing at %s; cannot seed %s", DEFAULT_TAXONOMY_TEMPLATE, target)
+        return
+    try:
+        template_df = pd.read_csv(DEFAULT_TAXONOMY_TEMPLATE)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        template_df.to_csv(target, index=False)
+        log.info("Seeded taxonomy CSV from template: %s", target)
+    except Exception as exc:
+        log.warning("Failed seeding taxonomy CSV %s from template: %s", target, exc)
 
 
 def validate_unified_taxonomy_or_raise() -> None:

@@ -8,10 +8,12 @@ import clsx from "clsx";
 const navLinks = [
   { href: "/guide", label: "Trading Guide" },
   { href: "/live", label: "Trading Live" },
+  { href: "/upload", label: "Trade Upload" },
   { href: "/matching", label: "Trading Match" },
   { href: "/trading", label: "Trading Details" },
   { href: "/analysis", label: "Trading Analysis" },
-  { href: "/system", label: "System Config" }
+  { href: "/portfolio", label: "Portfolio" },
+  { href: "/config", label: "Runtime Config" }
 ];
 
 export function AppShell({
@@ -29,14 +31,18 @@ export function AppShell({
       ? "Trading Guide"
       : active === "/live"
       ? "Trading Live"
+      : active === "/upload"
+      ? "Trade Upload"
       : active === "/matching"
         ? "Trade Matching"
         : active === "/trading"
           ? "Trading Details"
-          : active === "/analysis"
+      : active === "/analysis"
           ? "Trading Analysis"
-          : active === "/system"
-            ? "System Config"
+          : active === "/portfolio"
+            ? "Portfolio"
+            : active === "/config"
+              ? "Runtime Config"
             : "Trade Dashboard";
   const router = useRouter();
 

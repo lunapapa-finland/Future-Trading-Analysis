@@ -147,4 +147,5 @@ export interface LiveJournalRow {
   MatchStatus?: string;
   adjustments_mode?: "append" | "replace";
   adjustments?: JournalAdjustment[];
+  matches?: Array<Record<string, unknown>>;
 }

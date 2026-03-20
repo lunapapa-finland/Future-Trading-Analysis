@@ -5,7 +5,6 @@ import json
 import base64
 import hmac
 import hashlib
-import time
 from logging.handlers import TimedRotatingFileHandler
 from flask import Flask, request, make_response
 from dotenv import load_dotenv
@@ -63,10 +62,7 @@ def _verify_session_cookie(token: str) -> bool:
         payload = json.loads(_b64url_decode(payload_b64).decode("utf-8"))
     except Exception:
         return False
-    exp = int(payload.get("exp", 0))
-    if exp <= 0:
-        return False
-    return int(exp) > int(time.time())
+    return isinstance(payload, dict) and bool(payload)
 
 
 def _is_authorized() -> bool:
@@ -99,7 +95,7 @@ def _allow_health_and_preflight():
         resp = make_response("", 200)
         resp.headers["Access-Control-Allow-Origin"] = allowed_origin
         resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-        resp.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
+        resp.headers["Access-Control-Allow-Methods"] = "GET,POST,DELETE,OPTIONS"
         resp.headers["Access-Control-Allow-Credentials"] = "true"
         resp.headers["Vary"] = "Origin"
         return resp

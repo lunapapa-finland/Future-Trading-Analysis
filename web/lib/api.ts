@@ -266,7 +266,20 @@ export async function postJournalLive(payload: { rows: LiveJournalRow[] }): Prom
   return handleResponse(res);
 }
 
-export async function postMatchingParsePreview(
+export async function deleteJournalLive(payload: { journal_id: string }): Promise<{ ok: boolean; deleted: number; deleted_adjustments: number }> {
+  const url = new URL("/api/journal/live", API_BASE);
+  const res = await fetch(
+    url.toString(),
+    withAuth({
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload ?? {}),
+    })
+  );
+  return handleResponse(res);
+}
+
+export async function postTradeUploadParsePreview(
   files: File[],
   options?: { archiveRaw?: boolean }
 ): Promise<{
@@ -277,12 +290,10 @@ export async function postMatchingParsePreview(
   unparseable_rows: Array<Record<string, unknown>>;
   parsed_trades: Array<Record<string, unknown>>;
   parsed_range: { start: string; end: string; days: string[] };
-  journal_rows: LiveJournalRow[];
-  suggestions: Array<Record<string, unknown>>;
   archived_files?: string[];
   removed_files?: string[];
 }> {
-  const url = new URL("/api/journal/matching/parse-preview", API_BASE);
+  const url = new URL("/api/trade-upload/parse-preview", API_BASE);
   const form = new FormData();
   files.forEach((f) => form.append("files", f));
   form.append("archive_raw", options?.archiveRaw ? "true" : "false");
@@ -291,6 +302,27 @@ export async function postMatchingParsePreview(
     withAuth({
       method: "POST",
       body: form,
+    })
+  );
+  return handleResponse(res);
+}
+
+export async function postTradeUploadCommit(payload: {
+  parsed_trades: Array<Record<string, unknown>>;
+}): Promise<{
+  ok: boolean;
+  merged: boolean;
+  rows_before: number;
+  rows_after: number;
+  rows_delta: number;
+}> {
+  const url = new URL("/api/trade-upload/commit", API_BASE);
+  const res = await fetch(
+    url.toString(),
+    withAuth({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload ?? { parsed_trades: [] }),
     })
   );
   return handleResponse(res);
@@ -318,6 +350,24 @@ export async function postMatchingCommit(payload: {
       body: JSON.stringify(payload ?? { parsed_trades: [], links: [] }),
     })
   );
+  return handleResponse(res);
+}
+
+export async function getMatchingRelinkPreview(params: { start: string; end: string }): Promise<{
+  ok: boolean;
+  can_continue: boolean;
+  hard_blocked: boolean;
+  parse_logs: Array<Record<string, unknown>>;
+  unparseable_rows: Array<Record<string, unknown>>;
+  parsed_trades: Array<Record<string, unknown>>;
+  parsed_range: { start: string; end: string; days: string[] };
+  journal_rows: LiveJournalRow[];
+  suggestions: Array<Record<string, unknown>>;
+}> {
+  const url = new URL("/api/journal/matching/relink-preview", API_BASE);
+  url.searchParams.set("start", params.start);
+  url.searchParams.set("end", params.end);
+  const res = await fetch(url.toString(), withAuth({ cache: "no-store" }));
   return handleResponse(res);
 }
 
@@ -355,6 +405,39 @@ export async function postMatchingReconfirm(payload: {
   trade_day?: string;
 }): Promise<{ ok: boolean; updated: number }> {
   const url = new URL("/api/journal/matching/reconfirm", API_BASE);
+  const res = await fetch(
+    url.toString(),
+    withAuth({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload ?? {}),
+    })
+  );
+  return handleResponse(res);
+}
+
+export async function getDataFetchStatus(): Promise<{
+  ok: boolean;
+  rows: Array<{
+    symbol: string;
+    data_path: string;
+    exists: boolean;
+    rows: number;
+    last_date: string;
+    status: string;
+    error?: string;
+  }>;
+}> {
+  const url = new URL("/api/data/fetch/status", API_BASE);
+  const res = await fetch(url.toString(), withAuth({ cache: "no-store" }));
+  return handleResponse(res);
+}
+
+export async function postDataFetchRun(payload?: { max_retries?: number; retry_delay?: number }): Promise<{
+  ok: boolean;
+  summary: Record<string, unknown>;
+}> {
+  const url = new URL("/api/data/fetch/run", API_BASE);
   const res = await fetch(
     url.toString(),
     withAuth({
