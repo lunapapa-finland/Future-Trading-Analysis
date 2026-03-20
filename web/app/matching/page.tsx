@@ -25,6 +25,13 @@ type LinkRow = {
   is_primary?: boolean;
 };
 
+function showValue(v: unknown): string {
+  if (v === null || v === undefined) return "-";
+  if (typeof v === "boolean") return v ? "Yes" : "No";
+  const s = String(v).trim();
+  return s ? s : "-";
+}
+
 export default function MatchingPage() {
   const now = new Date();
   const thisDay = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
@@ -283,6 +290,7 @@ export default function MatchingPage() {
                 const locked = existingMatchByJournalId.get(jid);
                 const key = `${jid}|${locked?.trade_id || ""}|${locked?.trade_day || ""}`;
                 const status = String(r.MatchStatus || "").trim().toLowerCase();
+                const adj = Array.isArray(r.adjustments) ? r.adjustments : [];
                 return (
                   <div key={jid} className="space-y-1">
                     <button
@@ -295,12 +303,56 @@ export default function MatchingPage() {
                       className={`w-full rounded border p-3 text-left text-xs ${selected ? "border-accent bg-accent/10" : "border-white/10 bg-white/5"}`}
                     >
                       <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-                        <span>{String(r.TradeDay || "")}</span>
-                        <span>Seq {String(r.SeqInDay || "")}</span>
-                        <span>{String(r.Direction || "")}</span>
-                        <span>Size {String(r.Size || "")}</span>
+                        <span>Day {showValue(r.TradeDay)}</span>
+                        <span>Seq {showValue(r.SeqInDay)}</span>
+                        <span>{showValue(r.Direction)}</span>
+                        <span>Size {showValue(r.Size)}</span>
                       </div>
-                      <div className="mt-1 text-slate-300">Setup: {String(r.Setup || "")}</div>
+                      <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
+                        <span>Contract {showValue(r.ContractName)}</span>
+                        <span>Intent {showValue(r.TradeIntent)}</span>
+                        <span>Phase {showValue(r.Phase)}</span>
+                        <span>Context {showValue(r.Context)}</span>
+                        <span>Setup {showValue(r.Setup)}</span>
+                        <span>Signal {showValue(r.SignalBar)}</span>
+                        <span>Max Loss ${showValue(r.MaxLossUSD)}</span>
+                        <span>Status {showValue(r.MatchStatus)}</span>
+                      </div>
+                      <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
+                        <span>Entry Px {showValue(r.EntryPrice)}</span>
+                        <span>TP Px {showValue(r.TakeProfitPrice)}</span>
+                        <span>SL Px {showValue(r.StopLossPrice)}</span>
+                        <span>Exit Px {showValue(r.ExitPrice)}</span>
+                        <span>Entered {showValue(r.EnteredAt)}</span>
+                        <span>Exited {showValue(r.ExitedAt)}</span>
+                        <span>Exp Risk ${showValue(r.PotentialRiskUSD)}</span>
+                        <span>Exp Reward ${showValue(r.PotentialRewardUSD)}</span>
+                      </div>
+                      <div className="mt-1 grid grid-cols-2 gap-2 md:grid-cols-4">
+                        <span>Expected R:R {showValue(r.WinLossRatio)}</span>
+                        <span>Rule {showValue(r.RuleStatus)}</span>
+                        <span className="md:col-span-2">Notes {showValue(r.Notes)}</span>
+                      </div>
+                      <div className="mt-2 rounded border border-white/10 bg-surface/40 p-2">
+                        <p className="mb-1 text-[10px] uppercase tracking-[0.1em] text-slate-400">Execution Detail Rows</p>
+                        <div className="space-y-1">
+                          {adj.map((a, i) => (
+                            <div key={String(a.adjustment_id || i)} className="grid grid-cols-2 gap-2 text-[11px] text-slate-300 md:grid-cols-5">
+                              <span>Leg {showValue(a.LegIndex)}</span>
+                              <span>Qty {showValue(a.Qty)}</span>
+                              <span>Entry {showValue(a.EntryPrice)}</span>
+                              <span>TP {showValue(a.TakeProfitPrice)}</span>
+                              <span>SL {showValue(a.StopLossPrice)}</span>
+                              <span>Exit {showValue(a.ExitPrice)}</span>
+                              <span>Entered {showValue(a.EnteredAt)}</span>
+                              <span>Exited {showValue(a.ExitedAt)}</span>
+                              <span>Exp Risk ${showValue(a.RiskUSD)}</span>
+                              <span>Exp Reward ${showValue(a.RewardUSD)}</span>
+                            </div>
+                          ))}
+                          {!adj.length ? <p className="text-[11px] text-slate-500">No execution detail rows.</p> : null}
+                        </div>
+                      </div>
                       {locked ? (
                         <div className="mt-1 text-[11px] text-amber-300">
                           Locked: linked {locked.trade_day ? `on ${locked.trade_day}` : ""} {locked.trade_id ? `to ${locked.trade_id}` : ""}

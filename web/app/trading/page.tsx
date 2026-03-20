@@ -601,6 +601,9 @@ export default function TradingPage() {
                       <div className="grid grid-cols-[96px_1fr] gap-2 py-0.5"><span className="text-slate-400">#</span><span>{idx + 1}</span></div>
                       <div className="grid grid-cols-[96px_1fr] gap-2 py-0.5"><span className="text-slate-400">Entry</span><span className="break-words">{String(row["EnteredAt"] || row["TradeDay"] || "")}</span></div>
                       <div className="grid grid-cols-[96px_1fr] gap-2 py-0.5"><span className="text-slate-400">Exit</span><span className="break-words">{String(row["ExitedAt"] || "")}</span></div>
+                      <div className="grid grid-cols-[96px_1fr] gap-2 py-0.5"><span className="text-slate-400">EntryPrice</span><span>{Number(row["EntryPrice"] || 0).toFixed(4)}</span></div>
+                      <div className="grid grid-cols-[96px_1fr] gap-2 py-0.5"><span className="text-slate-400">ExitPrice</span><span>{Number(row["ExitPrice"] || 0).toFixed(4)}</span></div>
+                      <div className="grid grid-cols-[96px_1fr] gap-2 py-0.5"><span className="text-slate-400">Fees</span><span>{Number(row["Fees"] || 0).toFixed(4)}</span></div>
                       <div className="grid grid-cols-[96px_1fr] gap-2 py-0.5"><span className="text-slate-400">PnL(Net)</span><span className="text-emerald-300">{Number(row["PnL(Net)"] || 0).toFixed(4)}</span></div>
                       <div className="grid grid-cols-[96px_1fr] gap-2 py-0.5"><span className="text-slate-400">Size</span><span>{sizeVal}</span></div>
                       <div className="grid grid-cols-[96px_1fr] gap-2 py-0.5"><span className="text-slate-400">Direction</span><span>{direction}</span></div>
@@ -627,8 +630,11 @@ export default function TradingPage() {
                 <table className="w-full table-fixed divide-y divide-white/5 text-sm text-slate-200">
                   <colgroup>
                     <col className="w-[40px]" />
-                    <col className="w-[140px]" />
-                    <col className="w-[140px]" />
+                    <col className="w-[132px]" />
+                    <col className="w-[132px]" />
+                    <col className="w-[88px]" />
+                    <col className="w-[88px]" />
+                    <col className="w-[88px]" />
                     <col className="w-[96px]" />
                     <col className="w-[64px]" />
                     <col className="w-[88px]" />
@@ -640,6 +646,9 @@ export default function TradingPage() {
                       <th className="px-1 py-1 text-left">#</th>
                       <th className="px-1 py-1 text-left">Entry</th>
                       <th className="px-1 py-1 text-left">Exit</th>
+                      <th className="px-1 py-1 text-right">EntryPrice</th>
+                      <th className="px-1 py-1 text-right">ExitPrice</th>
+                      <th className="px-1 py-1 text-right">Fees</th>
                       <th className="px-1 py-1 text-right">PnL(Net)</th>
                       <th className="px-1 py-1 text-right">Size</th>
                       <th className="px-1 py-1 text-left">Direction</th>
@@ -673,6 +682,9 @@ export default function TradingPage() {
                               </span>
                             </span>
                           </td>
+                          <td className="px-1 py-1 text-right align-middle">{Number(row["EntryPrice"] || 0).toFixed(4)}</td>
+                          <td className="px-1 py-1 text-right align-middle">{Number(row["ExitPrice"] || 0).toFixed(4)}</td>
+                          <td className="px-1 py-1 text-right align-middle">{Number(row["Fees"] || 0).toFixed(4)}</td>
                           <td className="px-1 py-1 text-right text-emerald-300 align-middle">
                             {Number(row["PnL(Net)"] || 0).toFixed(4)}
                           </td>

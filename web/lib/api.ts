@@ -289,6 +289,7 @@ export async function postTradeUploadParsePreview(
   parse_logs: Array<Record<string, unknown>>;
   unparseable_rows: Array<Record<string, unknown>>;
   parsed_trades: Array<Record<string, unknown>>;
+  execution_pool: Array<Record<string, unknown>>;
   parsed_range: { start: string; end: string; days: string[] };
   archived_files?: string[];
   removed_files?: string[];
@@ -317,6 +318,34 @@ export async function postTradeUploadCommit(payload: {
   rows_delta: number;
 }> {
   const url = new URL("/api/trade-upload/commit", API_BASE);
+  const res = await fetch(
+    url.toString(),
+    withAuth({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload ?? { parsed_trades: [] }),
+    })
+  );
+  return handleResponse(res);
+}
+
+export async function postTradeUploadReconcilePreview(payload: {
+  parsed_trades: Array<Record<string, unknown>>;
+}): Promise<{
+  ok: boolean;
+  parsed_range: { start: string; end: string; days: string[] };
+  parsed_trades: Array<Record<string, unknown>>;
+  journal_rows: LiveJournalRow[];
+  suggestions: Array<Record<string, unknown>>;
+  summary: {
+    trade_count: number;
+    journal_count: number;
+    suggestion_count: number;
+    recommended_count: number;
+    hard_conflict_count: number;
+  };
+}> {
+  const url = new URL("/api/trade-upload/reconcile-preview", API_BASE);
   const res = await fetch(
     url.toString(),
     withAuth({
