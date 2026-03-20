@@ -65,7 +65,8 @@ async function handleResponse<T>(res: Response): Promise<T> {
     } catch {
       payload = null;
     }
-    const msg = payload?.error || payload?.message || text || res.statusText;
+    const isHtmlError = /^\s*<!doctype html/i.test(text) || /^\s*<html/i.test(text);
+    const msg = payload?.error || payload?.message || (isHtmlError ? `Server error (${res.status}) from ${res.url}` : text || res.statusText);
     throw new ApiError(msg, res.status, payload?.code);
   }
   try {
@@ -132,6 +133,39 @@ export async function getTradingSession(params: { symbol: string; start?: string
   if (params.end) url.searchParams.set("end", params.end);
   const res = await fetch(url.toString(), withAuth({ cache: "no-store" }));
   return handleResponse<TradingSession>(res);
+}
+
+export async function getTradingDefaultDay(params: { symbol: string }): Promise<{ ok: boolean; day: string; source?: string }> {
+  const url = new URL("/api/trading/default-day", API_BASE);
+  url.searchParams.set("symbol", params.symbol);
+  const res = await fetch(url.toString(), withAuth({ cache: "no-store" }));
+  return handleResponse(res);
+}
+
+export async function postTradingLlmPrompt(payload: {
+  symbol: string;
+  start?: string;
+  end?: string;
+  timeframe?: string;
+  show_trades?: boolean;
+  show_vwap?: boolean;
+  show_ema?: boolean;
+  show_bar_count?: boolean;
+  direction_filter?: string;
+  type_filter?: string;
+  size_filter?: string;
+  plan_date?: string;
+}): Promise<{ ok: boolean; markdown: string; context: Record<string, unknown> }> {
+  const url = new URL("/api/trading/llm-prompt", API_BASE);
+  const res = await fetch(
+    url.toString(),
+    withAuth({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload ?? {}),
+    })
+  );
+  return handleResponse(res);
 }
 
 export async function getPortfolio(): Promise<any> {

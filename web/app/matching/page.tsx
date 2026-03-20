@@ -3,6 +3,7 @@
 import { AppShell } from "@/components/layout/app-shell";
 import { Card } from "@/components/ui/card";
 import { getMatchingRelinkPreview, postMatchingCommit, postMatchingReconfirm, postMatchingUnlink } from "@/lib/api";
+import { tradingDateYmd } from "@/lib/trading-date";
 import { LiveJournalRow } from "@/lib/types";
 import { useMemo, useState } from "react";
 
@@ -33,8 +34,7 @@ function showValue(v: unknown): string {
 }
 
 export default function MatchingPage() {
-  const now = new Date();
-  const thisDay = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const thisDay = tradingDateYmd(new Date());
   const [busyCommit, setBusyCommit] = useState(false);
   const [message, setMessage] = useState("");
   const [preview, setPreview] = useState<ParsePreview | null>(null);
@@ -86,6 +86,47 @@ export default function MatchingPage() {
     return out;
   }, [links]);
 
+  const linkCommitSummary = useMemo(() => {
+    const journals = new Set<string>();
+    const trades = new Set<string>();
+    const hardConflictByPair = new Map<string, string[]>();
+    (preview?.suggestions || []).forEach((s) => {
+      const jid = String(s["journal_id"] || "").trim();
+      const tid = String(s["preview_trade_id"] || "").trim();
+      if (!jid || !tid || !Boolean(s["hard_conflict"])) return;
+      const reasons = Array.isArray(s["reasons"]) ? s["reasons"].map((r) => String(r || "")).filter(Boolean) : [];
+      hardConflictByPair.set(`${jid}|${tid}`, reasons);
+    });
+
+    const hardConflicts: Array<{ journal_id: string; preview_trade_id: string; reasons: string[] }> = [];
+    const lockConflicts: Array<{ journal_id: string; trade_id: string; trade_day: string }> = [];
+
+    links.forEach((l) => {
+      const jid = String(l.journal_id || "").trim();
+      const tid = String(l.preview_trade_id || "").trim();
+      if (!jid || !tid) return;
+      journals.add(jid);
+      trades.add(tid);
+
+      const hardReasons = hardConflictByPair.get(`${jid}|${tid}`);
+      if (hardReasons) {
+        hardConflicts.push({ journal_id: jid, preview_trade_id: tid, reasons: hardReasons });
+      }
+      const locked = existingMatchByJournalId.get(jid);
+      if (locked) {
+        lockConflicts.push({ journal_id: jid, trade_id: locked.trade_id, trade_day: locked.trade_day });
+      }
+    });
+
+    return {
+      total_links: links.length,
+      unique_journals: journals.size,
+      unique_trades: trades.size,
+      hard_conflicts: hardConflicts,
+      lock_conflicts: lockConflicts,
+    };
+  }, [links, preview?.suggestions, existingMatchByJournalId]);
+
   const filteredSuggestions = useMemo(
     () =>
       (preview?.suggestions || [])
@@ -99,18 +140,22 @@ export default function MatchingPage() {
     [preview?.suggestions, selectedJournalId]
   );
 
-  async function loadRelinkPreview() {
+  async function loadRelinkPreview(options?: { silent?: boolean }) {
+    const silent = Boolean(options?.silent);
     setLoadingRelinkPreview(true);
-    setMessage("");
+    if (!silent) setMessage("");
     try {
       const resp = await getMatchingRelinkPreview({ start: linkStart, end: linkEnd });
       setPreview(resp);
       setLinks([]);
       setSelectedJournalId("");
       setDragJournalId("");
-      setMessage(`Relink workspace loaded. Trades: ${resp.parsed_trades.length}. Journals: ${resp.journal_rows.length}.`);
+      if (!silent) {
+        setMessage(`Relink workspace loaded. Trades: ${resp.parsed_trades.length}. Journals: ${resp.journal_rows.length}.`);
+      }
     } catch (e) {
-      setMessage(`Relink preview failed: ${(e as Error).message}`);
+      if (!silent) setMessage(`Relink preview failed: ${(e as Error).message}`);
+      else throw e;
     } finally {
       setLoadingRelinkPreview(false);
     }
@@ -152,6 +197,24 @@ export default function MatchingPage() {
       setMessage("Step 3 is blocked. Create at least one journal-trade link in Step 2.");
       return;
     }
+    if (linkCommitSummary.hard_conflicts.length > 0) {
+      setMessage(`Step 3 is blocked. ${linkCommitSummary.hard_conflicts.length} hard-conflict link(s) must be resolved before commit.`);
+      return;
+    }
+    if (linkCommitSummary.lock_conflicts.length > 0) {
+      setMessage(`Step 3 is blocked. ${linkCommitSummary.lock_conflicts.length} locked link(s) still exist. Unlink them first.`);
+      return;
+    }
+    const ok = window.confirm(
+      `Persist ${linkCommitSummary.total_links} link(s)?\n` +
+      `Unique journals: ${linkCommitSummary.unique_journals}\n` +
+      `Target trades: ${linkCommitSummary.unique_trades}\n\n` +
+      "This will write match links and may inactivate previous links for the same journal."
+    );
+    if (!ok) {
+      setMessage("Persist canceled.");
+      return;
+    }
     setBusyCommit(true);
     setMessage("");
     try {
@@ -160,7 +223,15 @@ export default function MatchingPage() {
         links,
         replace_for_journal: true,
       });
-      setMessage(`Matches persisted. Inserted: ${resp.matches_inserted}, inactivated: ${resp.matches_inactivated}.`);
+      setLinks([]);
+      setSelectedJournalId("");
+      setDragJournalId("");
+      try {
+        await loadRelinkPreview({ silent: true });
+        setMessage(`Matches persisted. Inserted: ${resp.matches_inserted}, inactivated: ${resp.matches_inactivated}. Workspace refreshed.`);
+      } catch (refreshErr) {
+        setMessage(`Matches persisted. Inserted: ${resp.matches_inserted}, inactivated: ${resp.matches_inactivated}. Refresh failed: ${(refreshErr as Error).message}`);
+      }
     } catch (e) {
       setMessage(`Commit failed: ${(e as Error).message}`);
     } finally {
@@ -171,24 +242,30 @@ export default function MatchingPage() {
   async function unlinkLockedJournal(row: LiveJournalRow) {
     const journalId = String(row.journal_id || "").trim();
     const matches = Array.isArray(row.matches) ? row.matches : [];
-    const first = (matches[0] as Record<string, unknown>) || {};
-    const tradeId = String(first["trade_id"] || "").trim();
-    const day = String(first["TradeDay"] || row.TradeDay || "").trim();
+    const active = (matches.find((m) => String((m as Record<string, unknown>)["Status"] || "").trim().toLowerCase() === "active") ||
+      matches[0] ||
+      {}) as Record<string, unknown>;
+    const tradeId = String(active["trade_id"] || "").trim();
+    const day = String(active["TradeDay"] || row.TradeDay || "").trim();
     if (!journalId) return;
     const key = `${journalId}|${tradeId}|${day}`;
     setUnlinkingKey(key);
     setMessage("");
     try {
       const resp = await postMatchingUnlink({ journal_id: journalId, trade_id: tradeId, trade_day: day });
-      setMessage(`Unlinked: ${resp.inactivated}`);
-      setPreview((prev) => {
-        if (!prev) return prev;
-        const nextRows = (prev.journal_rows || []).map((j) => {
-          if (String(j.journal_id || "") !== journalId) return j;
-          return { ...j, matches: [], MatchStatus: "unmatched" };
+      if (resp.inactivated > 0) {
+        setMessage(`Unlinked: ${resp.inactivated}`);
+        setPreview((prev) => {
+          if (!prev) return prev;
+          const nextRows = (prev.journal_rows || []).map((j) => {
+            if (String(j.journal_id || "") !== journalId) return j;
+            return { ...j, matches: [], MatchStatus: "unmatched" };
+          });
+          return { ...prev, journal_rows: nextRows };
         });
-        return { ...prev, journal_rows: nextRows };
-      });
+      } else {
+        setMessage("Unlinked: 0. No active link was removed; reload workspace to verify current state.");
+      }
     } catch (e) {
       setMessage(`Unlink failed: ${(e as Error).message}`);
     } finally {
@@ -199,9 +276,11 @@ export default function MatchingPage() {
   async function reconfirmLockedJournal(row: LiveJournalRow) {
     const journalId = String(row.journal_id || "").trim();
     const matches = Array.isArray(row.matches) ? row.matches : [];
-    const first = (matches[0] as Record<string, unknown>) || {};
-    const tradeId = String(first["trade_id"] || "").trim();
-    const day = String(first["TradeDay"] || row.TradeDay || "").trim();
+    const active = (matches.find((m) => String((m as Record<string, unknown>)["Status"] || "").trim().toLowerCase() === "active") ||
+      matches[0] ||
+      {}) as Record<string, unknown>;
+    const tradeId = String(active["trade_id"] || "").trim();
+    const day = String(active["TradeDay"] || row.TradeDay || "").trim();
     if (!journalId) return;
     const key = `${journalId}|${tradeId}|${day}`;
     setReconfirmingKey(key);
@@ -242,7 +321,9 @@ export default function MatchingPage() {
             </label>
             <div className="md:col-span-2 flex items-end">
               <button
-                onClick={loadRelinkPreview}
+                onClick={() => {
+                  void loadRelinkPreview();
+                }}
                 disabled={loadingRelinkPreview}
                 className="rounded border border-cyan-300/40 px-3 py-2 text-xs text-cyan-200 disabled:opacity-60"
               >
@@ -493,6 +574,24 @@ export default function MatchingPage() {
           <p>Commit mode: <span className="text-white">link-only (no performance merge)</span></p>
           <p>Parsed trades to commit: <span className="text-white">{parsedTrades.length}</span></p>
           <p>Match links to persist: <span className="text-white">{links.length}</span></p>
+          <div className="rounded border border-white/10 bg-white/5 p-2 text-[11px]">
+            <p>Link summary: total {linkCommitSummary.total_links} | unique journals {linkCommitSummary.unique_journals} | target trades {linkCommitSummary.unique_trades}</p>
+            <p className={linkCommitSummary.hard_conflicts.length > 0 ? "text-red-300" : "text-emerald-300"}>
+              Hard conflicts: {linkCommitSummary.hard_conflicts.length}
+            </p>
+            <p className={linkCommitSummary.lock_conflicts.length > 0 ? "text-red-300" : "text-emerald-300"}>
+              Locked conflicts: {linkCommitSummary.lock_conflicts.length}
+            </p>
+            {linkCommitSummary.hard_conflicts.length > 0 ? (
+              <div className="mt-1 max-h-24 overflow-auto text-[10px] text-red-200">
+                {linkCommitSummary.hard_conflicts.slice(0, 12).map((c, idx) => (
+                  <p key={`${c.journal_id}|${c.preview_trade_id}|${idx}`}>
+                    {c.journal_id} {"->"} {c.preview_trade_id}: {c.reasons.join(" | ")}
+                  </p>
+                ))}
+              </div>
+            ) : null}
+          </div>
           <p>
             Gate:{" "}
             <span className={(preview?.can_continue ?? false) ? "text-emerald-300" : "text-red-300"}>

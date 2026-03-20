@@ -4,18 +4,12 @@ import { AppShell } from "@/components/layout/app-shell";
 import { Card } from "@/components/ui/card";
 import { fetchConfig } from "@/lib/config";
 import { deleteJournalLive, getDayPlan, getDayPlanTaxonomy, getJournalLive, getJournalLiveMeta, postDayPlan, postJournalLive } from "@/lib/api";
+import { tradingDateYmd } from "@/lib/trading-date";
 import { JournalAdjustment, LiveJournalRow } from "@/lib/types";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 
-function localDateYmd(d: Date): string {
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-const today = localDateYmd(new Date());
+const today = tradingDateYmd(new Date());
 
 type TaxItem = { value: string; hint?: string; order?: number };
 type DetailErrors = { qty?: string; entry?: string; tp?: string; sl?: string; exit?: string; row?: string };
@@ -90,6 +84,13 @@ function num(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function isWeekdayYmd(raw: string): boolean {
+  const ts = new Date(`${String(raw || "").trim()}T00:00:00`);
+  if (Number.isNaN(ts.getTime())) return false;
+  const wd = ts.getDay();
+  return wd >= 1 && wd <= 5;
+}
+
 function fmt(v: number): string {
   return Number.isFinite(v) ? v.toFixed(2) : "";
 }
@@ -112,15 +113,15 @@ export default function LivePage() {
   const [planPrimary, setPlanPrimary] = useState("");
   const [planAvoidance, setPlanAvoidance] = useState("");
 
-  const { data: meta } = useQuery({ queryKey: ["journal-meta"], queryFn: () => getJournalLiveMeta(), staleTime: 0 });
+  const { data: meta, error: metaError } = useQuery({ queryKey: ["journal-meta"], queryFn: () => getJournalLiveMeta(), staleTime: 0 });
   const { data: config } = useQuery({ queryKey: ["config-symbols"], queryFn: fetchConfig, staleTime: 60_000 });
-  const { data: dayPlanTax } = useQuery({ queryKey: ["day-plan-tax"], queryFn: () => getDayPlanTaxonomy(), staleTime: 0 });
-  const { data: dayPlanData, refetch: refetchDayPlan } = useQuery({
+  const { data: dayPlanTax, error: dayPlanTaxError } = useQuery({ queryKey: ["day-plan-tax"], queryFn: () => getDayPlanTaxonomy(), staleTime: 0 });
+  const { data: dayPlanData, refetch: refetchDayPlan, error: dayPlanError } = useQuery({
     queryKey: ["live-day-plan", tradeDay],
     queryFn: () => getDayPlan({ start: tradeDay, end: tradeDay }),
     staleTime: 0,
   });
-  const { data: journalData, refetch: refetchJournal, isFetching: journalLoading } = useQuery({
+  const { data: journalData, refetch: refetchJournal, isFetching: journalLoading, error: journalLoadError } = useQuery({
     queryKey: ["live-journal", tradeDay],
     queryFn: () => getJournalLive({ start: tradeDay, end: tradeDay }),
     staleTime: 0,
@@ -324,6 +325,10 @@ export default function LivePage() {
   }
 
   async function savePlan() {
+    if (!isWeekdayYmd(tradeDay)) {
+      setPlanMessage("Trade Day must be a weekday (Mon-Fri).");
+      return;
+    }
     setSavingPlan(true);
     setPlanMessage("");
     try {
@@ -350,6 +355,10 @@ export default function LivePage() {
   }
 
   async function saveJournal() {
+    if (!isWeekdayYmd(tradeDay)) {
+      setJournalMessage("Trade Day must be a weekday (Mon-Fri).");
+      return;
+    }
     setSavingJournal(true);
     setJournalMessage("");
     try {
@@ -467,6 +476,16 @@ export default function LivePage() {
 
   return (
     <AppShell active="/live">
+      {metaError || dayPlanTaxError || dayPlanError || journalLoadError ? (
+        <Card title="Data Status">
+          <div className="text-xs text-amber-300">
+            {metaError ? <p>Journal meta load failed: {(metaError as Error).message}</p> : null}
+            {dayPlanTaxError ? <p>Day-plan taxonomy load failed: {(dayPlanTaxError as Error).message}</p> : null}
+            {dayPlanError ? <p>Day-plan row load failed: {(dayPlanError as Error).message}</p> : null}
+            {journalLoadError ? <p>Journal rows load failed: {(journalLoadError as Error).message}</p> : null}
+          </div>
+        </Card>
+      ) : null}
       <Card title="Daily Sum">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs text-slate-400">Maintained twice per day: pre-trade and post-trade summary.</p>
@@ -478,7 +497,21 @@ export default function LivePage() {
         <div className="mb-2 grid gap-3 md:grid-cols-4">
           <label className="text-xs text-slate-300">
             Trade Day
-            <input type="date" value={tradeDay} onChange={(e) => setTradeDay(e.target.value)} className="mt-1 h-9 w-full rounded border border-white/10 bg-surface px-2 text-white" />
+            <input
+              type="date"
+              value={tradeDay}
+              onChange={(e) => {
+                const next = e.target.value;
+                if (!isWeekdayYmd(next)) {
+                  setJournalMessage("Trade Day must be a weekday (Mon-Fri).");
+                  return;
+                }
+                setTradeDay(next);
+                setJournalMessage("");
+                setPlanMessage("");
+              }}
+              className="mt-1 h-9 w-full rounded border border-white/10 bg-surface px-2 text-white"
+            />
           </label>
         </div>
 
@@ -698,8 +731,7 @@ export default function LivePage() {
               <div className="mt-2">
                 <button
                   onClick={() => startEdit(r)}
-                  disabled={Array.isArray(r.matches) && r.matches.length > 0}
-                  className="rounded border border-accent/50 px-2 py-1 text-[11px] text-accent disabled:opacity-50"
+                  className="rounded border border-accent/50 px-2 py-1 text-[11px] text-accent"
                 >
                   Edit
                 </button>

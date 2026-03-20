@@ -7,8 +7,10 @@ Routes:
 - POST /api/analysis/<metric> -> wraps functions in dashboard.analysis.compute
 """
 
+import json
+import math
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -18,7 +20,7 @@ from flask import Blueprint, jsonify, request
 from dashboard.services.analysis import compute
 from dashboard.services.analysis.behavioral import behavior_heatmap
 from dashboard.services.analysis.plots import get_statistics
-from dashboard.config.settings import DATA_SOURCE_DROPDOWN, PERFORMANCE_CSV, SYMBOL_CATALOG, CONTRACT_SPECS_CSV
+from dashboard.config.settings import DATA_SOURCE_DROPDOWN, PERFORMANCE_CSV, SYMBOL_CATALOG, CONTRACT_SPECS_CSV, JOURNAL_LIVE_CSV
 from dashboard.config.env import TIMEFRAME_OPTIONS, PLAYBACK_SPEEDS
 from dashboard.config.env import TEMP_PERF_DIR
 from dashboard.config.analysis import (
@@ -97,6 +99,24 @@ def _iso_in_timezone(value: object, tz_name: str) -> str:
     if pd.isna(ts):
         return ""
     return ts.tz_convert(tz_name).isoformat()
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, pd.Timestamp):
+        if pd.isna(value):
+            return None
+        return value.isoformat()
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, np.generic):
+        return _json_safe(value.item())
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        return None
+    return value
 
 
 def _require_json_object() -> Dict[str, Any]:
@@ -1769,6 +1789,290 @@ def register_api(server):
             return jsonify({"error": str(exc)}), 400
         except (KeyError, TypeError, pd.errors.ParserError, OSError) as exc:
             return jsonify({"error": f"failed to load session: {exc}"}), 500
+        except Exception as exc:
+            return jsonify({"error": f"failed to load session: {exc}"}), 500
+
+    @api.route("/trading/default-day", methods=["GET", "OPTIONS"])
+    def trading_default_day():
+        if request.method == "OPTIONS":
+            return _cors_headers(jsonify({"ok": True}), allowed_origin)
+        try:
+            symbol = _validate_symbol(request.args.get("symbol"), required=True)
+            if symbol is None:
+                raise ValueError("symbol is required")
+            csv_path = DATA_SOURCE_DROPDOWN.get(symbol)
+
+            perf_days: set[str] = set()
+            if os.path.exists(PERFORMANCE_CSV):
+                perf_df = ensure_trade_id(load_performance(symbol, "1900-01-01", "2100-01-01", PERFORMANCE_CSV))
+                if not perf_df.empty and "TradeDay" in perf_df.columns:
+                    for raw in perf_df["TradeDay"].tolist():
+                        ts = pd.to_datetime(raw, errors="coerce")
+                        if pd.notna(ts):
+                            d = ts.date()
+                            if d.weekday() < 5:
+                                perf_days.add(d.isoformat())
+
+            fut_days: set[str] = set()
+            fut_df = load_future("1900-01-01", "2100-01-01", csv_path)
+            if not fut_df.empty and "Datetime" in fut_df.columns:
+                for raw in fut_df["Datetime"].tolist():
+                    ts = pd.to_datetime(raw, errors="coerce")
+                    if pd.notna(ts):
+                        d = ts.date()
+                        if d.weekday() < 5:
+                            fut_days.add(d.isoformat())
+
+            journal_days: set[str] = set()
+            if os.path.exists(JOURNAL_LIVE_CSV):
+                jrows = list_live_journal()
+                for row in jrows:
+                    ts = pd.to_datetime(row.get("TradeDay"), errors="coerce")
+                    if pd.notna(ts):
+                        d = ts.date()
+                        if d.weekday() < 5:
+                            journal_days.add(d.isoformat())
+
+            common = perf_days & fut_days & journal_days
+            if common:
+                day = sorted(common)[-1]
+                return jsonify({"ok": True, "day": day, "source": "intersection(performance,future,journal)"}), 200
+
+            fallback = perf_days & fut_days
+            if fallback:
+                day = sorted(fallback)[-1]
+                return jsonify({"ok": True, "day": day, "source": "intersection(performance,future)"}), 200
+
+            any_days = sorted(perf_days | fut_days | journal_days)
+            if any_days:
+                return jsonify({"ok": True, "day": any_days[-1], "source": "latest-available"}), 200
+
+            now_day = datetime.now().date()
+            while now_day.weekday() >= 5:
+                now_day = now_day - timedelta(days=1)
+            return jsonify({"ok": True, "day": now_day.isoformat(), "source": "current-business-day-fallback"}), 200
+        except FileNotFoundError as exc:
+            return jsonify({"error": str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except (KeyError, TypeError, pd.errors.ParserError, OSError) as exc:
+            return jsonify({"error": f"failed to resolve default trading day: {exc}"}), 500
+        except Exception as exc:
+            return jsonify({"error": f"failed to resolve default trading day: {exc}"}), 500
+
+    @api.route("/trading/llm-prompt", methods=["POST", "OPTIONS"])
+    def trading_llm_prompt():
+        if request.method == "OPTIONS":
+            return _cors_headers(jsonify({"ok": True}), allowed_origin)
+        try:
+            payload = _require_json_object()
+            symbol = _validate_symbol(payload.get("symbol"), required=True)
+            if symbol is None:
+                raise ValueError("symbol is required")
+            start_raw = str(payload.get("start") or "").strip()
+            end_raw = str(payload.get("end") or "").strip()
+            _parse_range(start_raw or None, end_raw or None, normalize_date=True)
+            if not start_raw or not end_raw:
+                raise ValueError("start and end are required for trading llm prompt export")
+            if start_raw != end_raw:
+                raise ValueError("trading llm prompt export requires a single-day range (start must equal end)")
+
+            csv_path = DATA_SOURCE_DROPDOWN.get(symbol)
+            if not os.path.exists(PERFORMANCE_CSV):
+                return jsonify({"error": "performance data not found"}), 404
+
+            default_start = "1900-01-01"
+            default_end = "2100-01-01"
+            perf_df = ensure_trade_id(load_performance(symbol, start_raw or default_start, end_raw or default_end, PERFORMANCE_CSV))
+            fut_df = load_future(start_raw or default_start, end_raw or default_end, csv_path)
+            stats = get_statistics(perf_df.copy()) if not perf_df.empty else {}
+
+            controls = {
+                "symbol": symbol,
+                "start": start_raw,
+                "end": end_raw,
+                "timeframe": str(payload.get("timeframe") or "5m"),
+                "show_trades": bool(payload.get("show_trades", True)),
+                "show_vwap": bool(payload.get("show_vwap", False)),
+                "show_ema": bool(payload.get("show_ema", False)),
+                "show_bar_count": bool(payload.get("show_bar_count", False)),
+                "direction_filter": str(payload.get("direction_filter") or ""),
+                "type_filter": str(payload.get("type_filter") or ""),
+                "size_filter": str(payload.get("size_filter") or ""),
+                "plan_date": str(payload.get("plan_date") or ""),
+            }
+
+            future_records: list[dict[str, Any]] = []
+            for _, row in fut_df.iterrows():
+                future_records.append(
+                    {
+                        "time": _iso_in_timezone(row["Datetime"], ANALYSIS_TIMEZONE),
+                        "open": float(row["Open"]),
+                        "high": float(row["High"]),
+                        "low": float(row["Low"]),
+                        "close": float(row["Close"]),
+                        "volume": float(row["Volume"]) if "Volume" in row else None,
+                    }
+                )
+
+            perf_payload = perf_df.copy()
+            for col in ["EnteredAt", "ExitedAt"]:
+                if col in perf_payload.columns:
+                    perf_payload[col] = perf_payload[col].apply(lambda v: _iso_in_timezone(v, ANALYSIS_TIMEZONE))
+            perf_records = perf_payload.replace({np.nan: None}).to_dict("records")
+
+            def _hold_type(row: dict[str, Any]) -> str:
+                enter = pd.to_datetime(row.get("EnteredAt"), errors="coerce")
+                exit_ = pd.to_datetime(row.get("ExitedAt"), errors="coerce")
+                if pd.isna(enter) or pd.isna(exit_):
+                    return "N/A"
+                mins = (exit_ - enter).total_seconds() / 60.0
+                if mins <= 5:
+                    return "Scalp"
+                if mins < 30:
+                    return "Scalp/Swing"
+                return "Swing"
+
+            direction_filter = controls["direction_filter"]
+            type_filter = controls["type_filter"]
+            size_filter = controls["size_filter"]
+            filtered_perf: list[dict[str, Any]] = []
+            for r in perf_records:
+                direction = str(r.get("Type") or "")
+                hold = _hold_type(r)
+                size_val = pd.to_numeric(r.get("Size"), errors="coerce")
+                sz = float(size_val) if pd.notna(size_val) else 0.0
+                dir_ok = (not direction_filter) or (direction == direction_filter)
+                type_ok = (not type_filter) or (hold == type_filter)
+                size_ok = (
+                    (not size_filter)
+                    or (size_filter == "S" and sz <= 2)
+                    or (size_filter == "M" and sz > 2 and sz <= 5)
+                    or (size_filter == "L" and sz > 5)
+                )
+                if not (dir_ok and type_ok and size_ok):
+                    continue
+                out = dict(r)
+                out["HoldType"] = hold
+                filtered_perf.append(out)
+
+            filtered_perf_df = pd.DataFrame(filtered_perf)
+            stats = get_statistics(filtered_perf_df.copy()) if not filtered_perf_df.empty else {}
+
+            day_plan_rows = list_day_plan(start=start_raw or None, end=end_raw or None)
+            selected_day_plan = next((r for r in day_plan_rows if str(r.get("Date", "")) == str(controls["plan_date"])), None)
+            if not controls["plan_date"]:
+                raise ValueError("plan_date is required; select Daily Plan (Day-Level Journal) before export")
+            if selected_day_plan is None:
+                raise ValueError("selected Daily Plan row not found for plan_date in the current range")
+            journal_rows = list_live_journal(start=start_raw or None, end=end_raw or None)
+            active_links = list_active_matches(start=start_raw or None, end=end_raw or None)
+            journal_map = {str(j.get("journal_id", "")): j for j in journal_rows if str(j.get("journal_id", "")).strip()}
+
+            links_by_trade: dict[str, list[dict[str, Any]]] = {}
+            for link in active_links:
+                tid = str(link.get("trade_id", "")).strip()
+                if not tid:
+                    continue
+                links_by_trade.setdefault(tid, []).append(link)
+
+            trade_details: list[dict[str, Any]] = []
+            for row in filtered_perf:
+                tid = str(row.get("trade_id", "")).strip()
+                linked = links_by_trade.get(tid, [])
+                attached_journals = [journal_map.get(str(l.get("journal_id", "")), {"journal_id": str(l.get("journal_id", ""))}) for l in linked]
+                trade_details.append(
+                    {
+                        "trade": row,
+                        "active_links": linked,
+                        "attached_journals": attached_journals,
+                    }
+                )
+
+            stats_payload = {
+                "win_loss": stats.get("win_loss_data", []),
+                "financial_metrics": stats.get("financial_metrics", {}),
+                "win_loss_by_type": stats.get("win_loss_by_type", []),
+                "streak_data": stats.get("streak_data", pd.DataFrame()).to_dict("records")
+                if isinstance(stats.get("streak_data"), pd.DataFrame)
+                else [],
+                "duration_data": stats.get("duration_data", pd.Series([])).tolist()
+                if hasattr(stats.get("duration_data", None), "tolist")
+                else [],
+                "size_counts": stats.get("size_counts", pd.DataFrame()).to_dict("records")
+                if isinstance(stats.get("size_counts"), pd.DataFrame)
+                else [],
+            }
+
+            context = {
+                "controls": controls,
+                "price_action_5m_ohlcv": future_records,
+                "trade_stats": stats_payload,
+                "day_plan_rows": day_plan_rows,
+                "selected_day_plan": selected_day_plan,
+                "filtered_trade_details_with_attached_journals": trade_details,
+                "meta": {
+                    "analysis_timezone": ANALYSIS_TIMEZONE,
+                    "future_bar_count": len(future_records),
+                    "trade_count_filtered": len(filtered_perf),
+                    "day_plan_count": len(day_plan_rows),
+                    "journal_count": len(journal_rows),
+                    "active_link_count": len(active_links),
+                },
+            }
+            safe_context = _json_safe(context)
+
+            markdown = (
+                "# Trading Details LLM Prompt\n\n"
+                "## Export Justification\n"
+                "1. The range must be a single day only.\n"
+                "2. Daily Plan (Day-Level Journal) must be selected.\n\n"
+                "This keeps prompt size focused on one trading day and improves behavior-analysis quality.\n\n"
+                "## Role Definition\n"
+                "You are a sophisticated intraday trader coach with expertise in market structure, execution quality, and behavioral performance improvement.\n\n"
+                "## Task\n"
+                "Analyze the provided context and deliver:\n"
+                "1. Market data analysis.\n"
+                "2. How a strong trader should trade this market context.\n"
+                "3. Trading behavior analysis, a score, and concrete recommendations based on current trade records.\n\n"
+                "## Context (Structured)\n\n"
+                "### Controls\n"
+                "```json\n"
+                f"{json.dumps(safe_context['controls'], ensure_ascii=False, indent=2)}\n"
+                "```\n\n"
+                "### Price Action (5m OHLCV)\n"
+                "```json\n"
+                f"{json.dumps(safe_context['price_action_5m_ohlcv'], ensure_ascii=False, indent=2)}\n"
+                "```\n\n"
+                "### Trade Stats\n"
+                "```json\n"
+                f"{json.dumps(safe_context['trade_stats'], ensure_ascii=False, indent=2)}\n"
+                "```\n\n"
+                "### Daily Plan (Day-Level Journal)\n"
+                "```json\n"
+                f"{json.dumps(safe_context['day_plan_rows'], ensure_ascii=False, indent=2)}\n"
+                "```\n\n"
+                "### Selected Plan Date Row\n"
+                "```json\n"
+                f"{json.dumps(safe_context['selected_day_plan'], ensure_ascii=False, indent=2)}\n"
+                "```\n\n"
+                "### Trade Details + Attached Journals\n"
+                "```json\n"
+                f"{json.dumps(safe_context['filtered_trade_details_with_attached_journals'], ensure_ascii=False, indent=2)}\n"
+                "```\n\n"
+                "### Meta\n"
+                "```json\n"
+                f"{json.dumps(safe_context['meta'], ensure_ascii=False, indent=2)}\n"
+                "```\n"
+            )
+
+            return jsonify({"ok": True, "markdown": markdown, "context": safe_context}), 200
+        except FileNotFoundError as exc:
+            return jsonify({"error": str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except (KeyError, TypeError, pd.errors.ParserError, OSError) as exc:
+            return jsonify({"error": f"failed to build trading llm prompt: {exc}"}), 500
 
     # Register blueprint after all routes are declared
     server.register_blueprint(api)

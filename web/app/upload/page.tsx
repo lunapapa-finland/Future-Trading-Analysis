@@ -76,9 +76,12 @@ function normalizeWorkingTrades(rows: Array<Record<string, unknown>>): WorkingTr
 
 function symbolRoot(contract: string): string {
   const s = String(contract || "").toUpperCase().split(".")[0];
-  const m = s.match(/^([A-Z]+?)([FGHJKMNQUVXZ])(\d{1,2})$/);
+  const knownRoots = Object.keys(POINT_VALUE_BY_ROOT).sort((a, b) => b.length - a.length);
+  const pref = knownRoots.find((root) => s.startsWith(root));
+  if (pref) return pref;
+  const m = s.match(/^([A-Z0-9]+?)([FGHJKMNQUVXZ])(\d{1,2})$/);
   if (m) return m[1];
-  const m2 = s.match(/^([A-Z]+)/);
+  const m2 = s.match(/^([A-Z0-9]+)/);
   return m2 ? m2[1] : s;
 }
 
@@ -106,6 +109,7 @@ export default function UploadPage() {
   const [busyParse, setBusyParse] = useState(false);
   const [busyReconcile, setBusyReconcile] = useState(false);
   const [busyCommit, setBusyCommit] = useState(false);
+  const [commitLocked, setCommitLocked] = useState(false);
   const [message, setMessage] = useState("");
   const [preview, setPreview] = useState<ParsePreview | null>(null);
   const [reconcile, setReconcile] = useState<ReconcilePreview | null>(null);
@@ -174,6 +178,7 @@ export default function UploadPage() {
       );
       setSelectedJournalId("");
       setSelectedLegIds([]);
+      setCommitLocked(false);
       setMessage(`Parsed trades: ${resp.parsed_trades.length}. Unparseable rows: ${resp.unparseable_rows.length}.`);
       setUploadFiles([]);
     } catch (e) {
@@ -273,12 +278,23 @@ export default function UploadPage() {
       setMessage("Merge blocked. Selected legs must share the same contract.");
       return;
     }
+    const tradeDay = String(selected[0].TradeDay || "");
+    if (!selected.every((l) => String(l.TradeDay || "") === tradeDay)) {
+      setMessage("Merge blocked. Selected legs must be from the same TradeDay.");
+      return;
+    }
     const netQty = selected.reduce((a, b) => a + b.Qty, 0);
     if (Math.abs(netQty) > 1e-9) {
       setMessage(`Merge blocked. Selected net quantity must be 0, got ${netQty}.`);
       return;
     }
-    const ordered = [...selected].sort((a, b) => Date.parse(a.Time) - Date.parse(b.Time));
+    const parsedTimes = selected.map((l) => Date.parse(l.Time));
+    if (parsedTimes.some((v) => !Number.isFinite(v))) {
+      setMessage("Merge blocked. Selected legs must have valid Time values.");
+      return;
+    }
+    const timeByLegId = new Map(selected.map((l) => [l.leg_id, Date.parse(l.Time)]));
+    const ordered = [...selected].sort((a, b) => (timeByLegId.get(a.leg_id) || 0) - (timeByLegId.get(b.leg_id) || 0));
     const first = ordered.find((l) => l.Qty !== 0);
     if (!first) {
       setMessage("Merge blocked. Invalid leg quantities.");
@@ -304,7 +320,6 @@ export default function UploadPage() {
     const pnlGross = tradeType === "Long" ? (exitPrice - entryPrice) * pointValue * openQty : (entryPrice - exitPrice) * pointValue * openQty;
     const pnl = pnlGross - fees;
     const newId = `manual_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
-    const tradeDay = selected[0]?.TradeDay || "";
     const nextTrade: WorkingTrade = {
       work_id: newId,
       preview_trade_id: newId,
@@ -349,6 +364,10 @@ export default function UploadPage() {
   }
 
   async function commitMerge() {
+    if (commitLocked) {
+      setMessage("Commit blocked. This preview is already committed. Run parse preview again before another commit.");
+      return;
+    }
     if (!preview) {
       setMessage("Run parse preview first.");
       return;
@@ -374,6 +393,7 @@ export default function UploadPage() {
     try {
       const rows = workingTrades.map(({ work_id: _x, ...rest }) => rest);
       const resp = await postTradeUploadCommit({ parsed_trades: rows });
+      setCommitLocked(true);
       setMessage(`Merged successfully. Rows delta: ${resp.rows_delta}.`);
     } catch (e) {
       setMessage(`Commit failed: ${(e as Error).message}`);
@@ -601,9 +621,10 @@ export default function UploadPage() {
         <div className="space-y-2 text-xs text-slate-300">
           <p>Working trades ready: <span className="text-white">{workingTrades.length}</span></p>
           <p>Execution pool must be empty: <span className={poolLegs.length ? "text-red-300" : "text-emerald-300"}>{poolLegs.length ? "blocked" : "open"}</span></p>
+          <p>Commit lock: <span className={commitLocked ? "text-red-300" : "text-emerald-300"}>{commitLocked ? "locked (run parse preview again)" : "open"}</span></p>
           <button
             onClick={commitMerge}
-            disabled={busyCommit || !(preview?.can_continue ?? false) || !reconcile || workingTrades.length === 0 || poolLegs.length > 0}
+            disabled={busyCommit || commitLocked || !(preview?.can_continue ?? false) || !reconcile || workingTrades.length === 0 || poolLegs.length > 0}
             className="rounded bg-accent px-4 py-2 text-sm text-white disabled:opacity-60"
           >
             {busyCommit ? "Committing..." : "Commit Parsed Trades"}

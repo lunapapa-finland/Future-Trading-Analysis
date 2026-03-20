@@ -5,7 +5,8 @@ import { Card } from "@/components/ui/card";
 import { CandlesChart } from "@/components/charts/candles-chart";
 import { SymbolSelect } from "@/components/forms/symbol-select";
 import { TimeframeSelect } from "@/components/forms/timeframe-select";
-import { getDayPlan, getJournalLive, getMatchingLinks, getTradingSession } from "@/lib/api";
+import { getDayPlan, getJournalLive, getMatchingLinks, getTradingDefaultDay, getTradingSession, postTradingLlmPrompt } from "@/lib/api";
+import { tradingDateYmd } from "@/lib/trading-date";
 import { resampleCandles } from "@/lib/timeframes";
 import { Candle, LiveJournalRow, Timeframe, TradeMarker } from "@/lib/types";
 import { useEffect, useMemo, useState } from "react";
@@ -36,34 +37,47 @@ export default function TradingPage() {
   const [playbackSlice, setPlaybackSlice] = useState<Candle[]>([]);
   const [playbackIndex, setPlaybackIndex] = useState(0);
   const [activeJournalTradeId, setActiveJournalTradeId] = useState("");
-  const today = localDateYmd(new Date());
-  const [planDate, setPlanDate] = useState(today);
-  const [startDate, setStartDate] = useState(today);
-  const [endDate, setEndDate] = useState(today);
+  const [exportingPrompt, setExportingPrompt] = useState(false);
+  const [exportMessage, setExportMessage] = useState("");
+  const [dateSeeded, setDateSeeded] = useState(false);
+  const [planDate, setPlanDate] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const rangeReady = Boolean(startDate && endDate);
 
   const { data, isFetching, error } = useQuery({
     queryKey: ["session", symbol, startDate, endDate],
     queryFn: () => getTradingSession({ symbol, start: startDate, end: endDate }),
+    enabled: rangeReady,
     staleTime: 30_000,
     refetchOnWindowFocus: false
   });
-  const { data: dayPlanRange } = useQuery({
+  const { data: defaultDayData } = useQuery({
+    queryKey: ["trading-default-day", symbol],
+    queryFn: () => getTradingDefaultDay({ symbol }),
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const { data: dayPlanRange, error: dayPlanError } = useQuery({
     queryKey: ["day-plan-range", startDate, endDate],
     queryFn: () => getDayPlan({ start: startDate, end: endDate }),
+    enabled: rangeReady,
     staleTime: 0,
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
   });
-  const { data: liveJournalRange } = useQuery({
+  const { data: liveJournalRange, error: liveJournalError } = useQuery({
     queryKey: ["live-journal-range", startDate, endDate],
     queryFn: () => getJournalLive({ start: startDate, end: endDate }),
+    enabled: rangeReady,
     staleTime: 0,
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
   });
-  const { data: linkRange } = useQuery({
+  const { data: linkRange, error: linkRangeError } = useQuery({
     queryKey: ["matching-links-range", startDate, endDate],
     queryFn: () => getMatchingLinks({ start: startDate, end: endDate }),
+    enabled: rangeReady,
     staleTime: 0,
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
@@ -84,13 +98,13 @@ export default function TradingPage() {
     const end = new Date(`${endDate}T00:00:00`);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return out;
     const cur = new Date(start);
-    while (cur <= end) {
-      const wd = cur.getDay();
-      if (wd !== 0 && wd !== 6) {
-        out.push(localDateYmd(cur));
+      while (cur <= end) {
+        const wd = cur.getDay();
+        if (wd !== 0 && wd !== 6) {
+          out.push(localDateYmd(cur));
+        }
+        cur.setDate(cur.getDate() + 1);
       }
-      cur.setDate(cur.getDate() + 1);
-    }
     return out;
   }, [startDate, endDate]);
 
@@ -292,6 +306,22 @@ export default function TradingPage() {
     [activeJournalRows]
   );
 
+  useEffect(() => {
+    setDateSeeded(false);
+    setStartDate("");
+    setEndDate("");
+    setPlanDate("");
+  }, [symbol]);
+
+  useEffect(() => {
+    const d = String(defaultDayData?.day || "").trim();
+    if (!d || dateSeeded) return;
+    setStartDate(d);
+    setEndDate(d);
+    setPlanDate(d);
+    setDateSeeded(true);
+  }, [defaultDayData?.day, dateSeeded]);
+
 
   useEffect(() => {
     // Reset toggles when timeframe changes
@@ -314,9 +344,50 @@ export default function TradingPage() {
     }
   }, [businessDayOptions, planDate]);
 
+  const exportMarkdown = (name: string, content: string) => {
+    if (!content) return;
+    const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  async function exportTradingPromptPack() {
+    setExportingPrompt(true);
+    setExportMessage("");
+    try {
+      const resp = await postTradingLlmPrompt({
+        symbol,
+        start: startDate,
+        end: endDate,
+        timeframe,
+        show_trades: showTrades,
+        show_vwap: showVwap,
+        show_ema: showEma,
+        show_bar_count: showBarCount,
+        direction_filter: directionFilter,
+        type_filter: typeFilter,
+        size_filter: sizeFilter,
+        plan_date: planDate,
+      });
+      const fileName = `trading_details_llm_prompt_${symbol}_${startDate || "na"}_${endDate || "na"}.md`;
+      exportMarkdown(fileName, resp.markdown || "");
+      setExportMessage("Prompt exported as markdown.");
+    } catch (e) {
+      setExportMessage(`Export failed: ${(e as Error).message}`);
+    } finally {
+      setExportingPrompt(false);
+    }
+  }
+
   return (
     <AppShell active="/trading">
-      <div className="grid gap-4 xl:grid-cols-[1fr_300px]">
+      <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
         <Card title="Controls">
           <div className="space-y-3">
             <div className="rounded-xl border border-white/10 bg-surface/80 p-3">
@@ -401,24 +472,39 @@ export default function TradingPage() {
             </div>
           </div>
         </Card>
-        <Card title="Market Snapshot">
-          {lastBar && ohlcRange ? (
-            <div className="grid grid-cols-1 gap-2 text-sm text-slate-200 sm:grid-cols-2">
-              <span className="text-slate-400">Range</span>
-              <span className="text-right text-white">{startDate} → {endDate}</span>
-              <span className="text-slate-400">Open</span>
-              <span className="text-right font-semibold text-white">{ohlcRange.open.toFixed(4)}</span>
-              <span className="text-slate-400">High</span>
-              <span className="text-right">{ohlcRange.high.toFixed(4)}</span>
-              <span className="text-slate-400">Low</span>
-              <span className="text-right">{ohlcRange.low.toFixed(4)}</span>
-              <span className="text-slate-400">Close</span>
-              <span className="text-right font-semibold text-white">{ohlcRange.close.toFixed(4)}</span>
+        <div className="grid gap-4">
+          <Card title="Market Snapshot">
+            {lastBar && ohlcRange ? (
+              <div className="grid grid-cols-1 gap-2 text-sm text-slate-200 sm:grid-cols-2">
+                <span className="text-slate-400">Range</span>
+                <span className="text-right text-white">{startDate} → {endDate}</span>
+                <span className="text-slate-400">Open</span>
+                <span className="text-right font-semibold text-white">{ohlcRange.open.toFixed(4)}</span>
+                <span className="text-slate-400">High</span>
+                <span className="text-right">{ohlcRange.high.toFixed(4)}</span>
+                <span className="text-slate-400">Low</span>
+                <span className="text-right">{ohlcRange.low.toFixed(4)}</span>
+                <span className="text-slate-400">Close</span>
+                <span className="text-right font-semibold text-white">{ohlcRange.close.toFixed(4)}</span>
+              </div>
+            ) : (
+              <p className="text-slate-400">No data yet.</p>
+            )}
+          </Card>
+          <Card title="Export Sum as LLM Prompt">
+            <div className="space-y-2 text-xs text-slate-300">
+              <p>Exports markdown prompt with selected controls, 5m OHLC context, trade stats, day-plan rows, trade details, and attached journals.</p>
+              <button
+                onClick={exportTradingPromptPack}
+                disabled={exportingPrompt}
+                className="rounded bg-accent px-4 py-2 text-sm text-white disabled:opacity-60"
+              >
+                {exportingPrompt ? "Exporting..." : "Export Markdown Prompt"}
+              </button>
+              <p className="text-xs text-slate-400">{exportMessage}</p>
             </div>
-          ) : (
-            <p className="text-slate-400">No data yet.</p>
-          )}
-        </Card>
+          </Card>
+        </div>
       </div>
 
       <Card title="Price Action" className="mt-2">
@@ -491,6 +577,9 @@ export default function TradingPage() {
           <div className="space-y-4">
             <StatGrid stats={{ ...(data.stats || {}), duration_bins: durationBins }} />
             <div className="rounded-lg border border-white/5 bg-white/5 p-3 space-y-2">
+              {dayPlanError ? (
+                <p className="text-xs text-amber-300">Day plan data unavailable: {(dayPlanError as Error).message}</p>
+              ) : null}
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs uppercase tracking-[0.15em] text-slate-300">Daily Plan (Day-Level Journal)</p>
                 <span className="text-[11px] text-slate-400">Range-bound to {startDate} → {endDate}</span>
@@ -546,6 +635,14 @@ export default function TradingPage() {
               </div>
             </div>
               <div className="space-y-2 rounded-lg border border-white/5 p-3">
+              {liveJournalError || linkRangeError ? (
+                <p className="text-xs text-amber-300">
+                  Journal linkage data unavailable:
+                  {liveJournalError ? ` live journal (${(liveJournalError as Error).message})` : ""}
+                  {liveJournalError && linkRangeError ? " | " : ""}
+                  {linkRangeError ? ` matching links (${(linkRangeError as Error).message})` : ""}
+                </p>
+              ) : null}
               <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300">
                 Trades are linked to journal record(s). Use View to inspect attached journal details.
               </div>
