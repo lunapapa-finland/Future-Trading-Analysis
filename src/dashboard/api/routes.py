@@ -37,7 +37,10 @@ from dashboard.services.utils.trade_enrichment import ensure_trade_id
 from dashboard.services.utils.tag_taxonomy import taxonomy_payload
 from dashboard.services.utils.day_plan_taxonomy import day_plan_taxonomy_payload
 from dashboard.services.utils.day_plan import list_day_plan, upsert_day_plan_rows
-from dashboard.services.utils.performance_acquisition import process_csv, generate_aggregated_data
+from dashboard.services.utils.performance_acquisition import (
+    process_csv_with_execution_legs,
+    generate_aggregated_data,
+)
 from dashboard.services.utils.data_acquisition import acquire_missing_data, get_last_date_in_csv
 from dashboard.services.utils.journal_live import (
     list_live_journal,
@@ -161,6 +164,20 @@ def _parse_ts_central(v: object) -> Optional[pd.Timestamp]:
     return ts.tz_convert(ANALYSIS_TIMEZONE)
 
 
+def _trade_day_key(v: object) -> str:
+    s = str(v or "").strip()
+    if not s:
+        return ""
+    ts = pd.to_datetime(s, errors="coerce")
+    if pd.isna(ts):
+        return ""
+    if getattr(ts, "tzinfo", None) is None:
+        ts = ts.tz_localize(ANALYSIS_TIMEZONE)
+    else:
+        ts = ts.tz_convert(ANALYSIS_TIMEZONE)
+    return ts.date().isoformat()
+
+
 def _pair_match_tiered(journal_row: dict[str, Any], perf_row: dict[str, Any], perf_index: int, journal_index: int) -> dict[str, Any]:
     # Tier 1: journal-maintained time (fuzzy) + price (exact) signals.
     j_entry_ts = _parse_ts_central(journal_row.get("EnteredAt"))
@@ -276,21 +293,26 @@ def _build_matching_suggestions(
 
     trades_by_day: dict[str, list[dict[str, Any]]] = {}
     for t in parsed_trades:
-        d = str(t.get("TradeDay", "")).strip()
+        d = _trade_day_key(t.get("TradeDay"))
         if not d:
             continue
-        trades_by_day.setdefault(d, []).append(t)
+        t_norm = dict(t)
+        t_norm["TradeDay"] = d
+        trades_by_day.setdefault(d, []).append(t_norm)
 
     journals_by_day: dict[str, list[dict[str, Any]]] = {}
     for j in journal_rows:
-        d = str(j.get("TradeDay", "")).strip()
+        d = _trade_day_key(j.get("TradeDay"))
         if not d:
             continue
-        journals_by_day.setdefault(d, []).append(j)
+        j_norm = dict(j)
+        j_norm["TradeDay"] = d
+        journals_by_day.setdefault(d, []).append(j_norm)
 
     for day in sorted(set(trades_by_day.keys()).intersection(set(journals_by_day.keys()))):
         jrows = sorted(journals_by_day[day], key=lambda x: int(pd.to_numeric(x.get("SeqInDay"), errors="coerce") or 0))
         prows = sorted(trades_by_day[day], key=lambda x: (str(x.get("EnteredAt", "")), str(x.get("preview_trade_id", ""))))
+        day_ranked: list[dict[str, Any]] = []
         for j_idx, j in enumerate(jrows):
             best: list[dict[str, Any]] = []
             for p_idx, p in enumerate(prows):
@@ -311,9 +333,34 @@ def _build_matching_suggestions(
                 best,
                 key=lambda x: (int(x.get("tier", 9)), -float(x.get("score", -1e9)), bool(x.get("hard_conflict", False))),
             )[:5]
-            if ranked:
-                ranked[0]["recommended"] = True
-            suggestions.extend(ranked)
+            day_ranked.extend(ranked)
+
+        # Apply day-level one-to-one recommendation assignment:
+        # one journal -> at most one recommended trade and one trade -> at most one recommended journal.
+        # This keeps suggestions soft while avoiding duplicate "recommended" targets.
+        assigned_journals: set[str] = set()
+        assigned_trades: set[str] = set()
+        for c in sorted(
+            day_ranked,
+            key=lambda x: (
+                bool(x.get("hard_conflict", False)),
+                int(x.get("tier", 9)),
+                -float(x.get("score", -1e9)),
+            ),
+        ):
+            if bool(c.get("hard_conflict", False)):
+                continue
+            jid = str(c.get("journal_id", "")).strip()
+            tid = str(c.get("preview_trade_id", "")).strip()
+            if not jid or not tid:
+                continue
+            if jid in assigned_journals or tid in assigned_trades:
+                continue
+            c["recommended"] = True
+            assigned_journals.add(jid)
+            assigned_trades.add(tid)
+
+        suggestions.extend(day_ranked)
 
     return suggestions
 
@@ -1091,6 +1138,7 @@ def register_api(server):
             parse_logs: list[dict[str, Any]] = []
             unparseable_rows: list[dict[str, Any]] = []
             parsed_frames: list[pd.DataFrame] = []
+            leg_frames: list[pd.DataFrame] = []
 
             Path(TEMP_PERF_DIR).mkdir(parents=True, exist_ok=True)
             stamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
@@ -1164,7 +1212,7 @@ def register_api(server):
 
                 # Convert raw fills to round-trip trades (preview only).
                 try:
-                    parsed_df = process_csv(str(target))
+                    parsed_df, legs_df = process_csv_with_execution_legs(str(target))
                     if parsed_df.empty:
                         unparseable_rows.append(
                             {
@@ -1177,6 +1225,8 @@ def register_api(server):
                         parse_logs.append({"file": safe_name, "status": "failed", "parsed_rows": 0, "reason": "empty_parse"})
                         continue
                     parsed_frames.append(parsed_df)
+                    if not legs_df.empty:
+                        leg_frames.append(legs_df)
                     parse_logs.append({"file": safe_name, "status": "ok", "parsed_rows": int(len(parsed_df))})
                 except Exception as exc:
                     unparseable_rows.append(
@@ -1211,6 +1261,7 @@ def register_api(server):
                     pass
 
             parsed_trades: list[dict[str, Any]] = []
+            execution_pool: list[dict[str, Any]] = []
             if parsed_frames:
                 combined = pd.concat(parsed_frames, ignore_index=True)
                 combined = ensure_trade_id(combined)
@@ -1218,14 +1269,23 @@ def register_api(server):
                     rec = row.to_dict()
                     rec["preview_trade_id"] = str(rec.get("trade_id", ""))
                     parsed_trades.append({k: (None if pd.isna(v) else v) for k, v in rec.items()})
+                if leg_frames:
+                    legs = pd.concat(leg_frames, ignore_index=True)
+                    join_cols = ["Id", "TradeDay", "ContractName", "EnteredAt", "ExitedAt", "EntryPrice", "ExitPrice", "Type"]
+                    existing_cols = [c for c in join_cols if c in legs.columns and c in combined.columns]
+                    if existing_cols:
+                        key_map = combined[existing_cols + ["trade_id"]].copy()
+                        key_map = key_map.drop_duplicates(subset=existing_cols, keep="last")
+                        legs = legs.merge(key_map, on=existing_cols, how="left")
+                    if "trade_id" in legs.columns:
+                        legs["preview_trade_id"] = legs["trade_id"].fillna("").astype(str).str.strip()
+                    else:
+                        legs["preview_trade_id"] = ""
+                    for _, row in legs.iterrows():
+                        rec = row.to_dict()
+                        execution_pool.append({k: (None if pd.isna(v) else v) for k, v in rec.items()})
 
-            parsed_days = sorted(
-                {
-                    str(r.get("TradeDay", "")).strip()
-                    for r in parsed_trades
-                    if str(r.get("TradeDay", "")).strip() != ""
-                }
-            )
+            parsed_days = sorted({_trade_day_key(r.get("TradeDay")) for r in parsed_trades if _trade_day_key(r.get("TradeDay"))})
             range_start = parsed_days[0] if parsed_days else ""
             range_end = parsed_days[-1] if parsed_days else ""
 
@@ -1242,6 +1302,7 @@ def register_api(server):
                         "parse_logs": parse_logs,
                         "unparseable_rows": unparseable_rows,
                         "parsed_trades": parsed_trades,
+                        "execution_pool": execution_pool,
                         "parsed_range": {"start": range_start, "end": range_end, "days": parsed_days},
                     }
                 ),
@@ -1297,6 +1358,68 @@ def register_api(server):
             return jsonify({"error": str(exc)}), 400
         except (KeyError, TypeError, pd.errors.ParserError, OSError) as exc:
             return jsonify({"error": f"trade upload commit failed: {exc}"}), 500
+
+    @api.route("/trade-upload/reconcile-preview", methods=["POST", "OPTIONS"])
+    def trade_upload_reconcile_preview():
+        if request.method == "OPTIONS":
+            return _cors_headers(jsonify({"ok": True}), allowed_origin)
+        try:
+            payload = _require_json_object()
+            parsed_trades = payload.get("parsed_trades")
+            if not isinstance(parsed_trades, list) or not parsed_trades:
+                raise ValueError("parsed_trades must be a non-empty array")
+
+            parsed_days = sorted(
+                {
+                    _trade_day_key(r.get("TradeDay"))
+                    for r in parsed_trades
+                    if isinstance(r, dict) and _trade_day_key(r.get("TradeDay"))
+                }
+            )
+            if not parsed_days:
+                raise ValueError("parsed_trades has no valid TradeDay values")
+
+            start = parsed_days[0]
+            end = parsed_days[-1]
+
+            # Normalize parsed trades to include stable preview ids for reconciliation board.
+            parsed_df = ensure_trade_id(pd.DataFrame(parsed_trades))
+            parsed_rows: list[dict[str, Any]] = []
+            for _, row in parsed_df.iterrows():
+                rec = row.to_dict()
+                rec["preview_trade_id"] = str(rec.get("trade_id", ""))
+                parsed_rows.append({k: (None if pd.isna(v) else v) for k, v in rec.items()})
+
+            journal_rows = list_live_journal(start=start, end=end)
+            suggestions = _build_matching_suggestions(parsed_rows, journal_rows)
+            recommended = [s for s in suggestions if bool(s.get("recommended", False))]
+            hard_conflicts = [s for s in suggestions if bool(s.get("hard_conflict", False))]
+
+            return (
+                jsonify(
+                    {
+                        "ok": True,
+                        "parsed_range": {"start": start, "end": end, "days": parsed_days},
+                        "parsed_trades": parsed_rows,
+                        "journal_rows": journal_rows,
+                        "suggestions": suggestions,
+                        "summary": {
+                            "trade_count": len(parsed_rows),
+                            "journal_count": len(journal_rows),
+                            "suggestion_count": len(suggestions),
+                            "recommended_count": len(recommended),
+                            "hard_conflict_count": len(hard_conflicts),
+                        },
+                    }
+                ),
+                200,
+            )
+        except FileNotFoundError as exc:
+            return jsonify({"error": str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except (KeyError, TypeError, pd.errors.ParserError, OSError) as exc:
+            return jsonify({"error": f"trade upload reconcile preview failed: {exc}"}), 500
 
     @api.route("/journal/matching/relink-preview", methods=["GET", "OPTIONS"])
     def journal_matching_relink_preview():
@@ -1377,10 +1500,10 @@ def register_api(server):
                 raise ValueError("links must be a non-empty array")
 
             incoming_df = pd.DataFrame(parsed_trades)
-            required_cols = ["ContractName", "EnteredAt", "ExitedAt", "EntryPrice", "ExitPrice", "Fees", "PnL", "Size", "Type", "TradeDay", "TradeDuration"]
-            missing = [c for c in required_cols if c not in incoming_df.columns]
-            if missing:
-                raise ValueError(f"parsed_trades missing required columns: {', '.join(missing)}")
+            has_day = "TradeDay" in incoming_df.columns
+            has_id = ("preview_trade_id" in incoming_df.columns) or ("trade_id" in incoming_df.columns)
+            if not has_day or not has_id:
+                raise ValueError("parsed_trades must include TradeDay and preview_trade_id (or trade_id)")
 
             preview_id_col = "preview_trade_id" if "preview_trade_id" in incoming_df.columns else ("trade_id" if "trade_id" in incoming_df.columns else "")
             if not preview_id_col:
@@ -1438,6 +1561,7 @@ def register_api(server):
                     day,
                     day_links,
                     replace_for_journal=replace_for_journal,
+                    performance_rows=id_df.to_dict(orient="records"),
                     actor="api:/journal/matching/commit",
                 )
                 inserted_matches += int(out.get("inserted", 0))
@@ -1559,10 +1683,17 @@ def register_api(server):
             journal_id = payload.get("journal_id")
             trade_id = payload.get("trade_id")
             trade_day = payload.get("trade_day")
+            perf_rows: list[dict[str, Any]] = []
+            if os.path.exists(PERFORMANCE_CSV):
+                try:
+                    perf_rows = ensure_trade_id(pd.read_csv(PERFORMANCE_CSV)).to_dict(orient="records")
+                except Exception:
+                    perf_rows = []
             out = reconfirm_match(
                 str(journal_id or ""),
                 trade_id=str(trade_id or ""),
                 trade_day=str(trade_day or ""),
+                performance_rows=perf_rows,
                 actor="api:/journal/matching/reconfirm",
             )
             return jsonify({"ok": True, **out}), 200

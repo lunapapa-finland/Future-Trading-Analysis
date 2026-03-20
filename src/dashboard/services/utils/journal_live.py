@@ -8,8 +8,9 @@ import uuid
 import pandas as pd
 
 from dashboard.config.analysis import ANALYSIS_TIMEZONE
-from dashboard.config.settings import JOURNAL_LIVE_CSV, JOURNAL_ADJUSTMENTS_CSV, JOURNAL_MATCHES_CSV, CONTRACT_SPECS_CSV
+from dashboard.config.settings import JOURNAL_LIVE_CSV, JOURNAL_ADJUSTMENTS_CSV, JOURNAL_MATCHES_CSV, CONTRACT_SPECS_CSV, PERFORMANCE_CSV
 from dashboard.services.utils.persistence import advisory_file_lock, atomic_write_csv, append_audit_event
+from dashboard.services.utils.trade_enrichment import ensure_trade_id
 
 JOURNAL_COLUMNS = [
     "journal_id",
@@ -74,6 +75,7 @@ MATCH_COLUMNS = [
 
 DIRECTION_VALUES = {"Long", "Short"}
 TRADE_INTENT_KEYS = {"scalp", "swing", "scale_in"}
+GROSS_PNL_TOLERANCE = 0.05
 
 
 def _now_local_iso() -> str:
@@ -653,12 +655,105 @@ def _compute_match_score(journal_row: dict[str, Any], perf_row: dict[str, Any], 
     return score, match_type
 
 
+def _perf_trade_day_key(raw: object) -> str:
+    s = _normalize_text(raw)
+    if not s:
+        return ""
+    ts = pd.to_datetime(s, errors="coerce")
+    if pd.isna(ts):
+        return ""
+    return ts.date().isoformat()
+
+
+def _journal_realized_pnl(
+    journal_row: dict[str, Any],
+    adjustments: list[dict[str, Any]],
+    point_values: dict[str, float],
+) -> float:
+    direction = _normalize_text(journal_row.get("Direction")).title()
+    if direction not in DIRECTION_VALUES:
+        raise ValueError("journal direction is invalid")
+    contract = _normalize_text(journal_row.get("ContractName")).upper()
+    point_value = point_values.get(contract)
+    if point_value is None:
+        raise ValueError(f"missing point_value for contract: {contract}")
+    if not adjustments:
+        raise ValueError("journal adjustments are missing")
+    total = 0.0
+    for a in adjustments:
+        qty = pd.to_numeric(a.get("Qty"), errors="coerce")
+        entry = pd.to_numeric(a.get("EntryPrice"), errors="coerce")
+        exit_px = pd.to_numeric(a.get("ExitPrice"), errors="coerce")
+        if pd.isna(qty) or float(qty) <= 0:
+            raise ValueError("journal adjustment Qty is invalid")
+        if pd.isna(entry):
+            raise ValueError("journal adjustment EntryPrice is invalid")
+        if pd.isna(exit_px):
+            raise ValueError("journal adjustment ExitPrice is required for matching")
+        q = float(qty)
+        e = float(entry)
+        x = float(exit_px)
+        leg = (x - e) * point_value * q if direction == "Long" else (e - x) * point_value * q
+        total += leg
+    return float(total)
+
+
+def _performance_gross_pnl(perf_row: dict[str, Any]) -> float:
+    pnl_net = pd.to_numeric(perf_row.get("PnL(Net)"), errors="coerce")
+    if pd.isna(pnl_net):
+        pnl_net = pd.to_numeric(perf_row.get("PnL"), errors="coerce")
+    fees = pd.to_numeric(perf_row.get("Fees"), errors="coerce")
+    if pd.isna(pnl_net):
+        raise ValueError("performance PnL is missing")
+    if pd.isna(fees):
+        fees = 0.0
+    return float(pnl_net) + float(fees)
+
+
+def _validate_gross_pnl_match(
+    journal_id: str,
+    trade_id: str,
+    trade_day: str,
+    journal_rows: list[dict[str, Any]],
+    adjustment_rows: list[dict[str, Any]],
+    perf_rows: list[dict[str, Any]],
+    point_values: dict[str, float],
+) -> None:
+    day = _normalize_trade_day(trade_day)
+    j = next((r for r in journal_rows if _normalize_text(r.get("journal_id")) == journal_id), None)
+    if not j:
+        raise ValueError(f"journal row not found: {journal_id}")
+    j_day = _normalize_trade_day(j.get("TradeDay"))
+    if j_day != day:
+        raise ValueError(f"journal day mismatch for {journal_id}: {j_day} != {day}")
+    perf = next(
+        (
+            r
+            for r in perf_rows
+            if _normalize_text(r.get("trade_id")) == trade_id and _perf_trade_day_key(r.get("TradeDay")) == day
+        ),
+        None,
+    )
+    if not perf:
+        raise ValueError(f"performance trade not found for trade_id={trade_id} on {day}")
+
+    adj = [r for r in adjustment_rows if _normalize_text(r.get("journal_id")) == journal_id]
+    journal_pnl = _journal_realized_pnl(j, adj, point_values)
+    perf_gross = _performance_gross_pnl(perf)
+    if abs(journal_pnl - perf_gross) > float(GROSS_PNL_TOLERANCE):
+        raise ValueError(
+            f"gross pnl mismatch for journal {journal_id} vs trade {trade_id}: "
+            f"journal={journal_pnl:.2f}, performance_gross={perf_gross:.2f}, tol={GROSS_PNL_TOLERANCE:.2f}"
+        )
+
+
 
 def confirm_matches(
     trade_day: str,
     links: list[dict[str, Any]],
     *,
     replace_for_journal: bool = True,
+    performance_rows: list[dict[str, Any]] | None = None,
     actor: str = "api:/journal/matching/confirm",
 ) -> dict[str, int]:
     day = _normalize_trade_day(trade_day)
@@ -667,6 +762,14 @@ def confirm_matches(
     now_iso = _now_local_iso()
     inserted = 0
     inactivated = 0
+    journal_rows = load_journal_live().to_dict(orient="records")
+    adjustment_rows = load_journal_adjustments().to_dict(orient="records")
+    point_values = _load_point_values()
+    if performance_rows is None:
+        perf_df = ensure_trade_id(pd.read_csv(PERFORMANCE_CSV)) if pd.io.common.file_exists(PERFORMANCE_CSV) else pd.DataFrame()
+        perf_rows = perf_df.to_dict(orient="records")
+    else:
+        perf_rows = ensure_trade_id(pd.DataFrame(performance_rows)).to_dict(orient="records")
 
     with advisory_file_lock(JOURNAL_MATCHES_CSV):
         matches = load_journal_matches()
@@ -679,6 +782,15 @@ def confirm_matches(
             trade_id = _normalize_text(raw.get("trade_id"))
             if not journal_id or not trade_id:
                 raise ValueError("journal_id and trade_id are required")
+            _validate_gross_pnl_match(
+                journal_id,
+                trade_id,
+                day,
+                journal_rows,
+                adjustment_rows,
+                perf_rows,
+                point_values,
+            )
 
             same_active_exists = any(
                 _normalize_text(r.get("journal_id")) == journal_id
@@ -813,6 +925,7 @@ def reconfirm_match(
     *,
     trade_id: str | None = None,
     trade_day: str | None = None,
+    performance_rows: list[dict[str, Any]] | None = None,
     actor: str = "api:/journal/matching/reconfirm",
 ) -> dict[str, int]:
     j_id = _normalize_text(journal_id)
@@ -834,6 +947,25 @@ def reconfirm_match(
         check = check[check["TradeDay"].astype(str) == day].copy()
     if check.empty:
         raise ValueError("no active link found for reconfirmation")
+
+    journal_rows = load_journal_live().to_dict(orient="records")
+    adjustment_rows = load_journal_adjustments().to_dict(orient="records")
+    point_values = _load_point_values()
+    if performance_rows is None:
+        perf_df = ensure_trade_id(pd.read_csv(PERFORMANCE_CSV)) if pd.io.common.file_exists(PERFORMANCE_CSV) else pd.DataFrame()
+        perf_rows = perf_df.to_dict(orient="records")
+    else:
+        perf_rows = ensure_trade_id(pd.DataFrame(performance_rows)).to_dict(orient="records")
+    for _, row in check.iterrows():
+        _validate_gross_pnl_match(
+            j_id,
+            _normalize_text(row.get("trade_id")),
+            _normalize_text(row.get("TradeDay")),
+            journal_rows,
+            adjustment_rows,
+            perf_rows,
+            point_values,
+        )
 
     with advisory_file_lock(JOURNAL_LIVE_CSV):
         journal = load_journal_live()

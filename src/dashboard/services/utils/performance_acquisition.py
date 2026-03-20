@@ -356,6 +356,212 @@ def process_csv(file_path):
     return round_trips_df
 
 
+def process_csv_with_execution_legs(file_path: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Parse raw broker CSV to round-trip trades and fill-derived execution legs.
+
+    Legs are generated from the same FIFO unit-matching logic used for round trips,
+    so UI split/merge can operate on raw-derived units instead of synthetic trade legs.
+    """
+    df = pd.read_csv(file_path)
+    df['Date/Time'] = pd.to_datetime(df['Date/Time'], format='%Y%m%d;%H%M%S')
+    eastern_tz = pytz.timezone('America/New_York')
+    df['Date/Time'] = df['Date/Time'].apply(lambda x: x.tz_localize(eastern_tz))
+    df = df.sort_values('Date/Time').reset_index(drop=True)
+
+    def calculate_trade_fee(row):
+        return (
+            abs(row['BrokerExecutionCommission']) +
+            abs(row['ThirdPartyExecutionCommission']) +
+            abs(row['ThirdPartyRegulatoryCommission'])
+        )
+
+    df['TotalFee'] = df.apply(calculate_trade_fee, axis=1)
+    df['FeePerUnit'] = df['TotalFee'] / df['Quantity'].abs()
+
+    point_values = _load_point_values()
+    round_trip_units: list[dict[str, object]] = []
+    execution_legs: list[dict[str, object]] = []
+    unit_counter = 0
+
+    for symbol in df['Symbol'].unique():
+        symbol_df = df[df['Symbol'] == symbol].copy()
+        symbol_root = _symbol_root(symbol)
+        point_value = point_values.get(symbol_root)
+        if point_value is None:
+            point_value = _DEFAULT_POINT_VALUES.get("MES", 5.0)
+            logger.warning(
+                "Missing point_value for symbol '%s' (root '%s'); defaulting to %.2f. Add row to %s",
+                symbol,
+                symbol_root,
+                point_value,
+                CONTRACT_SPECS_CSV,
+            )
+
+        buy_trades = deque()
+        sell_trades = deque()
+
+        for ridx, row in symbol_df.iterrows():
+            qty = int(row['Quantity'])
+            fee_per_unit = row['TotalFee'] / abs(qty)
+            for u in range(abs(qty)):
+                fill_id = f"{Path(file_path).name}:{int(ridx)}:{u}:{'B' if qty > 0 else 'S'}"
+                trade = {
+                    'FillId': fill_id,
+                    'Time': row['Date/Time'],
+                    'Price': float(row['Price']),
+                    'FeePerUnit': float(fee_per_unit),
+                    'Symbol': str(row['Symbol']),
+                }
+                if qty > 0:
+                    buy_trades.append(trade)
+                else:
+                    sell_trades.append(trade)
+
+        while buy_trades and sell_trades:
+            buy = buy_trades.popleft()
+            sell = sell_trades.popleft()
+            unit_counter += 1
+            if buy['Time'] <= sell['Time']:
+                trade_type = 'Long'
+                entered_at = buy['Time']
+                exited_at = sell['Time']
+                entry_price = float(buy['Price'])
+                exit_price = float(sell['Price'])
+                fees = float(buy['FeePerUnit'] + sell['FeePerUnit'])
+                pnl = (exit_price - entry_price) * point_value - fees
+                open_fill = buy
+                close_fill = sell
+                open_qty = 1
+                close_qty = -1
+            else:
+                trade_type = 'Short'
+                entered_at = sell['Time']
+                exited_at = buy['Time']
+                entry_price = float(sell['Price'])
+                exit_price = float(buy['Price'])
+                fees = float(buy['FeePerUnit'] + sell['FeePerUnit'])
+                pnl = (entry_price - exit_price) * point_value - fees
+                open_fill = sell
+                close_fill = buy
+                open_qty = -1
+                close_qty = 1
+
+            trade_duration_seconds = (exited_at - entered_at).total_seconds()
+            trade_duration_days = trade_duration_seconds // (24 * 3600)
+            trade_duration_seconds %= (24 * 3600)
+            trade_duration_hours = trade_duration_seconds // 3600
+            trade_duration_seconds %= 3600
+            trade_duration_minutes = trade_duration_seconds // 60
+            trade_duration_seconds %= 60
+            trade_duration_seconds = int(trade_duration_seconds)
+            trade_duration_str = f"{int(trade_duration_days)} days {int(trade_duration_hours):02}:{int(trade_duration_minutes):02}:{trade_duration_seconds:02}"
+
+            target_tz = pytz.timezone('US/Central')
+            entered_at_tz = entered_at.astimezone(target_tz)
+            exited_at_tz = exited_at.astimezone(target_tz)
+            entered_at_str = entered_at_tz.strftime('%m/%d/%Y %H:%M:%S %z').replace('+0300', '+03:00')
+            exited_at_str = exited_at_tz.strftime('%m/%d/%Y %H:%M:%S %z').replace('+0300', '+03:00')
+            unit_key = "|".join(
+                [
+                    str(symbol),
+                    trade_type,
+                    entered_at_str,
+                    exited_at_str,
+                    f"{entry_price:.8f}",
+                    f"{exit_price:.8f}",
+                    str(unit_counter),
+                ]
+            )
+            round_trip_units.append(
+                {
+                    'ContractName': symbol,
+                    'EnteredAt': entered_at_str,
+                    'ExitedAt': exited_at_str,
+                    'EntryPrice': entry_price,
+                    'ExitPrice': exit_price,
+                    'Fees': round(fees, 2),
+                    'PnL': round(pnl, 2),
+                    'Size': 1,
+                    'Type': trade_type,
+                    'TradeDay': entered_at_str,
+                    'TradeDuration': trade_duration_str,
+                    '__unit_key': unit_key,
+                }
+            )
+            execution_legs.append(
+                {
+                    '__unit_key': unit_key,
+                    'raw_fill_id': str(open_fill['FillId']),
+                    'ContractName': str(symbol),
+                    'Time': entered_at_str,
+                    'Qty': open_qty,
+                    'Price': float(open_fill['Price']),
+                    'Fee': round(float(open_fill['FeePerUnit']), 6),
+                    'LegRole': 'open',
+                }
+            )
+            execution_legs.append(
+                {
+                    '__unit_key': unit_key,
+                    'raw_fill_id': str(close_fill['FillId']),
+                    'ContractName': str(symbol),
+                    'Time': exited_at_str,
+                    'Qty': close_qty,
+                    'Price': float(close_fill['Price']),
+                    'Fee': round(float(close_fill['FeePerUnit']), 6),
+                    'LegRole': 'close',
+                }
+            )
+
+    if not round_trip_units:
+        return pd.DataFrame(), pd.DataFrame()
+
+    unit_df = pd.DataFrame(round_trip_units)
+    grouped = unit_df.groupby(
+        ['EnteredAt', 'ExitedAt', 'ContractName', 'Type', 'EntryPrice', 'ExitPrice'], dropna=False
+    ).agg(
+        {
+            'Size': 'sum',
+            'PnL': 'sum',
+            'Fees': 'sum',
+            'TradeDay': 'first',
+            'TradeDuration': 'first',
+        }
+    ).reset_index()
+    trade_day_ts = pd.to_datetime(grouped['TradeDay'], format='%m/%d/%Y %H:%M:%S %z', errors='coerce', utc=True)
+    entered_at_ts = pd.to_datetime(grouped['EnteredAt'], format='%m/%d/%Y %H:%M:%S %z', errors='coerce', utc=True)
+    grouped['TradeDate'] = trade_day_ts.fillna(entered_at_ts).dt.tz_convert('US/Central').dt.date
+    grouped = grouped[grouped['TradeDate'].notna()].copy()
+    grouped = grouped.sort_values(['TradeDate', 'EnteredAt']).reset_index(drop=True)
+    grouped['Id'] = 1
+    for date in grouped['TradeDate'].unique():
+        mask = grouped['TradeDate'] == date
+        grouped.loc[mask, 'Id'] = range(1, mask.sum() + 1)
+    grouped = grouped.drop(columns=['TradeDate'])
+
+    output_columns = [
+        'Id', 'ContractName', 'EnteredAt', 'ExitedAt', 'EntryPrice', 'ExitPrice',
+        'Fees', 'PnL', 'Size', 'Type', 'TradeDay', 'TradeDuration'
+    ]
+    round_trips_df = grouped[output_columns].copy()
+
+    # Map unit legs to grouped trades by signature (same keys as grouping).
+    group_keys = ['EnteredAt', 'ExitedAt', 'ContractName', 'Type', 'EntryPrice', 'ExitPrice']
+    unit_with_group = unit_df[group_keys + ['__unit_key']].copy()
+    leg_df = pd.DataFrame(execution_legs)
+    # Keep group keys from unit mapping to avoid suffix collisions (e.g., ContractName_x/y)
+    # so downstream merge keys remain stable.
+    leg_df = leg_df.drop(columns=['ContractName'], errors='ignore')
+    leg_df = leg_df.merge(unit_with_group, on='__unit_key', how='left')
+    leg_df = leg_df.merge(grouped[group_keys + ['Id', 'TradeDay']], on=group_keys, how='left')
+    leg_df['TradeDay'] = leg_df['TradeDay'].fillna("").astype(str)
+    leg_df['Id'] = pd.to_numeric(leg_df['Id'], errors='coerce').fillna(0).astype(int)
+    leg_df = leg_df[
+        ['raw_fill_id', 'Id', 'TradeDay', 'ContractName', 'Time', 'Qty', 'Price', 'Fee', 'LegRole', 'EnteredAt', 'ExitedAt', 'EntryPrice', 'ExitPrice', 'Type']
+    ].copy()
+    return round_trips_df, leg_df
+
+
 def calculate_streaks(df):
     df['WinOrLoss'] = df['PnL'].apply(lambda x: 1 if x > 0 else -1)
     df['Streak'] = 0

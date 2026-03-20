@@ -7,6 +7,7 @@ import pandas as pd
 from dashboard.app import app
 from dashboard.api import routes
 import dashboard.services.utils.journal_live as journal_live
+import dashboard.services.utils.performance_acquisition as perf_acq
 
 
 def _seed_perf_csv(path):
@@ -20,7 +21,8 @@ def _seed_perf_csv(path):
             "ExitedAt": ["2026-03-16T14:40:00Z", "2026-03-16T15:45:00Z"],
             "EntryPrice": [5000.0, 5010.0],
             "ExitPrice": [5005.0, 5002.0],
-            "PnL(Net)": [20.0, -35.0],
+            "PnL(Net)": [25.0, 80.0],
+            "Fees": [0.0, 0.0],
             "Type": ["Long", "Short"],
             "Size": [1, 2],
         }
@@ -50,7 +52,14 @@ def _patch_journal_storage(monkeypatch, tmp_path):
     monkeypatch.setattr(journal_live, "JOURNAL_ADJUSTMENTS_CSV", str(adj_csv))
     monkeypatch.setattr(journal_live, "JOURNAL_MATCHES_CSV", str(match_csv))
     monkeypatch.setattr(journal_live, "CONTRACT_SPECS_CSV", str(specs_csv))
+    # Keep journal-live performance reference aligned with route-level test patch.
+    monkeypatch.setattr(journal_live, "PERFORMANCE_CSV", str(routes.PERFORMANCE_CSV))
     return journal_csv, adj_csv, match_csv
+
+
+def _patch_performance_storage(monkeypatch, perf_csv):
+    monkeypatch.setattr(routes, "PERFORMANCE_CSV", str(perf_csv))
+    monkeypatch.setattr(perf_acq, "PERFORMANCE_CSV", str(perf_csv))
 
 
 def _valid_adjustment(
@@ -104,7 +113,7 @@ def _commit_payload_with_ids():
             "EntryPrice": 5000.0,
             "ExitPrice": 5005.0,
             "Fees": 0.0,
-            "PnL": 20.0,
+            "PnL": 25.0,
             "Size": 1,
             "Type": "Long",
             "TradeDay": "2026-03-16",
@@ -119,7 +128,7 @@ def _commit_payload_with_ids():
             "EntryPrice": 5010.0,
             "ExitPrice": 5002.0,
             "Fees": 0.0,
-            "PnL": -35.0,
+            "PnL": 80.0,
             "Size": 2,
             "Type": "Short",
             "TradeDay": "2026-03-16",
@@ -210,7 +219,7 @@ def test_live_journal_adjustments_append_and_update(tmp_path, monkeypatch):
 def test_matching_confirm_and_unlink(tmp_path, monkeypatch):
     perf_csv = tmp_path / "Performance_sum.csv"
     _seed_perf_csv(perf_csv)
-    monkeypatch.setattr(routes, "PERFORMANCE_CSV", str(perf_csv))
+    _patch_performance_storage(monkeypatch, perf_csv)
     _patch_journal_storage(monkeypatch, tmp_path)
 
     client = app.test_client()
@@ -259,7 +268,7 @@ def test_live_journal_delete_allowed_for_unmatched(tmp_path, monkeypatch):
 def test_live_journal_delete_rejects_active_matched(tmp_path, monkeypatch):
     perf_csv = tmp_path / "Performance_sum.csv"
     _seed_perf_csv(perf_csv)
-    monkeypatch.setattr(routes, "PERFORMANCE_CSV", str(perf_csv))
+    _patch_performance_storage(monkeypatch, perf_csv)
     _patch_journal_storage(monkeypatch, tmp_path)
     client = app.test_client()
 
@@ -281,7 +290,7 @@ def test_live_journal_delete_rejects_active_matched(tmp_path, monkeypatch):
 def test_edit_rejects_when_journal_has_active_match(tmp_path, monkeypatch):
     perf_csv = tmp_path / "Performance_sum.csv"
     _seed_perf_csv(perf_csv)
-    monkeypatch.setattr(routes, "PERFORMANCE_CSV", str(perf_csv))
+    _patch_performance_storage(monkeypatch, perf_csv)
     _patch_journal_storage(monkeypatch, tmp_path)
 
     client = app.test_client()
@@ -318,7 +327,7 @@ def test_edit_rejects_when_journal_has_active_match(tmp_path, monkeypatch):
 def test_analysis_excludes_unmatched_by_default_when_matches_exist(tmp_path, monkeypatch):
     perf_csv = tmp_path / "Performance_sum.csv"
     _seed_perf_csv(perf_csv)
-    monkeypatch.setattr(routes, "PERFORMANCE_CSV", str(perf_csv))
+    _patch_performance_storage(monkeypatch, perf_csv)
     _patch_journal_storage(monkeypatch, tmp_path)
 
     client = app.test_client()
@@ -349,7 +358,7 @@ def test_analysis_excludes_unmatched_by_default_when_matches_exist(tmp_path, mon
 def test_analysis_excludes_all_when_no_active_matches_and_default_filter(tmp_path, monkeypatch):
     perf_csv = tmp_path / "Performance_sum.csv"
     _seed_perf_csv(perf_csv)
-    monkeypatch.setattr(routes, "PERFORMANCE_CSV", str(perf_csv))
+    _patch_performance_storage(monkeypatch, perf_csv)
     _patch_journal_storage(monkeypatch, tmp_path)
 
     client = app.test_client()
@@ -365,7 +374,7 @@ def test_analysis_excludes_all_when_no_active_matches_and_default_filter(tmp_pat
 def test_matching_confirm_rejects_unknown_trade_id(tmp_path, monkeypatch):
     perf_csv = tmp_path / "Performance_sum.csv"
     _seed_perf_csv(perf_csv)
-    monkeypatch.setattr(routes, "PERFORMANCE_CSV", str(perf_csv))
+    _patch_performance_storage(monkeypatch, perf_csv)
     _patch_journal_storage(monkeypatch, tmp_path)
 
     client = app.test_client()
@@ -388,7 +397,7 @@ def test_matching_confirm_rejects_unknown_trade_id(tmp_path, monkeypatch):
 def test_combined_performance_projects_matched_live_journal_labels(tmp_path, monkeypatch):
     perf_csv = tmp_path / "Performance_sum.csv"
     _seed_perf_csv(perf_csv)
-    monkeypatch.setattr(routes, "PERFORMANCE_CSV", str(perf_csv))
+    _patch_performance_storage(monkeypatch, perf_csv)
     _patch_journal_storage(monkeypatch, tmp_path)
 
     client = app.test_client()
@@ -452,7 +461,7 @@ def test_trade_upload_parse_preview_endpoint_archive_flag(tmp_path, monkeypatch)
 def test_matching_relink_preview_loads_from_performance_sum(tmp_path, monkeypatch):
     perf_csv = tmp_path / "Performance_sum.csv"
     _seed_perf_csv(perf_csv)
-    monkeypatch.setattr(routes, "PERFORMANCE_CSV", str(perf_csv))
+    _patch_performance_storage(monkeypatch, perf_csv)
     _patch_journal_storage(monkeypatch, tmp_path)
     client = app.test_client()
 
@@ -471,7 +480,7 @@ def test_matching_relink_preview_loads_from_performance_sum(tmp_path, monkeypatc
 def test_trade_upload_commit_merges_performance(tmp_path, monkeypatch):
     perf_csv = tmp_path / "Performance_sum.csv"
     _seed_perf_csv(perf_csv)
-    monkeypatch.setattr(routes, "PERFORMANCE_CSV", str(perf_csv))
+    _patch_performance_storage(monkeypatch, perf_csv)
     client = app.test_client()
 
     commit = client.post(
@@ -489,7 +498,7 @@ def test_trade_upload_commit_merges_performance(tmp_path, monkeypatch):
 def test_matching_commit_link_only_skips_performance_merge(tmp_path, monkeypatch):
     perf_csv = tmp_path / "Performance_sum.csv"
     _seed_perf_csv(perf_csv)
-    monkeypatch.setattr(routes, "PERFORMANCE_CSV", str(perf_csv))
+    _patch_performance_storage(monkeypatch, perf_csv)
     _patch_journal_storage(monkeypatch, tmp_path)
     client = app.test_client()
 
