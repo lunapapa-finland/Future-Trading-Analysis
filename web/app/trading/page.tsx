@@ -23,6 +23,11 @@ function localDateYmd(d: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+function n(v: unknown): number | null {
+  const x = Number(v);
+  return Number.isFinite(x) ? x : null;
+}
+
 export default function TradingPage() {
   const [symbol, setSymbol] = useState("MES");
   const [timeframe, setTimeframe] = useState<Timeframe>("5m");
@@ -123,7 +128,8 @@ export default function TradingPage() {
         exitPrice: Number(p["ExitPrice"] || p["Exit"] || p["Close"] || 0),
         pnl: Number(p["PnL(Net)"] || 0),
         type: String(p["Type"] || ""),
-        size: Number(p["Size"] || 0)
+        size: Number(p["Size"] || 0),
+        tradeId: String(p["trade_id"] || p["tradeId"] || "").trim(),
       })) || [],
     [data?.performance]
   );
@@ -219,20 +225,6 @@ export default function TradingPage() {
     [computeStudyLines, fullscreenData]
   );
 
-  const fullscreenTrades = useMemo(() => {
-    if (!fullscreenData.length) return tradeMarkers;
-    const minTs = new Date(fullscreenData[0].time).getTime();
-    const maxTs = new Date(fullscreenData[fullscreenData.length - 1].time).getTime();
-    return tradeMarkers.filter((t) => {
-      const entry = new Date(t.entryTime).getTime();
-      const exit = new Date(t.exitTime).getTime();
-      if (Number.isNaN(entry) && Number.isNaN(exit)) return false;
-      const earliest = Number.isNaN(entry) ? exit : Number.isNaN(exit) ? entry : Math.min(entry, exit);
-      const latest = Number.isNaN(entry) ? exit : Number.isNaN(exit) ? entry : Math.max(entry, exit);
-      return latest >= minTs && earliest <= maxTs;
-    });
-  }, [fullscreenData, tradeMarkers]);
-
   const ohlcRange = useMemo(() => {
     if (!viewData.length) return null;
     const open = viewData[0].open;
@@ -305,6 +297,66 @@ export default function TradingPage() {
       activeJournalRows.filter((j) => String(j.MatchStatus || "").trim().toLowerCase() === "needs_reconfirm").length,
     [activeJournalRows]
   );
+  const activeTradePnl = useMemo(() => {
+    if (!activeJournalTradeId) return null;
+    const row = (data?.performance || []).find(
+      (r) => String((r as Record<string, unknown>)["trade_id"] || "").trim() === activeJournalTradeId
+    ) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    const pnl = n(row["PnL(Net)"]);
+    return pnl == null ? null : pnl;
+  }, [activeJournalTradeId, data?.performance]);
+  const chartTradeMarkers = useMemo(
+    () =>
+      tradeMarkers.map((t) => {
+        const tradeId = String(t.tradeId || "").trim();
+        const journals = (tradeId ? journalIdsByTradeId.get(tradeId) || [] : [])
+          .map((id) => liveJournalById.get(id))
+          .filter(Boolean)
+          .map((j) => {
+            const risk = n(j?.PotentialRiskUSD);
+            const initialRr = n(j?.WinLossRatio);
+            const actualRr = risk && risk > 0 ? Number(t.pnl) / risk : null;
+            return {
+              journal_id: String(j?.journal_id || ""),
+              phase: String(j?.Phase || ""),
+              context: String(j?.Context || ""),
+              signal_bar: String(j?.SignalBar || ""),
+              setup: String(j?.Setup || ""),
+              trade_intent: String(j?.TradeIntent || ""),
+              direction: String(j?.Direction || ""),
+              size: j?.Size,
+              max_loss_usd: j?.MaxLossUSD,
+              entry_price: j?.EntryPrice,
+              take_profit_price: j?.TakeProfitPrice,
+              stop_loss_price: j?.StopLossPrice,
+              exit_price: j?.ExitPrice,
+              potential_risk_usd: j?.PotentialRiskUSD,
+              potential_reward_usd: j?.PotentialRewardUSD,
+              initial_rr: initialRr,
+              actual_rr: actualRr,
+              rule_status: String(j?.RuleStatus || ""),
+              notes: String(j?.Notes || ""),
+              match_status: String(j?.MatchStatus || ""),
+            };
+          });
+        return { ...t, journals };
+      }),
+    [journalIdsByTradeId, liveJournalById, tradeMarkers]
+  );
+  const fullscreenChartTrades = useMemo(() => {
+    if (!fullscreenData.length) return chartTradeMarkers;
+    const minTs = new Date(fullscreenData[0].time).getTime();
+    const maxTs = new Date(fullscreenData[fullscreenData.length - 1].time).getTime();
+    return chartTradeMarkers.filter((t) => {
+      const entry = new Date(t.entryTime).getTime();
+      const exit = new Date(t.exitTime).getTime();
+      if (Number.isNaN(entry) && Number.isNaN(exit)) return false;
+      const earliest = Number.isNaN(entry) ? exit : Number.isNaN(exit) ? entry : Math.min(entry, exit);
+      const latest = Number.isNaN(entry) ? exit : Number.isNaN(exit) ? entry : Math.max(entry, exit);
+      return latest >= minTs && earliest <= maxTs;
+    });
+  }, [chartTradeMarkers, fullscreenData]);
 
   useEffect(() => {
     setDateSeeded(false);
@@ -515,7 +567,7 @@ export default function TradingPage() {
             {isFetching && <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Loading…</p>}
             <CandlesChart
               data={viewData}
-              trades={tradeMarkers}
+              trades={chartTradeMarkers}
               showTrades={showTrades}
               heightClass={isFullscreen ? "h-[70vh]" : "h-[420px]"}
               studyLines={studyLines}
@@ -563,7 +615,7 @@ export default function TradingPage() {
             />
             <CandlesChart
               data={fullscreenData}
-              trades={fullscreenTrades}
+              trades={fullscreenChartTrades}
               showTrades={showTrades}
               heightClass="h-[70vh] sm:h-[80vh]"
               studyLines={fullscreenStudyLines}
@@ -841,6 +893,12 @@ export default function TradingPage() {
               {activeJournalRows.length ? (
                 activeJournalRows.map((j) => (
                   <div key={String(j.journal_id || "")} className="rounded border border-white/10 bg-white/5 p-3 text-xs text-slate-200">
+                    {(() => {
+                      const risk = n(j.PotentialRiskUSD);
+                      const initialRr = n(j.WinLossRatio);
+                      const actualRr = risk && risk > 0 && activeTradePnl != null ? activeTradePnl / risk : null;
+                      return (
+                        <>
                     <div className="grid gap-2 md:grid-cols-4">
                       <p><span className="text-slate-400">Journal ID:</span> {String(j.journal_id || "")}</p>
                       <p><span className="text-slate-400">TradeDay:</span> {String(j.TradeDay || "")}</p>
@@ -849,6 +907,12 @@ export default function TradingPage() {
                       <p><span className="text-slate-400">Direction:</span> {String(j.Direction || "")}</p>
                       <p><span className="text-slate-400">Size:</span> {String(j.Size || "")}</p>
                       <p><span className="text-slate-400">Intent:</span> {String(j.TradeIntent || "")}</p>
+                      <p><span className="text-slate-400">Phase:</span> {String(j.Phase || "") || "-"}</p>
+                      <p><span className="text-slate-400">Context:</span> {String(j.Context || "") || "-"}</p>
+                      <p><span className="text-slate-400">SignalBar:</span> {String(j.SignalBar || "") || "-"}</p>
+                      <p><span className="text-slate-400">Setup:</span> {String(j.Setup || "") || "-"}</p>
+                      <p><span className="text-slate-400">Max Loss:</span> {String(j.MaxLossUSD || "-")}</p>
+                      <p><span className="text-slate-400">Rule Status:</span> {String(j.RuleStatus || "-")}</p>
                       <p className="flex items-center gap-2">
                         <span className="text-slate-400">Match:</span>
                         {String(j.MatchStatus || "").trim().toLowerCase() === "needs_reconfirm" ? (
@@ -869,8 +933,12 @@ export default function TradingPage() {
                       <p><span className="text-slate-400">TP:</span> {String(j.TakeProfitPrice || "-")}</p>
                       <p><span className="text-slate-400">SL:</span> {String(j.StopLossPrice || "-")}</p>
                       <p><span className="text-slate-400">Exit:</span> {String(j.ExitPrice || "-")}</p>
+                      <p><span className="text-slate-400">EnteredAt:</span> {String(j.EnteredAt || "-")}</p>
+                      <p><span className="text-slate-400">ExitedAt:</span> {String(j.ExitedAt || "-")}</p>
                       <p><span className="text-slate-400">Expected Risk:</span> {String(j.PotentialRiskUSD || "-")}</p>
                       <p><span className="text-slate-400">Expected Reward:</span> {String(j.PotentialRewardUSD || "-")}</p>
+                      <p><span className="text-slate-400">Initial R:R:</span> {initialRr == null ? "-" : initialRr.toFixed(3)}</p>
+                      <p><span className="text-slate-400">Actual R:R:</span> {actualRr == null ? "-" : actualRr.toFixed(3)}</p>
                     </div>
                     <div className="mt-2 rounded border border-white/10 bg-surface p-2">
                       <p className="mb-1 text-[10px] uppercase tracking-[0.12em] text-slate-400">Detail Rows</p>
@@ -889,6 +957,9 @@ export default function TradingPage() {
                     {String(j.Notes || "").trim() ? (
                       <p className="mt-2 text-[11px]"><span className="text-slate-400">Notes:</span> {String(j.Notes || "")}</p>
                     ) : null}
+                        </>
+                      );
+                    })()}
                   </div>
                 ))
               ) : (

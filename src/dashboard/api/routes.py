@@ -48,6 +48,7 @@ from dashboard.services.utils.journal_live import (
     list_live_journal,
     upsert_live_journal_rows,
     delete_live_journal_row,
+    live_daily_limit_status,
     confirm_matches,
     list_active_matches,
     unlink_matches,
@@ -1082,7 +1083,25 @@ def register_api(server):
             if request.method == "GET":
                 start = request.args.get("start")
                 end = request.args.get("end")
-                return jsonify({"rows": list_live_journal(start=start, end=end)}), 200
+                rows = list_live_journal(start=start, end=end)
+                app_cfg = get_app_config()
+                live_cfg = app_cfg.get("live_journal", {}) if isinstance(app_cfg, dict) else {}
+                analysis_cfg = app_cfg.get("analysis", {}) if isinstance(app_cfg, dict) else {}
+                rc_cfg = analysis_cfg.get("rule_compliance", {}) if isinstance(analysis_cfg, dict) else {}
+                raw_trade_limit = pd.to_numeric(live_cfg.get("daily_max_trade", 5), errors="coerce")
+                raw_loss_limit = pd.to_numeric(live_cfg.get("daily_max_loss", rc_cfg.get("max_daily_loss", 500.0)), errors="coerce")
+                daily_max_trade = int(raw_trade_limit) if pd.notna(raw_trade_limit) and int(raw_trade_limit) > 0 else 5
+                daily_max_loss = float(raw_loss_limit) if pd.notna(raw_loss_limit) and float(raw_loss_limit) > 0 else 500.0
+                return jsonify(
+                    {
+                        "rows": rows,
+                        "limits": {
+                            "daily_max_trade": daily_max_trade,
+                            "daily_max_loss": daily_max_loss,
+                        },
+                        "daily_status": live_daily_limit_status(rows),
+                    }
+                ), 200
             if request.method == "DELETE":
                 payload = _require_json_object()
                 journal_id = payload.get("journal_id")

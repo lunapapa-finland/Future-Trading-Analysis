@@ -8,7 +8,8 @@ import uuid
 import pandas as pd
 
 from dashboard.config.analysis import ANALYSIS_TIMEZONE
-from dashboard.config.settings import JOURNAL_LIVE_CSV, JOURNAL_ADJUSTMENTS_CSV, JOURNAL_MATCHES_CSV, CONTRACT_SPECS_CSV, PERFORMANCE_CSV
+from dashboard.config.app_config import get_app_config
+from dashboard.config.settings import JOURNAL_LIVE_CSV, JOURNAL_ADJUSTMENTS_CSV, JOURNAL_MATCHES_CSV, CONTRACT_SPECS_CSV, PERFORMANCE_CSV, DAY_PLAN_CSV
 from dashboard.services.utils.persistence import advisory_file_lock, atomic_write_csv, append_audit_event
 from dashboard.services.utils.trade_enrichment import ensure_trade_id
 
@@ -76,6 +77,8 @@ MATCH_COLUMNS = [
 DIRECTION_VALUES = {"Long", "Short"}
 TRADE_INTENT_KEYS = {"scalp", "swing", "scale_in"}
 GROSS_PNL_TOLERANCE = 0.05
+DEFAULT_DAILY_MAX_TRADE = 5
+DEFAULT_DAILY_MAX_LOSS = 500.0
 
 
 def _now_local_iso() -> str:
@@ -144,6 +147,169 @@ def _load_point_values() -> dict[str, float]:
         pv = pd.to_numeric(row.get("point_value"), errors="coerce")
         if symbol and pd.notna(pv) and float(pv) > 0:
             out[symbol] = float(pv)
+    return out
+
+
+def _live_guardrails() -> tuple[int, float]:
+    cfg = get_app_config()
+    live_cfg = cfg.get("live_journal", {}) if isinstance(cfg, dict) else {}
+    analysis_cfg = cfg.get("analysis", {}) if isinstance(cfg, dict) else {}
+    rc_cfg = analysis_cfg.get("rule_compliance", {}) if isinstance(analysis_cfg, dict) else {}
+    raw_trade = live_cfg.get("daily_max_trade", DEFAULT_DAILY_MAX_TRADE) if isinstance(live_cfg, dict) else DEFAULT_DAILY_MAX_TRADE
+    raw_loss = (
+        live_cfg.get("daily_max_loss", rc_cfg.get("max_daily_loss", DEFAULT_DAILY_MAX_LOSS))
+        if isinstance(live_cfg, dict)
+        else rc_cfg.get("max_daily_loss", DEFAULT_DAILY_MAX_LOSS)
+    )
+    max_trade = int(pd.to_numeric(raw_trade, errors="coerce")) if pd.notna(pd.to_numeric(raw_trade, errors="coerce")) else DEFAULT_DAILY_MAX_TRADE
+    max_loss = float(pd.to_numeric(raw_loss, errors="coerce")) if pd.notna(pd.to_numeric(raw_loss, errors="coerce")) else DEFAULT_DAILY_MAX_LOSS
+    if max_trade <= 0:
+        max_trade = DEFAULT_DAILY_MAX_TRADE
+    if max_loss <= 0:
+        max_loss = DEFAULT_DAILY_MAX_LOSS
+    return max_trade, max_loss
+
+
+def _safe_float(raw: object) -> float | None:
+    val = pd.to_numeric(raw, errors="coerce")
+    if pd.isna(val):
+        return None
+    return float(val)
+
+
+def _journal_row_realized_loss_usd(row: dict[str, Any], point_values: dict[str, float]) -> float:
+    direction = _normalize_text(row.get("Direction")).title()
+    if direction not in DIRECTION_VALUES:
+        return 0.0
+    contract = _normalize_text(row.get("ContractName")).upper()
+    point_value = point_values.get(contract)
+    if point_value is None or point_value <= 0:
+        return 0.0
+    adjustments = row.get("adjustments")
+    if isinstance(adjustments, list) and adjustments:
+        pnl_total = 0.0
+        for a in adjustments:
+            if not isinstance(a, dict):
+                continue
+            qty = _safe_float(a.get("Qty"))
+            entry = _safe_float(a.get("EntryPrice"))
+            exit_px = _safe_float(a.get("ExitPrice"))
+            if qty is None or qty <= 0 or entry is None or exit_px is None:
+                return 0.0
+            leg = (exit_px - entry) * point_value * qty if direction == "Long" else (entry - exit_px) * point_value * qty
+            pnl_total += leg
+        return abs(pnl_total) if pnl_total < 0 else 0.0
+
+    size = _safe_float(row.get("Size"))
+    entry = _safe_float(row.get("EntryPrice"))
+    exit_px = _safe_float(row.get("ExitPrice"))
+    if size is None or size <= 0 or entry is None or exit_px is None:
+        return 0.0
+    pnl = (exit_px - entry) * point_value * size if direction == "Long" else (entry - exit_px) * point_value * size
+    return abs(pnl) if pnl < 0 else 0.0
+
+
+def live_daily_limit_status(
+    rows: list[dict[str, Any]],
+    *,
+    point_values: dict[str, float] | None = None,
+) -> list[dict[str, Any]]:
+    max_trade, max_loss = _live_guardrails()
+    pv = point_values if point_values is not None else _load_point_values()
+    by_day: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        day = _normalize_text(row.get("TradeDay"))
+        if not day:
+            continue
+        bucket = by_day.setdefault(
+            day,
+            {
+                "TradeDay": day,
+                "trade_count": 0,
+                "cumulative_loss_usd": 0.0,
+                "daily_max_trade": max_trade,
+                "daily_max_loss": max_loss,
+            },
+        )
+        bucket["trade_count"] += 1
+        bucket["cumulative_loss_usd"] += _journal_row_realized_loss_usd(row, pv)
+
+    out: list[dict[str, Any]] = []
+    for day in sorted(by_day.keys()):
+        row = by_day[day]
+        trade_reached = int(row["trade_count"]) >= int(row["daily_max_trade"])
+        loss_reached = float(row["cumulative_loss_usd"]) >= float(row["daily_max_loss"])
+        row["max_trade_reached"] = trade_reached
+        row["max_loss_reached"] = loss_reached
+        row["blocked"] = trade_reached or loss_reached
+        row["cumulative_loss_usd"] = round(float(row["cumulative_loss_usd"]), 6)
+        out.append(row)
+    return out
+
+
+def _status_by_day(rows: list[dict[str, Any]], *, point_values: dict[str, float]) -> dict[str, dict[str, Any]]:
+    return {str(r.get("TradeDay", "")): r for r in live_daily_limit_status(rows, point_values=point_values)}
+
+
+def _day_plan_row(day: str) -> dict[str, Any] | None:
+    try:
+        df = pd.read_csv(DAY_PLAN_CSV)
+    except Exception:
+        return None
+    if df.empty or "Date" not in df.columns:
+        return None
+    out = df.copy()
+    out["Date"] = out["Date"].fillna("").astype(str).str.strip()
+    hit = out[out["Date"] == day]
+    if hit.empty:
+        return None
+    hit = hit.sort_values("Date", kind="stable")
+    return hit.iloc[-1].to_dict()
+
+
+def _require_pre_trade_plan_completed(day: str) -> None:
+    row = _day_plan_row(day)
+    required = ["Bias", "ExpectedDayType", "KeyLevelsHTFContext", "PrimaryPlan", "AvoidancePlan"]
+    if not row:
+        raise ValueError(
+            f"pre-trade plan required for {day}: save Daily Sum first (Bias, ExpectedDayType, KeyLevelsHTFContext, PrimaryPlan, AvoidancePlan)"
+        )
+    missing = [k for k in required if _normalize_text(row.get(k, "")) == ""]
+    if missing:
+        raise ValueError(f"pre-trade plan incomplete for {day}: missing {', '.join(missing)}")
+
+
+def _latest_row_for_day(rows_by_id: dict[str, dict[str, Any]], day: str) -> dict[str, Any] | None:
+    day_rows = [r for r in rows_by_id.values() if _normalize_text(r.get("TradeDay")) == day]
+    if not day_rows:
+        return None
+    day_rows.sort(
+        key=lambda r: (
+            int(pd.to_numeric(r.get("SeqInDay"), errors="coerce") or 0),
+            _normalize_text(r.get("UpdatedAt")),
+            _normalize_text(r.get("journal_id")),
+        )
+    )
+    return day_rows[-1]
+
+
+def _rows_with_adjustments(
+    rows_by_id: dict[str, dict[str, Any]],
+    adjustment_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    by_adj: dict[str, list[dict[str, Any]]] = {}
+    for a in adjustment_rows:
+        jid = _normalize_text(a.get("journal_id"))
+        if not jid:
+            continue
+        by_adj.setdefault(jid, []).append(dict(a))
+    out: list[dict[str, Any]] = []
+    for jid, row in rows_by_id.items():
+        next_row = dict(row)
+        next_row["adjustments"] = by_adj.get(str(jid), [])
+        out.append(next_row)
     return out
 
 
@@ -496,11 +662,13 @@ def upsert_live_journal_rows(rows: list[dict[str, Any]], *, actor: str = "api:/j
             if not isinstance(raw, dict):
                 continue
             day = _normalize_trade_day(raw.get("TradeDay"))
+            _require_pre_trade_plan_completed(day)
             journal_id = _normalize_text(raw.get("journal_id")) or f"jrnl_{uuid.uuid4().hex[:12]}"
             seq = raw.get("SeqInDay")
             seq_in_day = int(pd.to_numeric(seq, errors="coerce")) if str(seq or "").strip() else _next_seq_for_day(journal, day)
 
             existing = by_id.get(journal_id, {})
+            is_insert = journal_id not in by_id
             requested_match_status = _normalize_text(raw.get("MatchStatus"))
             existing_match_status = _normalize_text(existing.get("MatchStatus", "")) or "unmatched"
             contract_name = _normalize_text(raw.get("ContractName")) or _normalize_text(existing.get("ContractName")) or "MES"
@@ -594,6 +762,27 @@ def upsert_live_journal_rows(rows: list[dict[str, Any]], *, actor: str = "api:/j
             if existing:
                 if journal_id in active_journal_ids:
                     raise ValueError("journal is linked to an active trade; unlink first before editing")
+
+            if is_insert:
+                latest = _latest_row_for_day(by_id, day)
+                if latest is not None and _normalize_text(latest.get("ExitPrice", "")) == "":
+                    latest_id = _normalize_text(latest.get("journal_id"))
+                    raise ValueError(
+                        f"cannot add next journal on {day}: previous journal {latest_id} is not closed (ExitPrice required)"
+                    )
+                status_rows = _rows_with_adjustments(by_id, keep_adjustments)
+                day_status_before = _status_by_day(status_rows, point_values=point_values).get(day, {})
+                if bool(day_status_before.get("max_trade_reached")):
+                    raise ValueError(
+                        f"daily max trade limit reached for {day}: "
+                        f"{int(day_status_before.get('trade_count', 0))}/{int(day_status_before.get('daily_max_trade', DEFAULT_DAILY_MAX_TRADE))}"
+                    )
+                if bool(day_status_before.get("max_loss_reached")):
+                    raise ValueError(
+                        f"daily max loss limit reached for {day}: "
+                        f"${float(day_status_before.get('cumulative_loss_usd', 0.0)):.2f}/"
+                        f"${float(day_status_before.get('daily_max_loss', DEFAULT_DAILY_MAX_LOSS)):.2f}"
+                    )
 
             if journal_id in by_id:
                 updated += 1

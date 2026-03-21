@@ -28,6 +28,10 @@ DEFAULT_APP_CONFIG: Dict[str, Any] = {
         "timeframes": ["5m", "15m", "30m", "1h", "4h", "1d", "1w"],
         "playback_speeds": [15, 30, 45, 60],
     },
+    "live_journal": {
+        "daily_max_trade": 5,
+        "daily_max_loss": 500.0,
+    },
     "analysis": {
         "initial_net_liq": 10000.0,
         "risk_free_rate": 0.02,

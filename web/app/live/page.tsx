@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { fetchConfig } from "@/lib/config";
 import { deleteJournalLive, getDayPlan, getDayPlanTaxonomy, getJournalLive, getJournalLiveMeta, postDayPlan, postJournalLive } from "@/lib/api";
 import { tradingDateYmd } from "@/lib/trading-date";
-import { JournalAdjustment, LiveJournalRow } from "@/lib/types";
+import { JournalAdjustment, LiveJournalDayStatus, LiveJournalRow } from "@/lib/types";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 
@@ -152,6 +152,40 @@ export default function LivePage() {
     () => (journalData?.rows || []).filter((r) => String(r.TradeDay || "") === tradeDay).sort((a, b) => Number(a.SeqInDay || 0) - Number(b.SeqInDay || 0)),
     [journalData?.rows, tradeDay]
   );
+  const dayStatus = useMemo(() => {
+    const list = (journalData?.daily_status || []) as LiveJournalDayStatus[];
+    return list.find((s) => String(s.TradeDay || "") === tradeDay) || null;
+  }, [journalData?.daily_status, tradeDay]);
+  const limits = useMemo(
+    () => ({
+      dailyMaxTrade: Number(journalData?.limits?.daily_max_trade || 5),
+      dailyMaxLoss: Number(journalData?.limits?.daily_max_loss || 500),
+    }),
+    [journalData?.limits?.daily_max_loss, journalData?.limits?.daily_max_trade]
+  );
+  const isDailyLocked = Boolean(dayStatus?.blocked);
+  const latestRow = useMemo(
+    () =>
+      [...rows].sort(
+        (a, b) =>
+          Number(a.SeqInDay || 0) - Number(b.SeqInDay || 0) ||
+          String(a.UpdatedAt || "").localeCompare(String(b.UpdatedAt || ""))
+      )[rows.length - 1] || null,
+    [rows]
+  );
+  const previousNotClosed = useMemo(() => Boolean(latestRow && String(latestRow.ExitPrice || "").trim() === ""), [latestRow]);
+  const previousNotClosedMessage = useMemo(() => {
+    if (!previousNotClosed || !latestRow) return "";
+    return `Cannot add next journal: previous journal ${String(latestRow.journal_id || "")} is not closed (ExitPrice required).`;
+  }, [latestRow, previousNotClosed]);
+  const isAddBlocked = !editingJournalId && (isDailyLocked || previousNotClosed);
+  const dailyLockMessage = useMemo(() => {
+    if (!dayStatus) return "";
+    const reasons: string[] = [];
+    if (dayStatus.max_trade_reached) reasons.push(`max trade reached (${dayStatus.trade_count}/${dayStatus.daily_max_trade})`);
+    if (dayStatus.max_loss_reached) reasons.push(`max daily loss reached ($${fmt(dayStatus.cumulative_loss_usd)} / $${fmt(dayStatus.daily_max_loss)})`);
+    return reasons.length ? `Daily discipline lock: ${reasons.join(" | ")}.` : "";
+  }, [dayStatus]);
   const matchedCount = useMemo(() => rows.filter((r) => String(r.MatchStatus || "") === "matched").length, [rows]);
   const reconfirmCount = useMemo(() => rows.filter((r) => String(r.MatchStatus || "") === "needs_reconfirm").length, [rows]);
   const dayPlan = useMemo(() => (dayPlanData?.rows || [])[0] || null, [dayPlanData?.rows]);
@@ -362,6 +396,12 @@ export default function LivePage() {
     setSavingJournal(true);
     setJournalMessage("");
     try {
+      if (!editingJournalId && previousNotClosed) {
+        throw new Error(previousNotClosedMessage || "Cannot add next journal before closing previous trade.");
+      }
+      if (!editingJournalId && isDailyLocked) {
+        throw new Error(dailyLockMessage || "Daily discipline lock is active for this day.");
+      }
       if (detailValidation.firstError) {
         throw new Error(detailValidation.firstError);
       }
@@ -554,6 +594,22 @@ export default function LivePage() {
       </Card>
 
       <Card title="Trade Journal">
+        {previousNotClosed && !editingJournalId ? (
+          <div className="mb-3 rounded border border-rose-300/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+            <p className="font-semibold">Previous Trade Not Closed</p>
+            <p>{previousNotClosedMessage}</p>
+          </div>
+        ) : null}
+        {isDailyLocked ? (
+          <div className="mb-3 rounded border border-amber-300/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+            <p className="font-semibold">Daily discipline lock active</p>
+            <p>{dailyLockMessage}</p>
+          </div>
+        ) : (
+          <div className="mb-3 rounded border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300">
+            Limits: max trades/day {limits.dailyMaxTrade} | max daily loss ${fmt(limits.dailyMaxLoss)} | current trades {rows.length} | current cumulative loss ${fmt(dayStatus?.cumulative_loss_usd || 0)}
+          </div>
+        )}
         <p className="mb-2 text-xs text-slate-400">Intent controls execution detail constraints. Scalp/Swing = one detail row, Scale-in = multiple rows.</p>
 
         <div className="rounded border border-white/10 bg-white/5 p-3">
@@ -700,8 +756,8 @@ export default function LivePage() {
         </div>
 
         <div className="mt-3 flex items-center gap-2">
-          <button onClick={saveJournal} disabled={savingJournal} className="rounded bg-accent px-4 py-2 text-sm text-white disabled:opacity-60">
-            {savingJournal ? "Saving..." : editingJournalId ? "Update Journal Entry" : "Add Journal Entry"}
+          <button onClick={saveJournal} disabled={savingJournal || isAddBlocked} className="rounded bg-accent px-4 py-2 text-sm text-white disabled:opacity-60">
+            {savingJournal ? "Saving..." : editingJournalId ? "Update Journal Entry" : isAddBlocked ? "Add Blocked" : "Add Journal Entry"}
           </button>
           {editingJournalId ? <button onClick={() => { setEditingJournalId(""); setDraft(emptyDraft(tradeDay)); }} className="rounded border border-white/20 px-3 py-2 text-sm text-slate-200">Cancel Edit</button> : null}
           <span className="text-xs text-slate-300">{journalMessage}</span>

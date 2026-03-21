@@ -12,7 +12,7 @@ import {
   type KLineData,
   type OverlayCreate
 } from "klinecharts";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const CME_TIMEZONE = "America/Chicago";
 
@@ -72,6 +72,8 @@ export function CandlesChart({
   const chartRef = useRef<Chart | null>(null);
   const tradeOverlayIdsRef = useRef<string[]>([]);
   const studyOverlayIdsRef = useRef<string[]>([]);
+  const [hoveredTrade, setHoveredTrade] = useState<TradeMarker | null>(null);
+  const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -195,7 +197,7 @@ export function CandlesChart({
         return nearest === Infinity ? undefined : { ts: nearest, price };
       };
       const points: any[] = [];
-      orderedTrades.forEach((t) => {
+      orderedTrades.forEach((t, tradeIndex) => {
         const entryTs = new Date(t.entryTime).getTime();
         const exitTs = new Date(t.exitTime).getTime();
         if (Number.isNaN(entryTs) || Number.isNaN(exitTs)) return;
@@ -215,13 +217,31 @@ export function CandlesChart({
         chartRef.current?.createOverlay({
           id: lineId,
           name: "segment",
-          lock: true,
+          lock: false,
           mode: OverlayMode.Normal,
+          extendData: { tradeIndex },
           points: [
             { timestamp: entrySnap.ts, value: entryVal },
             { timestamp: exitSnap.ts, value: exitVal }
           ],
-          styles: { line: { color, size: 3 } }
+          styles: { line: { color, size: 3 } },
+          onMouseEnter: (event) => {
+            const idx = Number((event.overlay?.extendData as { tradeIndex?: number } | undefined)?.tradeIndex ?? -1);
+            if (idx >= 0 && idx < orderedTrades.length) {
+              setHoveredTrade(orderedTrades[idx]);
+              if (typeof event.x === "number" && typeof event.y === "number") {
+                setHoverPos({ x: event.x, y: event.y });
+              } else {
+                setHoverPos(null);
+              }
+            }
+            return true;
+          },
+          onMouseLeave: () => {
+            setHoveredTrade(null);
+            setHoverPos(null);
+            return true;
+          }
         });
       });
       if (points.length) {
@@ -231,7 +251,7 @@ export function CandlesChart({
           id: markerId,
           name: "point",
           mode: OverlayMode.Normal,
-          lock: true,
+          lock: false,
           points
         });
       }
@@ -239,6 +259,56 @@ export function CandlesChart({
   }, [data, trades, showTrades]);
 
   return (
-    <div ref={containerRef} className={`relative ${heightClass} w-full rounded-xl border border-white/10 bg-white`} />
+    <div ref={containerRef} className={`relative ${heightClass} w-full rounded-xl border border-white/10 bg-white`}>
+      {hoveredTrade ? (
+        <div
+          className="pointer-events-none absolute z-20 w-[min(92vw,460px)] rounded border border-white/20 bg-slate-950/95 px-3 py-2 text-[11px] text-slate-100 shadow-xl"
+          style={{
+            left: `${Math.max(8, (hoverPos?.x ?? 24) + 12)}px`,
+            top: `${Math.max(8, (hoverPos?.y ?? 24) + 12)}px`
+          }}
+        >
+          <p className="text-[10px] uppercase tracking-[0.12em] text-slate-400">Trade</p>
+          <p>
+            {hoveredTrade.type || "-"} | Size {hoveredTrade.size ?? "-"} | PnL {Number(hoveredTrade.pnl || 0).toFixed(2)}
+          </p>
+          <p>
+            Entry {Number(hoveredTrade.entryPrice || 0).toFixed(4)} | Exit {Number(hoveredTrade.exitPrice || 0).toFixed(4)}
+          </p>
+          {hoveredTrade.journals?.length ? (
+            <div className="mt-2 border-t border-white/10 pt-2">
+              <p className="text-[10px] uppercase tracking-[0.12em] text-slate-400">Attached Journal</p>
+              {hoveredTrade.journals.slice(0, 2).map((j) => (
+                <div key={j.journal_id} className="mb-1 rounded border border-white/10 bg-white/5 px-2 py-1">
+                  <p className="whitespace-normal break-words">
+                    {j.journal_id} | {j.phase || "-"} | {j.context || "-"} | {j.signal_bar || "-"}
+                  </p>
+                  <p className="whitespace-normal break-words">
+                    Setup {j.setup || "-"} | Intent {j.trade_intent || "-"} | Dir {j.direction || "-"} | Size {j.size ?? "-"}
+                  </p>
+                  <p className="whitespace-normal break-words">
+                    Entry {j.entry_price ?? "-"} | TP {j.take_profit_price ?? "-"} | SL {j.stop_loss_price ?? "-"} | Exit {j.exit_price ?? "-"}
+                  </p>
+                  <p className="whitespace-normal break-words">
+                    Risk {j.potential_risk_usd ?? "-"} | Reward {j.potential_reward_usd ?? "-"}
+                  </p>
+                  <p className="whitespace-normal break-words">
+                    Initial R:R {j.initial_rr == null ? "-" : Number(j.initial_rr).toFixed(3)} | Actual R:R{" "}
+                    {j.actual_rr == null ? "-" : Number(j.actual_rr).toFixed(3)}
+                  </p>
+                  <p className="whitespace-normal break-words">
+                    Rule {j.rule_status || "-"} {j.match_status ? `| Match ${j.match_status}` : ""}
+                  </p>
+                  {j.notes ? <p className="whitespace-normal break-words">Notes: {j.notes}</p> : null}
+                </div>
+              ))}
+              {hoveredTrade.journals.length > 2 ? <p>+{hoveredTrade.journals.length - 2} more</p> : null}
+            </div>
+          ) : (
+            <p className="mt-2 border-t border-white/10 pt-2 text-slate-400">No attached journal</p>
+          )}
+        </div>
+      ) : null}
+    </div>
   );
 }

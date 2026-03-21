@@ -4,6 +4,7 @@ import {
   Candle,
   InsightsPayload,
   InsightsResponse,
+  LiveJournalDayStatus,
   LiveJournalRow,
   PerformanceRecord,
 } from "./types";
@@ -279,7 +280,11 @@ export async function getJournalLiveMeta(): Promise<{
   return handleResponse(res);
 }
 
-export async function getJournalLive(params?: { start?: string; end?: string }): Promise<{ rows: LiveJournalRow[] }> {
+export async function getJournalLive(params?: { start?: string; end?: string }): Promise<{
+  rows: LiveJournalRow[];
+  limits?: { daily_max_trade: number; daily_max_loss: number };
+  daily_status?: LiveJournalDayStatus[];
+}> {
   const url = new URL("/api/journal/live", API_BASE);
   if (params?.start) url.searchParams.set("start", params.start);
   if (params?.end) url.searchParams.set("end", params.end);

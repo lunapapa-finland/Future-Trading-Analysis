@@ -47,11 +47,27 @@ def _patch_journal_storage(monkeypatch, tmp_path):
     adj_csv = tmp_path / "journal_adjustments.csv"
     match_csv = tmp_path / "journal_matches.csv"
     specs_csv = tmp_path / "contract_specs.csv"
+    day_plan_csv = tmp_path / "day_plan.csv"
     _seed_contract_specs(specs_csv)
+    pd.DataFrame(
+        [
+            {
+                "Date": "2026-03-16",
+                "Bias": "Bullish",
+                "ExpectedDayType": "TR day",
+                "ActualDayType": "",
+                "KeyLevelsHTFContext": "5000",
+                "PrimaryPlan": "buy dips",
+                "AvoidancePlan": "no chase",
+                "UpdatedAt": "2026-03-16T08:00:00Z",
+            }
+        ]
+    ).to_csv(day_plan_csv, index=False)
     monkeypatch.setattr(journal_live, "JOURNAL_LIVE_CSV", str(journal_csv))
     monkeypatch.setattr(journal_live, "JOURNAL_ADJUSTMENTS_CSV", str(adj_csv))
     monkeypatch.setattr(journal_live, "JOURNAL_MATCHES_CSV", str(match_csv))
     monkeypatch.setattr(journal_live, "CONTRACT_SPECS_CSV", str(specs_csv))
+    monkeypatch.setattr(journal_live, "DAY_PLAN_CSV", str(day_plan_csv))
     # Keep journal-live performance reference aligned with route-level test patch.
     monkeypatch.setattr(journal_live, "PERFORMANCE_CSV", str(routes.PERFORMANCE_CSV))
     return journal_csv, adj_csv, match_csv
@@ -214,6 +230,121 @@ def test_live_journal_adjustments_append_and_update(tmp_path, monkeypatch):
     adj2 = [a for a in row3["adjustments"] if a["adjustment_id"] == "adj2"][0]
     assert adj2["Qty"] == "2.0"
     assert adj2["EntryPrice"] == "5007.0"
+
+
+def test_live_journal_blocks_insert_when_daily_max_trade_reached(tmp_path, monkeypatch):
+    _patch_journal_storage(monkeypatch, tmp_path)
+    cfg = {"live_journal": {"daily_max_trade": 1, "daily_max_loss": 9999.0}}
+    monkeypatch.setattr(journal_live, "get_app_config", lambda: cfg)
+    monkeypatch.setattr(routes, "get_app_config", lambda: cfg)
+    client = app.test_client()
+
+    first = client.post("/api/journal/live", json={"rows": [_valid_live_row()]})
+    assert first.status_code == 200
+
+    second = client.post(
+        "/api/journal/live",
+        json={
+            "rows": [
+                _valid_live_row(
+                    adjustments=[_valid_adjustment(adjustment_id="adj_b", entry=5002.0, tp=5006.0, sl=5000.0, exit_price=5005.0)]
+                )
+            ]
+        },
+    )
+    assert second.status_code == 400
+    assert "daily max trade limit reached" in second.get_json()["error"]
+
+
+def test_live_journal_blocks_insert_when_daily_max_loss_reached(tmp_path, monkeypatch):
+    _patch_journal_storage(monkeypatch, tmp_path)
+    cfg = {"live_journal": {"daily_max_trade": 10, "daily_max_loss": 10.0}}
+    monkeypatch.setattr(journal_live, "get_app_config", lambda: cfg)
+    monkeypatch.setattr(routes, "get_app_config", lambda: cfg)
+    client = app.test_client()
+
+    first = client.post(
+        "/api/journal/live",
+        json={
+            "rows": [
+                _valid_live_row(
+                    adjustments=[_valid_adjustment(adjustment_id="adj_loss", entry=5000.0, tp=5004.0, sl=4998.0, exit_price=4998.0)]
+                )
+            ]
+        },
+    )
+    assert first.status_code == 200
+
+    second = client.post(
+        "/api/journal/live",
+        json={
+            "rows": [
+                _valid_live_row(
+                    adjustments=[_valid_adjustment(adjustment_id="adj_next", entry=5001.0, tp=5006.0, sl=4999.0, exit_price=5005.0)]
+                )
+            ]
+        },
+    )
+    assert second.status_code == 400
+    assert "daily max loss limit reached" in second.get_json()["error"]
+
+
+def test_live_journal_get_includes_daily_status_and_limits(tmp_path, monkeypatch):
+    _patch_journal_storage(monkeypatch, tmp_path)
+    cfg = {"live_journal": {"daily_max_trade": 5, "daily_max_loss": 50.0}}
+    monkeypatch.setattr(journal_live, "get_app_config", lambda: cfg)
+    monkeypatch.setattr(routes, "get_app_config", lambda: cfg)
+    client = app.test_client()
+
+    create = client.post("/api/journal/live", json={"rows": [_valid_live_row()]})
+    assert create.status_code == 200
+
+    listed = client.get("/api/journal/live?start=2026-03-16&end=2026-03-16")
+    assert listed.status_code == 200
+    body = listed.get_json()
+    assert body["limits"]["daily_max_trade"] == 5
+    assert body["limits"]["daily_max_loss"] == 50.0
+    assert len(body["daily_status"]) == 1
+    assert body["daily_status"][0]["TradeDay"] == "2026-03-16"
+    assert body["daily_status"][0]["trade_count"] == 1
+
+
+def test_live_journal_blocks_next_insert_when_previous_not_closed(tmp_path, monkeypatch):
+    _patch_journal_storage(monkeypatch, tmp_path)
+    cfg = {"live_journal": {"daily_max_trade": 10, "daily_max_loss": 9999.0}}
+    monkeypatch.setattr(journal_live, "get_app_config", lambda: cfg)
+    monkeypatch.setattr(routes, "get_app_config", lambda: cfg)
+    client = app.test_client()
+
+    first = client.post(
+        "/api/journal/live",
+        json={"rows": [_valid_live_row(adjustments=[_valid_adjustment(adjustment_id="adj_open", exit_price=None)])]},
+    )
+    assert first.status_code == 200
+
+    second = client.post(
+        "/api/journal/live",
+        json={"rows": [_valid_live_row(adjustments=[_valid_adjustment(adjustment_id="adj_next", exit_price=5005.0)])]},
+    )
+    assert second.status_code == 400
+    assert "previous journal" in second.get_json()["error"]
+    assert "ExitPrice required" in second.get_json()["error"]
+
+
+def test_live_journal_blocks_when_pretrade_plan_missing(tmp_path, monkeypatch):
+    _patch_journal_storage(monkeypatch, tmp_path)
+    # Remove seeded day-plan row to trigger hard stop.
+    pd.DataFrame(columns=["Date", "Bias", "ExpectedDayType", "ActualDayType", "KeyLevelsHTFContext", "PrimaryPlan", "AvoidancePlan", "UpdatedAt"]).to_csv(
+        journal_live.DAY_PLAN_CSV, index=False
+    )
+    cfg = {"live_journal": {"daily_max_trade": 10, "daily_max_loss": 9999.0}}
+    monkeypatch.setattr(journal_live, "get_app_config", lambda: cfg)
+    monkeypatch.setattr(routes, "get_app_config", lambda: cfg)
+    client = app.test_client()
+
+    resp = client.post("/api/journal/live", json={"rows": [_valid_live_row()]})
+    assert resp.status_code == 400
+    assert "pre-trade plan required" in resp.get_json()["error"]
 
 
 def test_matching_confirm_and_unlink(tmp_path, monkeypatch):

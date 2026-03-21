@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { fetchConfig, type SymbolConfig } from "@/lib/config";
 
 const fallbackSymbols: SymbolConfig[] = [
@@ -39,8 +39,6 @@ export function SymbolSelect({
     };
   }, []);
 
-  const active = useMemo(() => symbols.find((s) => s.symbol === value), [symbols, value]);
-
   return (
     <div className="flex flex-col gap-1">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -53,17 +51,11 @@ export function SymbolSelect({
         >
           {symbols.map((s) => (
             <option key={s.symbol} value={s.symbol}>
-              {s.symbol} {s.asset_class ? `(${s.asset_class})` : ""}
+              {s.symbol}
             </option>
           ))}
         </select>
       </div>
-      {active ? (
-        <div className="text-xs text-slate-400">
-          <div>Asset: {active.asset_class || "n/a"}</div>
-          {active.data_path ? <div>Data: {active.data_path}</div> : null}
-        </div>
-      ) : null}
     </div>
   );
 }

@@ -102,6 +102,29 @@ export interface TradeMarker {
   pnl: number;
   type?: string;
   size?: number;
+  tradeId?: string;
+  journals?: Array<{
+    journal_id: string;
+    phase?: string;
+    context?: string;
+    signal_bar?: string;
+    setup?: string;
+    trade_intent?: string;
+    direction?: string;
+    size?: string | number;
+    max_loss_usd?: string | number;
+    entry_price?: string | number;
+    take_profit_price?: string | number;
+    stop_loss_price?: string | number;
+    exit_price?: string | number;
+    potential_risk_usd?: string | number;
+    potential_reward_usd?: string | number;
+    initial_rr?: number | null;
+    actual_rr?: number | null;
+    rule_status?: string;
+    notes?: string;
+    match_status?: string;
+  }>;
 }
 
 export interface JournalAdjustment {
@@ -145,7 +168,19 @@ export interface LiveJournalRow {
   RuleStatus?: string;
   Notes?: string;
   MatchStatus?: string;
+  UpdatedAt?: string;
   adjustments_mode?: "append" | "replace";
   adjustments?: JournalAdjustment[];
   matches?: Array<Record<string, unknown>>;
+}
+
+export interface LiveJournalDayStatus {
+  TradeDay: string;
+  trade_count: number;
+  cumulative_loss_usd: number;
+  daily_max_trade: number;
+  daily_max_loss: number;
+  max_trade_reached: boolean;
+  max_loss_reached: boolean;
+  blocked: boolean;
 }
