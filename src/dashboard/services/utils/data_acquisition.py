@@ -2,6 +2,7 @@ import datetime
 import logging
 import os
 import time
+import math
 from datetime import timedelta
 from pathlib import Path
 
@@ -9,18 +10,28 @@ import pandas as pd
 import yfinance as yf
 from exchange_calendars import get_calendar
 
+from dashboard.config.app_config import get_app_config
 from dashboard.config.settings import (
-    ACQUISITION_LAST_BUSINESS_DATE,
-    CURRENT_DATE,
     DATA_SOURCE_DROPDOWN,
     SYMBOL_CATALOG,
     TIMEZONE,
     CMEHolidayCalendar,
+    get_last_business_day,
 )
 
 logger = logging.getLogger(__name__)
 
-RATE_LIMIT_COOLDOWN_MINUTES = int(os.environ.get("YF_RATE_LIMIT_COOLDOWN_MINUTES", "60"))
+def _resolve_rate_limit_cooldown_minutes() -> int:
+    cfg_default = get_app_config().get("data_fetch", {}).get("rate_limit_cooldown_minutes", 60)
+    raw = os.environ.get("YF_RATE_LIMIT_COOLDOWN_MINUTES", str(cfg_default))
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        return 60
+    return max(1, val)
+
+
+RATE_LIMIT_COOLDOWN_MINUTES = _resolve_rate_limit_cooldown_minutes()
 RATE_LIMIT_UNTIL_FILE = Path(os.environ.get("YF_RATE_LIMIT_UNTIL_FILE", "/app/log/.yf_rate_limited_until"))
 
 def get_last_row_date(csv_path):
@@ -71,6 +82,19 @@ def _read_rate_limit_until():
 def _write_rate_limit_until(ts):
     RATE_LIMIT_UNTIL_FILE.parent.mkdir(parents=True, exist_ok=True)
     RATE_LIMIT_UNTIL_FILE.write_text(ts.isoformat(), encoding="utf-8")
+
+
+def get_rate_limit_status():
+    now_utc = pd.Timestamp.utcnow().tz_localize("UTC") if pd.Timestamp.utcnow().tzinfo is None else pd.Timestamp.utcnow().tz_convert("UTC")
+    cooldown_until = _read_rate_limit_until()
+    if cooldown_until is None:
+        return {"active": False, "cooldown_until": "", "remaining_seconds": 0}
+    remaining_seconds = max(0, math.ceil((cooldown_until - now_utc).total_seconds()))
+    return {
+        "active": now_utc < cooldown_until,
+        "cooldown_until": cooldown_until.isoformat(),
+        "remaining_seconds": remaining_seconds,
+    }
 
 
 def _last_download_error_message(ticker):
@@ -248,8 +272,9 @@ def acquire_missing_data(max_retries=5, retry_delay=300, fallback_source=None):
         )
         return summary
 
-    current_date = pd.to_datetime(CURRENT_DATE)
-    target_date = pd.to_datetime(ACQUISITION_LAST_BUSINESS_DATE).date()
+    current_ts = pd.Timestamp.now(tz=TIMEZONE)
+    current_date = current_ts.normalize()
+    target_date = pd.to_datetime(get_last_business_day(current_date.date().isoformat())).date()
     stop_all = False
     for symbol, csv_path in DATA_SOURCE_DROPDOWN.items():
         if stop_all:

@@ -32,6 +32,11 @@ DEFAULT_APP_CONFIG: Dict[str, Any] = {
         "daily_max_trade": 5,
         "daily_max_loss": 500.0,
     },
+    "data_fetch": {
+        "rate_limit_cooldown_minutes": 60,
+        "manual_max_retries": 3,
+        "manual_retry_delay_seconds": 10,
+    },
     "analysis": {
         "initial_net_liq": 10000.0,
         "risk_free_rate": 0.02,

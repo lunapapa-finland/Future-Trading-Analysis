@@ -495,6 +495,11 @@ export async function getDataFetchStatus(): Promise<{
     status: string;
     error?: string;
   }>;
+  rate_limit?: {
+    active: boolean;
+    cooldown_until: string;
+    remaining_seconds: number;
+  };
 }> {
   const url = new URL("/api/data/fetch/status", API_BASE);
   const res = await fetch(url.toString(), withAuth({ cache: "no-store" }));
@@ -503,7 +508,15 @@ export async function getDataFetchStatus(): Promise<{
 
 export async function postDataFetchRun(payload?: { max_retries?: number; retry_delay?: number }): Promise<{
   ok: boolean;
-  summary: Record<string, unknown>;
+  summary: {
+    symbols?: number;
+    days_attempted?: number;
+    saved?: number;
+    skipped?: number;
+    failed?: number;
+    rate_limited?: boolean;
+    cooldown_until?: string;
+  };
 }> {
   const url = new URL("/api/data/fetch/run", API_BASE);
   const res = await fetch(

@@ -7,7 +7,6 @@ extensibility.
 """
 
 import logging
-from datetime import date
 
 import pandas as pd
 from pandas.tseries.holiday import AbstractHolidayCalendar, Holiday
@@ -83,7 +82,8 @@ DATA_SOURCE_DROPDOWN = {
 }
 
 DEFAULT_DATA_SOURCE = next(iter(DATA_SOURCE_DROPDOWN.keys()), "MES")
-CURRENT_DATE = date.today().strftime('%Y-%m-%d')  # e.g., '2025-05-19'
+# Anchor "today" to trading timezone so host locale/DST (e.g. Europe/Helsinki) does not shift acquisition day boundaries.
+CURRENT_DATE = pd.Timestamp.now(tz=TIMEZONE).date().isoformat()
 
 
 

@@ -1,104 +1,181 @@
 # Future Trading Analysis
 
-Futures trading workspace with replay, analysis, portfolio tracking, and taxonomy-driven trade/day journaling.
+Future Trading Analysis is a full-stack trading journal and replay workspace.
+It combines:
+- live journal capture,
+- broker CSV upload and trade normalization,
+- journal-to-trade matching,
+- session replay with 5m candles,
+- analysis and portfolio metrics,
+- runtime visibility into data sources and fetch jobs.
 
-## What It Does
-- Serves backend APIs and frontend UI for:
-  - Trading session replay + per-trade tagging
-  - Advanced analysis/insights
-  - Portfolio equity tracking from `trade_sum` + manual cashflow events
-  - Day-level pre/post market planning
-- Processes broker exports from `data/temp_performance` into normalized trades.
-- Upserts into `data/performance/Performance_sum.csv` using stable `trade_id` identity.
-- Applies CME-time phase auto-tagging during merge (`Open`, `Middle`, `End`).
-- Maintains append-only audit events for key data mutations.
-- Includes day-plan plan-vs-outcome analytics in Advanced Insights and LLM Prompt Pack export.
+## Functional Workflow (by UI tab)
 
-## Current Source of Truth
-- Trade performance + trade tags: `data/performance/Performance_sum.csv`
-- Unified taxonomy (trade + day-plan): `data/metadata/taxonomy.csv`
-- Day-level journal rows: `data/performance/day_plan.csv`
-- Portfolio inputs: `data/portfolio/trade_sum.csv`, `data/portfolio/cashflow.csv`
+### 1) Trading Guide (`/guide`)
+- Displays operational rules and checklist flow.
+- Reads taxonomy/day-plan taxonomy from backend so guidance matches your configured labels.
 
-## Project Layout
-- `src/dashboard/` backend app, APIs, analytics, services
-- `web/` Next.js frontend
-- `jobs/` merge/acquisition job entrypoints
-- `config/app_config.yaml` central runtime config
-- `data/` runtime data folders
-- `test/` backend/API tests
+### 2) Trading Live (`/live`)
+- Daily execution journal entry screen.
+- Saves day-plan fields and per-trade journal rows.
+- Enforces discipline constraints (max trades/day, max loss/day) from config.
 
-## Startup CSV Initialization
-On backend startup, missing required CSV files are auto-created with headers (empty rows), without overwriting existing files.
+### 3) Trade Upload (`/upload`)
+- Upload broker CSV files.
+- Parse preview detects malformed rows before commit.
+- Reconciliation preview builds normalized trades and execution-leg pool.
+- Commit writes into the combined performance dataset.
 
-Initializer:
-- `src/dashboard/services/utils/data_init.py`
+### 4) Trading Match (`/matching`)
+- Loads relink workspace for a date range.
+- Suggests journal-to-trade matches.
+- Allows manual assign/unassign and commit with conflict checks.
 
-Hooked at app boot:
-- `src/dashboard/core/app.py`
+### 5) Trading Details (`/trading`)
+- Session replay view using raw 5m candles.
+- Overlays trades and optional studies (EMA/VWAP/bar count).
+- Exports markdown prompt pack for external LLM review.
 
-## Tagging + Day Plan Model
-### Trade-level (Trading tab)
-- `Phase`, `Context`, `Setup` (multi), `SignalBar`, `TradeIntent`
-- Tag options come from unified taxonomy rows where `Domain=trade`
+### 6) Trading Analysis (`/analysis`)
+- Core metrics (PnL growth, drawdown, rolling win rate, etc.).
+- Advanced insights mode.
+- Date filtering and bucketing are aligned to trading timezone boundaries.
 
-### Day-level (Trading tab)
-- `Date`, `Bias`, `ExpectedDayType`, `ActualDayType`, `KeyLevelsHTFContext`, `PrimaryPlan`, `AvoidancePlan`
-- Day-type/bias options come from unified taxonomy rows where `Domain=day_plan`
-- Date selection is business-day constrained in UI (Mon-Fri options only) and enforced again in backend validation.
+### 7) Portfolio (`/portfolio`)
+- Net liquidation history and metrics.
+- Cashflow adjustments (deposit/withdraw).
+- Trade-sum + cashflow integrated equity timeline.
 
-### Guide tab
-- Reference workflow only (no persistent journal editing).
+### 8) Runtime Config (`/config`)
+- Runtime manifest and file path visibility.
+- Per-symbol data status.
+- Manual data fetch trigger.
+- Shows yfinance cooldown status and next available retry time.
 
-## Config Model
-Central config file: `config/app_config.yaml`
+## Architecture & Stack
 
-Includes paths and defaults for:
-- performance CSVs
-- metadata CSVs
-- portfolio CSVs
-- analysis/session windows
-- UI defaults
+### Backend
+- Python + Flask API (`src/dashboard/core/app.py`)
+- Pandas / NumPy for transformation and analytics
+- CSV-based persistence (no DB required)
 
-Runtime status is exposed through `/api/config` (`runtime_manifest`) and shown in Config tab.
+### Frontend
+- Next.js (App Router) + TypeScript (`web/`)
+- Tailwind CSS
+- React Query for API data flows
+- Charting: `klinecharts`, Chart.js (`react-chartjs-2`)
 
-## Advanced Insights (Day Plan Linked)
-- Advanced Insights now contains a `day_plan_review` block (summary + daily table) computed from:
-  - filtered trade performance (symbol/month/tag scope)
-  - day journal rows (`day_plan.csv`)
-- Current review metrics include:
-  - planned vs unplanned trade-day counts
-  - expected-vs-actual day-type match rate
-  - bias alignment rate
-  - planned vs unplanned PnL comparison
-- LLM Prompt Pack export includes day-plan review summary/daily rows.
+### Jobs
+- `jobs/run_trading_if_ready.py`: market data fetch gate + acquisition run
+- `jobs/run_perf_if_files.py`: merge temp performance files when present
+- In Docker, cron invokes trading fetch gate every 10 minutes (`docker/cron/trading`)
 
-## Timezone Policy
-- Analysis and session logic use CME timezone (`US/Central`).
-- TradeDay grouping and phase tagging are CME-local.
-- Default phase windows:
-  - Open: `08:30`-`10:00`
-  - Middle: `10:00`-`14:00`
-  - End: `14:00`-`15:10`
+## Timezone & Session Rules
 
-## Quick Start (Conda)
+Trading logic is anchored to CME local time (`US/Central`) from config:
+- `analysis.timezone`
+- `analysis.session.start = 08:30`
+- `analysis.session.end = 15:10`
+
+Important behavior:
+- Session windows and analysis day boundaries follow trading timezone, not host machine timezone.
+- DST transitions (US or Finland host timezone changes) do not shift the intended 08:30-15:10 Chicago session logic.
+
+## Data Fetch, Cooldown, and "Next Try"
+
+Manual fetch and scheduled job call the same backend acquisition path.
+
+Rate-limit behavior:
+- Shared cooldown is used to avoid repeated yfinance failures.
+- Cooldown state is persisted in `YF_RATE_LIMIT_UNTIL_FILE` (default `/app/log/.yf_rate_limited_until` in container).
+- While cooldown is active, fetch exits early (no symbol/day attempts).
+
+Configurable defaults (`config/app_config.yaml`):
+```yaml
+data_fetch:
+  rate_limit_cooldown_minutes: 60
+  manual_max_retries: 3
+  manual_retry_delay_seconds: 10
+```
+
+Precedence for cooldown minutes:
+1. `YF_RATE_LIMIT_COOLDOWN_MINUTES` env var (if set)
+2. `data_fetch.rate_limit_cooldown_minutes`
+3. internal fallback
+
+## Storage & Auto-Created Files
+
+On startup, backend ensures required CSVs exist and seeds taxonomy when empty.
+
+Core files:
+- `data/performance/Performance_sum.csv`
+- `data/performance/journal_live.csv`
+- `data/performance/journal_adjustments.csv`
+- `data/performance/journal_matches.csv`
+- `data/performance/day_plan.csv`
+- `data/portfolio/cashflow.csv`
+- `data/portfolio/trade_sum.csv`
+- `data/metadata/taxonomy.csv`
+- `data/metadata/contract_specs.csv`
+- `data/audit/change_audit.jsonl`
+
+Per-symbol 5m future CSVs are under `data/future/` (for example `MES.csv`, `MNQ.csv`, ...).
+
+## Configuration
+
+### App config
+Main runtime config file:
+- `config/app_config.yaml`
+
+Includes:
+- path mapping,
+- UI options,
+- analysis/session timezone,
+- discipline limits,
+- data fetch defaults.
+
+### Credentials / auth
+Copy template and fill secrets:
+- `src/dashboard/config/credentials.env.example` -> `src/dashboard/config/credentials.env`
+
+Required values:
+- `DASH_USER`
+- `DASH_PASS`
+- `SECRET_KEY`
+- `SESSION_SIGNING_KEY`
+
+## Local Development
+
+### 1) Backend setup
 ```bash
 conda activate finance_env
 pip install -r requirements.txt
 pip install -e .
 ```
 
-Run locally:
+### 2) Run backend API
 ```bash
 make run-dev
 ```
 
-Production-style local run:
+Production-style local backend:
 ```bash
 make run
 ```
 
+### 3) Run frontend
+```bash
+cd web
+npm ci
+npm run dev
+```
+
+Default local ports:
+- Frontend: `http://localhost:3000`
+- Backend API: `http://localhost:8050` (dev) or as configured
+
 ## Docker
+
 Build and start:
 ```bash
 docker compose build --no-cache
@@ -118,21 +195,33 @@ make docker-job-trading
 make docker-job-perf
 ```
 
-## Merge Flow (Performance)
-1. Put broker export CSV files in `data/temp_performance/`.
-2. Run merge job (`make docker-job-perf` or `python jobs/run_perf_if_files.py`).
-3. Pipeline converts, normalizes, deduplicates, upserts, re-sorts, auto-tags phase, and updates impacted daily trade sums.
-4. Processed temp files are removed after successful conversion.
-
 ## Tests
+
+Backend:
 ```bash
 pytest -q
 ```
 
-## Data Versioning Policy
-- `data/metadata/**` is intended to be versioned (taxonomy/spec definitions).
-- Runtime data (`data/performance`, `data/future`, `data/portfolio`, `data/temp_performance`) stays local/private by default.
+Frontend checks:
+```bash
+cd web
+npm run typecheck
+npm run lint
+npm run test
+```
 
-## Auth / Env
-- Credentials are loaded from `src/dashboard/config/credentials.env` when present.
-- Example template: `src/dashboard/config/credentials.env.example`.
+## API Highlights
+
+- `GET /api/config`
+- `GET /api/data/fetch/status`
+- `POST /api/data/fetch/run`
+- `GET /api/trading/session`
+- `POST /api/trading/llm-prompt`
+- `POST /api/analysis/<metric>`
+- `GET /api/portfolio`
+- `POST /api/portfolio/adjust`
+
+## Notes
+
+- This project is CSV-first by design for transparent and portable storage.
+- Runtime Config page is the fastest way to verify active paths, row counts, and fetch readiness.

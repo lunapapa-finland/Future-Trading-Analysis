@@ -43,7 +43,11 @@ from dashboard.services.utils.performance_acquisition import (
     process_csv_with_execution_legs,
     generate_aggregated_data,
 )
-from dashboard.services.utils.data_acquisition import acquire_missing_data, get_last_date_in_csv
+from dashboard.services.utils.data_acquisition import (
+    acquire_missing_data,
+    get_last_date_in_csv,
+    get_rate_limit_status,
+)
 from dashboard.services.utils.journal_live import (
     list_live_journal,
     upsert_live_journal_rows,
@@ -570,7 +574,7 @@ def register_api(server):
                     "error": error,
                 }
             )
-        return jsonify({"ok": True, "rows": rows}), 200
+        return jsonify({"ok": True, "rows": rows, "rate_limit": get_rate_limit_status()}), 200
 
     @api.route("/data/fetch/run", methods=["POST", "OPTIONS"])
     def data_fetch_run():
@@ -578,8 +582,11 @@ def register_api(server):
             return _cors_headers(jsonify({"ok": True}), allowed_origin)
         try:
             payload = _require_json_object()
-            max_retries = int(payload.get("max_retries", 3))
-            retry_delay = int(payload.get("retry_delay", 10))
+            fetch_cfg = get_app_config().get("data_fetch", {})
+            default_max_retries = int(fetch_cfg.get("manual_max_retries", 3))
+            default_retry_delay = int(fetch_cfg.get("manual_retry_delay_seconds", 10))
+            max_retries = int(payload.get("max_retries", default_max_retries))
+            retry_delay = int(payload.get("retry_delay", default_retry_delay))
             summary = acquire_missing_data(max_retries=max_retries, retry_delay=retry_delay)
             return jsonify({"ok": True, "summary": summary}), 200
         except ValueError as exc:

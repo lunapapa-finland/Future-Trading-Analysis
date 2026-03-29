@@ -16,6 +16,59 @@ type FetchStatusRow = {
   error?: string;
 };
 
+type RateLimitStatus = {
+  active: boolean;
+  cooldown_until: string;
+  remaining_seconds: number;
+};
+
+function formatDateTime(iso: string, timeZone?: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return new Intl.DateTimeFormat("en-GB", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZone,
+    timeZoneName: "short",
+  }).format(d);
+}
+
+function describeRateLimit(rateLimit?: RateLimitStatus): string {
+  if (!rateLimit?.active) return "";
+  const localAt = formatDateTime(rateLimit.cooldown_until);
+  const chicagoAt = formatDateTime(rateLimit.cooldown_until, "America/Chicago");
+  const sec = Math.max(0, Number(rateLimit.remaining_seconds || 0));
+  const min = Math.ceil(sec / 60);
+  return `Rate-limited by yfinance. Next retry in ~${min} min (${sec}s). Available at ${localAt} (local) / ${chicagoAt} (Chicago).`;
+}
+
+function summarizeFetchResult(summary: {
+  symbols?: number;
+  days_attempted?: number;
+  saved?: number;
+  skipped?: number;
+  failed?: number;
+  rate_limited?: boolean;
+  cooldown_until?: string;
+}): string {
+  if (summary.rate_limited) {
+    if ((summary.days_attempted ?? 0) === 0) {
+      const nextLocal = summary.cooldown_until ? formatDateTime(summary.cooldown_until) : "";
+      const nextChicago = summary.cooldown_until ? formatDateTime(summary.cooldown_until, "America/Chicago") : "";
+      return `Fetch blocked by an active yfinance cooldown from an earlier run. No request was attempted now. Next try: ${nextLocal} (local) / ${nextChicago} (Chicago).`;
+    }
+    const nextLocal = summary.cooldown_until ? formatDateTime(summary.cooldown_until) : "";
+    const nextChicago = summary.cooldown_until ? formatDateTime(summary.cooldown_until, "America/Chicago") : "";
+    return `Fetch hit yfinance rate limit during this run. Next try: ${nextLocal} (local) / ${nextChicago} (Chicago).`;
+  }
+  return `Fetch done. saved=${summary.saved ?? 0}, skipped=${summary.skipped ?? 0}, failed=${summary.failed ?? 0}, days_attempted=${summary.days_attempted ?? 0}, symbols=${summary.symbols ?? 0}.`;
+}
+
 export default function ConfigPage() {
   const [config, setConfig] = useState<ConfigResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -24,6 +77,7 @@ export default function ConfigPage() {
   const [fetchLoading, setFetchLoading] = useState(false);
   const [fetchBusy, setFetchBusy] = useState(false);
   const [fetchMessage, setFetchMessage] = useState("");
+  const [fetchRateLimit, setFetchRateLimit] = useState<RateLimitStatus | undefined>(undefined);
 
   useEffect(() => {
     let mounted = true;
@@ -50,6 +104,7 @@ export default function ConfigPage() {
     try {
       const resp = await getDataFetchStatus();
       setFetchRows(resp.rows || []);
+      setFetchRateLimit(resp.rate_limit);
     } catch (err) {
       setFetchMessage((err as Error).message || "Failed to load fetch status");
     } finally {
@@ -61,8 +116,8 @@ export default function ConfigPage() {
     setFetchBusy(true);
     setFetchMessage("");
     try {
-      const resp = await postDataFetchRun({ max_retries: 3, retry_delay: 10 });
-      setFetchMessage(`Fetch done. summary=${JSON.stringify(resp.summary)}`);
+      const resp = await postDataFetchRun();
+      setFetchMessage(summarizeFetchResult(resp.summary || {}));
       await loadFetchStatus();
     } catch (err) {
       setFetchMessage((err as Error).message || "Manual fetch failed");
@@ -94,6 +149,7 @@ export default function ConfigPage() {
               loading={fetchLoading}
               busy={fetchBusy}
               message={fetchMessage}
+              rateLimit={fetchRateLimit}
               onRefresh={loadFetchStatus}
               onRun={runManualFetch}
             />
@@ -113,6 +169,7 @@ function DataFetchPanel({
   loading,
   busy,
   message,
+  rateLimit,
   onRefresh,
   onRun,
 }: {
@@ -120,9 +177,11 @@ function DataFetchPanel({
   loading: boolean;
   busy: boolean;
   message: string;
+  rateLimit?: RateLimitStatus;
   onRefresh: () => void;
   onRun: () => void;
 }) {
+  const rateLimitMessage = describeRateLimit(rateLimit);
   return (
     <div className="space-y-3 rounded-2xl border border-white/10 bg-surface/60 p-4 shadow-lg">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -140,6 +199,7 @@ function DataFetchPanel({
         </div>
       </div>
       {message ? <p className="text-xs text-slate-300">{message}</p> : null}
+      {rateLimitMessage ? <p className="text-xs text-amber-300">{rateLimitMessage}</p> : null}
       <div className="overflow-x-auto">
         <table className="min-w-[860px] w-full text-sm text-white">
           <thead className="text-xs uppercase tracking-[0.12em] text-slate-400">

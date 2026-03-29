@@ -105,3 +105,9 @@ docker-compose.override.yml
 
 # frontend build caches
 web/tsconfig.tsbuildinfo
+
+# Project Plan
+feature_plan/*
+
+# Opencode
+.opencode/*
