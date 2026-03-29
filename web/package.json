@@ -13,11 +13,11 @@
   "dependencies": {
     "@tanstack/react-query": "5.90.21",
     "autoprefixer": "10.4.19",
+    "chart.js": "4.4.5",
     "clsx": "2.1.0",
     "date-fns": "3.6.0",
-    "chart.js": "4.4.5",
     "klinecharts": "9.8.8",
-    "next": "16.1.6",
+    "next": "16.2.1",
     "postcss": "8.4.38",
     "react": "18.2.0",
     "react-chartjs-2": "5.2.0",
@@ -29,7 +29,7 @@
     "@types/react": "18.3.3",
     "@types/react-dom": "18.3.0",
     "eslint": "9.39.0",
-    "eslint-config-next": "16.1.6",
+    "eslint-config-next": "16.2.1",
     "typescript": "5.4.5",
     "vitest": "4.0.13"
   }
