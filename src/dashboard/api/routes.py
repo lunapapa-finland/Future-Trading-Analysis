@@ -90,6 +90,22 @@ VALID_METRICS = {
 }
 
 
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "t", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "f", "no", "n", "off", ""}:
+            return False
+    return bool(value)
+
+
 def _cors_headers(response, allowed_origin: str):
     response.headers["Access-Control-Allow-Origin"] = allowed_origin
     response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
@@ -408,10 +424,8 @@ def _validate_metric_payload(metric: str, payload: Dict[str, Any]) -> Dict[str, 
     if params is not None and not isinstance(params, dict):
         raise ValueError("params must be an object")
     payload["params"] = params or {}
-    analysis_cfg = get_app_config().get("analysis", {})
-    include_unmatched_default = bool(analysis_cfg.get("include_unmatched_default", False))
     raw_include_unmatched = payload.get("include_unmatched", None)
-    payload["include_unmatched"] = include_unmatched_default if raw_include_unmatched is None else bool(raw_include_unmatched)
+    payload["include_unmatched"] = _coerce_bool(raw_include_unmatched, default=False)
     payload["symbol"] = _validate_symbol(payload.get("symbol"), required=False)
     start, end = _parse_range(payload.get("start_date"), payload.get("end_date"), normalize_date=True)
     payload["start_date"] = start
@@ -509,7 +523,7 @@ def register_api(server):
     @api.route("/config", methods=["GET"])
     def config():
         analysis_cfg = get_app_config().get("analysis", {})
-        include_unmatched_default = bool(analysis_cfg.get("include_unmatched_default", False))
+        include_unmatched_default = _coerce_bool(analysis_cfg.get("include_unmatched_default", False), default=False)
         symbols = []
         for symbol, cfg in SYMBOL_CATALOG.items():
             if not cfg.get("enabled", True):
@@ -856,10 +870,8 @@ def register_api(server):
         try:
             payload = _require_json_object()
             payload["symbol"] = _validate_symbol(payload.get("symbol"), required=False)
-            analysis_cfg = get_app_config().get("analysis", {})
-            include_unmatched_default = bool(analysis_cfg.get("include_unmatched_default", False))
             raw_include_unmatched = payload.get("include_unmatched", None)
-            payload["include_unmatched"] = include_unmatched_default if raw_include_unmatched is None else bool(raw_include_unmatched)
+            payload["include_unmatched"] = _coerce_bool(raw_include_unmatched, default=False)
             params = payload.get("params")
             if params is not None and not isinstance(params, dict):
                 raise ValueError("params must be an object")
