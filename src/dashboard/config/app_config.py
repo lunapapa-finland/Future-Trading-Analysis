@@ -42,6 +42,7 @@ DEFAULT_APP_CONFIG: Dict[str, Any] = {
         "risk_free_rate": 0.02,
         "portfolio_start_date": "2025-11-01",
         "timezone": "US/Central",
+        "include_unmatched_default": False,
         "session": {
             "start": "08:30",
             "end": "15:10",

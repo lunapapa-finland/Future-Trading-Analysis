@@ -35,6 +35,9 @@ export type ConfigResponse = {
       max_trades_after_big_loss?: number;
     };
   };
+  analysis_defaults?: {
+    include_unmatched?: boolean;
+  };
   portfolio?: {
     initial_net_liq: number;
     start_date: string;

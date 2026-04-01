@@ -20,7 +20,7 @@ from flask import Blueprint, jsonify, request
 from dashboard.services.analysis import compute
 from dashboard.services.analysis.behavioral import behavior_heatmap
 from dashboard.services.analysis.plots import get_statistics
-from dashboard.config.settings import DATA_SOURCE_DROPDOWN, PERFORMANCE_CSV, SYMBOL_CATALOG, CONTRACT_SPECS_CSV, JOURNAL_LIVE_CSV
+from dashboard.config.settings import DATA_SOURCE_DROPDOWN, PERFORMANCE_CSV, SYMBOL_CATALOG, CONTRACT_SPECS_CSV
 from dashboard.config.env import TIMEFRAME_OPTIONS, PLAYBACK_SPEEDS
 from dashboard.config.env import TEMP_PERF_DIR
 from dashboard.config.analysis import (
@@ -408,7 +408,10 @@ def _validate_metric_payload(metric: str, payload: Dict[str, Any]) -> Dict[str, 
     if params is not None and not isinstance(params, dict):
         raise ValueError("params must be an object")
     payload["params"] = params or {}
-    payload["include_unmatched"] = bool(payload.get("include_unmatched", False))
+    analysis_cfg = get_app_config().get("analysis", {})
+    include_unmatched_default = bool(analysis_cfg.get("include_unmatched_default", False))
+    raw_include_unmatched = payload.get("include_unmatched", None)
+    payload["include_unmatched"] = include_unmatched_default if raw_include_unmatched is None else bool(raw_include_unmatched)
     payload["symbol"] = _validate_symbol(payload.get("symbol"), required=False)
     start, end = _parse_range(payload.get("start_date"), payload.get("end_date"), normalize_date=True)
     payload["start_date"] = start
@@ -505,6 +508,8 @@ def register_api(server):
 
     @api.route("/config", methods=["GET"])
     def config():
+        analysis_cfg = get_app_config().get("analysis", {})
+        include_unmatched_default = bool(analysis_cfg.get("include_unmatched_default", False))
         symbols = []
         for symbol, cfg in SYMBOL_CATALOG.items():
             if not cfg.get("enabled", True):
@@ -532,6 +537,9 @@ def register_api(server):
                 },
                 "insights_defaults": {
                     "rule_compliance": RULE_COMPLIANCE_DEFAULTS,
+                },
+                "analysis_defaults": {
+                    "include_unmatched": include_unmatched_default,
                 },
                 "tag_taxonomy": taxonomy_payload(),
                 "day_plan_taxonomy": day_plan_taxonomy_payload(),
@@ -848,7 +856,10 @@ def register_api(server):
         try:
             payload = _require_json_object()
             payload["symbol"] = _validate_symbol(payload.get("symbol"), required=False)
-            payload["include_unmatched"] = bool(payload.get("include_unmatched", False))
+            analysis_cfg = get_app_config().get("analysis", {})
+            include_unmatched_default = bool(analysis_cfg.get("include_unmatched_default", False))
+            raw_include_unmatched = payload.get("include_unmatched", None)
+            payload["include_unmatched"] = include_unmatched_default if raw_include_unmatched is None else bool(raw_include_unmatched)
             params = payload.get("params")
             if params is not None and not isinstance(params, dict):
                 raise ValueError("params must be an object")
@@ -1849,29 +1860,18 @@ def register_api(server):
                         if d.weekday() < 5:
                             fut_days.add(d.isoformat())
 
-            journal_days: set[str] = set()
-            if os.path.exists(JOURNAL_LIVE_CSV):
-                jrows = list_live_journal()
-                for row in jrows:
-                    ts = pd.to_datetime(row.get("TradeDay"), errors="coerce")
-                    if pd.notna(ts):
-                        d = ts.date()
-                        if d.weekday() < 5:
-                            journal_days.add(d.isoformat())
-
-            common = perf_days & fut_days & journal_days
+            common = perf_days & fut_days
             if common:
                 day = sorted(common)[-1]
-                return jsonify({"ok": True, "day": day, "source": "intersection(performance,future,journal)"}), 200
-
-            fallback = perf_days & fut_days
-            if fallback:
-                day = sorted(fallback)[-1]
                 return jsonify({"ok": True, "day": day, "source": "intersection(performance,future)"}), 200
 
-            any_days = sorted(perf_days | fut_days | journal_days)
-            if any_days:
-                return jsonify({"ok": True, "day": any_days[-1], "source": "latest-available"}), 200
+            if perf_days:
+                day = sorted(perf_days)[-1]
+                return jsonify({"ok": True, "day": day, "source": "latest-performance"}), 200
+
+            if fut_days:
+                day = sorted(fut_days)[-1]
+                return jsonify({"ok": True, "day": day, "source": "latest-future"}), 200
 
             now_day = datetime.now().date()
             while now_day.weekday() >= 5:

@@ -188,13 +188,18 @@ export default function AnalysisPage() {
   }, [config, symbol]);
 
   useEffect(() => {
-    if (defaultsHydrated || !config?.insights_defaults?.rule_compliance) return;
-    const d = config.insights_defaults.rule_compliance;
-    if (typeof d.max_trades_per_day === "number") setMaxTradesPerDay(d.max_trades_per_day);
-    if (typeof d.max_consecutive_losses === "number") setMaxConsecutiveLosses(d.max_consecutive_losses);
-    if (typeof d.max_daily_loss === "number") setMaxDailyLoss(d.max_daily_loss);
-    if (typeof d.big_loss_threshold === "number") setBigLossThreshold(d.big_loss_threshold);
-    if (typeof d.max_trades_after_big_loss === "number") setMaxTradesAfterBigLoss(d.max_trades_after_big_loss);
+    if (defaultsHydrated || !config) return;
+    const d = config.insights_defaults?.rule_compliance;
+    if (d) {
+      if (typeof d.max_trades_per_day === "number") setMaxTradesPerDay(d.max_trades_per_day);
+      if (typeof d.max_consecutive_losses === "number") setMaxConsecutiveLosses(d.max_consecutive_losses);
+      if (typeof d.max_daily_loss === "number") setMaxDailyLoss(d.max_daily_loss);
+      if (typeof d.big_loss_threshold === "number") setBigLossThreshold(d.big_loss_threshold);
+      if (typeof d.max_trades_after_big_loss === "number") setMaxTradesAfterBigLoss(d.max_trades_after_big_loss);
+    }
+    if (typeof config.analysis_defaults?.include_unmatched === "boolean") {
+      setIncludeUnmatched(config.analysis_defaults.include_unmatched);
+    }
     setDefaultsHydrated(true);
   }, [config, defaultsHydrated]);
 
