@@ -1,5 +1,21 @@
 # Release and Deploy Guide
 
+## Latest Release Update (2026-04-16)
+- Fixed frontend/backend API port consistency to default to `8050`:
+  - `web/next.config.js`
+  - `web/lib/api.ts`
+- Fixed local dev startup path so `make run-dev` starts Flask:
+  - `src/dashboard/app.py`
+- Added session expiration handling (`SESSION_TTL_SECONDS`, default 12h):
+  - token issue + cookie max-age: `web/app/api/auth/login/route.ts`
+  - backend validation: `src/dashboard/core/app.py`
+  - proxy validation: `web/proxy.ts`
+- Replaced deprecated UTC call in upload preview stamp path:
+  - `src/dashboard/api/routes.py`
+- Updated auth tests for expiring token payload:
+  - `test/test_auth_api.py`
+  - `web/test/auth-flow.test.ts`
+
 ## 1) Push code/commits to GitHub
 - Commands:
   - Stage & commit: `git add . && git commit -m "<message>"`

@@ -35,6 +35,25 @@ function decodePayload(payloadB64: string): Record<string, unknown> | null {
   }
 }
 
+function getSessionTtlSeconds(): number {
+  const raw = process.env.SESSION_TTL_SECONDS || "43200";
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n)) return 43_200;
+  return Math.max(300, n);
+}
+
+function isPayloadCurrent(payload: Record<string, unknown>): boolean {
+  const now = Math.floor(Date.now() / 1000);
+  const expRaw = payload.exp;
+  if (expRaw !== undefined) {
+    const exp = Number(expRaw);
+    return Number.isFinite(exp) && exp > now;
+  }
+  const iat = Number(payload.iat);
+  if (!Number.isFinite(iat)) return false;
+  return iat + getSessionTtlSeconds() > now;
+}
+
 async function hasValidSessionToken(rawToken: string | undefined): Promise<boolean> {
   if (!rawToken) return false;
   const parts = rawToken.split(".");
@@ -45,7 +64,9 @@ async function hasValidSessionToken(rawToken: string | undefined): Promise<boole
   if (!secret) return false;
   const expectedSig = await signHmacSHA256(payloadB64, secret);
   if (sig !== expectedSig) return false;
-  return !!decodePayload(payloadB64);
+  const payload = decodePayload(payloadB64);
+  if (!payload) return false;
+  return isPayloadCurrent(payload);
 }
 
 export async function proxy(request: NextRequest) {

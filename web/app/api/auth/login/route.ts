@@ -3,6 +3,13 @@ import { createHmac, randomBytes } from "crypto";
 
 const SESSION_COOKIE = "fta_session";
 
+function getSessionTtlSeconds(): number {
+  const raw = process.env.SESSION_TTL_SECONDS || "43200";
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n)) return 43_200;
+  return Math.max(300, n);
+}
+
 function isHttpsRequest(request: Request): boolean {
   const forwardedProto = request.headers.get("x-forwarded-proto");
   if (forwardedProto) {
@@ -19,12 +26,13 @@ function getSessionSecret(): string | null {
   return process.env.SESSION_SIGNING_KEY || process.env.SECRET_KEY || null;
 }
 
-function createSessionToken(username: string, secret: string): string {
+function createSessionToken(username: string, secret: string, ttlSeconds: number): string {
   const now = Math.floor(Date.now() / 1000);
   const payload = {
     v: 1,
     sub: username,
     iat: now,
+    exp: now + ttlSeconds,
     n: randomBytes(8).toString("hex")
   };
   const payloadB64 = Buffer.from(JSON.stringify(payload)).toString("base64url");
@@ -51,7 +59,8 @@ export async function POST(request: Request) {
   if (!sessionSecret) {
     return NextResponse.json({ message: "Session signing secret not configured" }, { status: 500 });
   }
-  const sessionToken = createSessionToken(username, sessionSecret);
+  const ttlSeconds = getSessionTtlSeconds();
+  const sessionToken = createSessionToken(username, sessionSecret, ttlSeconds);
   const secureCookie = isHttpsRequest(request);
 
   const res = NextResponse.json({ ok: true });
@@ -62,6 +71,7 @@ export async function POST(request: Request) {
     sameSite: "lax",
     secure: secureCookie,
     path: "/",
+    maxAge: ttlSeconds,
   });
   return res;
 }

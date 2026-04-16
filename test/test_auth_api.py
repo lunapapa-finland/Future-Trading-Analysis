@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+import time
 
 import pytest
 
@@ -13,7 +14,8 @@ def _b64url(data: bytes) -> str:
 
 
 def _signed_session_token(secret: str) -> str:
-    payload = {"v": 1, "sub": "test-user", "iat": 0, "n": "abc123"}
+    now = int(time.time())
+    payload = {"v": 1, "sub": "test-user", "iat": now, "exp": now + 3600, "n": "abc123"}
     payload_b64 = _b64url(json.dumps(payload).encode("utf-8"))
     sig = hmac.new(secret.encode("utf-8"), payload_b64.encode("utf-8"), hashlib.sha256).hexdigest()
     return f"v1.{payload_b64}.{sig}"

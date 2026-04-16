@@ -10,7 +10,7 @@ Routes:
 import json
 import math
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -1210,7 +1210,7 @@ def register_api(server):
             leg_frames: list[pd.DataFrame] = []
 
             Path(TEMP_PERF_DIR).mkdir(parents=True, exist_ok=True)
-            stamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
             for idx, f in enumerate(files):
                 if f is None:
                     continue

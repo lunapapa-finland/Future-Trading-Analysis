@@ -41,8 +41,8 @@ function getApiBase(): string {
     }
     return window.location.origin;
   }
-  // SSR/dev fallback
-  return "http://127.0.0.1:5000";
+  // SSR/dev fallback (align with backend default port in Makefile/env).
+  return "http://127.0.0.1:8050";
 }
 
 const API_BASE = getApiBase();

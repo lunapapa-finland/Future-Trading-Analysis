@@ -17,10 +17,12 @@ function makeProxyRequest(pathname: string, cookieValue?: string) {
 }
 
 function signedToken(secret: string): string {
+  const now = Math.floor(Date.now() / 1000);
   const payload = {
     v: 1,
     sub: "test-user",
-    iat: 0,
+    iat: now,
+    exp: now + 3600,
     n: "nonce"
   };
   const payloadB64 = Buffer.from(JSON.stringify(payload)).toString("base64url");

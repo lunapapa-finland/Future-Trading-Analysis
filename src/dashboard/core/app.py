@@ -5,6 +5,7 @@ import json
 import base64
 import hmac
 import hashlib
+import time
 from logging.handlers import TimedRotatingFileHandler
 from flask import Flask, request, make_response
 from dotenv import load_dotenv
@@ -44,6 +45,15 @@ def _session_secret() -> str:
     return os.environ.get("SESSION_SIGNING_KEY") or os.environ.get("SECRET_KEY", "")
 
 
+def _session_ttl_seconds() -> int:
+    raw = os.environ.get("SESSION_TTL_SECONDS", "43200")
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        return 43200
+    return max(300, val)
+
+
 def _verify_session_cookie(token: str) -> bool:
     if not token:
         return False
@@ -62,7 +72,25 @@ def _verify_session_cookie(token: str) -> bool:
         payload = json.loads(_b64url_decode(payload_b64).decode("utf-8"))
     except Exception:
         return False
-    return isinstance(payload, dict) and bool(payload)
+    if not isinstance(payload, dict) or not payload:
+        return False
+
+    now = int(time.time())
+    # Prefer explicit expiration, but keep compatibility with pre-exp tokens.
+    exp_raw = payload.get("exp")
+    if exp_raw is not None:
+        try:
+            exp = int(exp_raw)
+        except (TypeError, ValueError):
+            return False
+        return exp > now
+
+    iat_raw = payload.get("iat")
+    try:
+        iat = int(iat_raw)
+    except (TypeError, ValueError):
+        return False
+    return (iat + _session_ttl_seconds()) > now
 
 
 def _is_authorized() -> bool:
