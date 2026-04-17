@@ -1,6 +1,22 @@
 # Release and Deploy Guide
 
-## Latest Release Update (2026-04-16)
+## Release v1.2.8 (2026-04-17)
+- Patched backend test dependency vulnerability:
+  - `requirements.txt`
+  - `pytest: 8.3.4 -> 9.0.3` (CVE-2025-71176)
+- Patched frontend audit vulnerabilities:
+  - `web/package.json`
+  - `web/package-lock.json`
+  - `next: 16.2.1 -> 16.2.4`
+  - `eslint-config-next: 16.2.1 -> 16.2.4`
+  - `@types/node: 20.12.12 -> 20.19.0`
+  - Applied `npm audit fix` to resolve transitive `vite` advisories under `vitest`
+- Validation results:
+  - Backend: `pytest -q` -> `85 passed`
+  - Frontend: `npm run -s typecheck && npm run -s lint && npm run -s test` -> pass
+  - Frontend audit: `npm --prefix web audit` -> `0 vulnerabilities`
+
+## Release v1.2.7 (2026-04-16)
 - Fixed frontend/backend API port consistency to default to `8050`:
   - `web/next.config.js`
   - `web/lib/api.ts`
