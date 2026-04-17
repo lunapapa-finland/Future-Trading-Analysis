@@ -1,4 +1,12 @@
-# Future Trading Analysis
+# Future Trading Analysis 
+
+You can test out the platform using our live demo environment: [Access Demo](https://future-trading-analysis-latest.onrender.com)
+
+**Login Credentials:**
+* **Username:** `Demo`
+* **Password:** `Demo`
+
+---
 
 Future Trading Analysis is a full-stack trading journal and replay workspace.
 It combines:

@@ -79,7 +79,7 @@ def _b64url_decode(raw: str) -> bytes:
 
 
 def _session_secret() -> str:
-    return os.environ.get("SESSION_SIGNING_KEY") or os.environ.get("SECRET_KEY", "")
+    return os.environ.get("SESSION_SIGNING_KEY") or os.environ.get("SECRET_KEY") or "demo-session-signing-key"
 
 
 def _session_ttl_seconds() -> int:

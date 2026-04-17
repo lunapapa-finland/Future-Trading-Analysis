@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { createHmac, randomBytes } from "crypto";
 
 const SESSION_COOKIE = "fta_session";
+const DEMO_USER = "Demo";
+const DEMO_PASS = "Demo";
+const DEMO_SESSION_SECRET = "demo-session-signing-key";
 
 function getSessionTtlSeconds(): number {
   const raw = process.env.SESSION_TTL_SECONDS || "43200";
@@ -23,7 +26,7 @@ function isHttpsRequest(request: Request): boolean {
 }
 
 function getSessionSecret(): string | null {
-  return process.env.SESSION_SIGNING_KEY || process.env.SECRET_KEY || null;
+  return process.env.SESSION_SIGNING_KEY || process.env.SECRET_KEY || DEMO_SESSION_SECRET;
 }
 
 function createSessionToken(username: string, secret: string, ttlSeconds: number): string {
@@ -44,12 +47,8 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => ({}));
   const { username, password } = body as { username?: string; password?: string };
 
-  const expectedUser = process.env.DASH_USER;
-  const expectedPass = process.env.DASH_PASS;
-
-  if (!expectedUser || !expectedPass) {
-    return NextResponse.json({ message: "Credentials not configured" }, { status: 500 });
-  }
+  const expectedUser = process.env.DASH_USER || DEMO_USER;
+  const expectedPass = process.env.DASH_PASS || DEMO_PASS;
 
   if (username !== expectedUser || password !== expectedPass) {
     return NextResponse.json({ message: "Invalid username or password" }, { status: 401 });
