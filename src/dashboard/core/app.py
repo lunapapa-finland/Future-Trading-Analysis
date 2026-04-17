@@ -6,6 +6,7 @@ import base64
 import hmac
 import hashlib
 import time
+from pathlib import Path
 from logging.handlers import TimedRotatingFileHandler
 from flask import Flask, request, make_response
 from dotenv import load_dotenv
@@ -24,16 +25,52 @@ root = logging.getLogger()
 root.setLevel(logging.INFO)
 root.addHandler(file_handler)
 
+
+def _truthy(raw: str) -> bool:
+    return str(raw or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _autocreate_credentials_enabled() -> bool:
+    # Explicit env var wins; otherwise enable only in container runtime.
+    raw = os.environ.get("AUTO_CREATE_DEFAULT_CREDENTIALS_ENV")
+    if raw is not None:
+        return _truthy(raw)
+    return Path("/.dockerenv").exists()
+
+
+def _write_default_credentials_env(target: Path) -> None:
+    if target.exists():
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "# Auto-generated fallback credentials. Provide a host file to override.\n"
+        "DASH_USER=Demo\n"
+        "DASH_PASS=Demo\n",
+        encoding="utf-8",
+    )
+
+
 def _load_credentials_env() -> None:
     candidates = [
-        "/app/src/dashboard/config/credentials.env",
-        "src/dashboard/config/credentials.env",
-        "config/credentials.env",
+        Path("/app/config/credentials.env"),
+        Path("/app/src/dashboard/config/credentials.env"),
+        Path("config/credentials.env"),
+        Path("src/dashboard/config/credentials.env"),
     ]
     for path in candidates:
-        if os.path.exists(path):
+        if path.exists():
             load_dotenv(path)
             return
+
+    if _autocreate_credentials_enabled():
+        default_target = Path("/app/config/credentials.env") if Path("/app").exists() else Path("config/credentials.env")
+        _write_default_credentials_env(default_target)
+        load_dotenv(default_target)
+        logging.getLogger(__name__).warning(
+            "No credentials.env provided; generated fallback credentials at %s (DASH_USER=Demo).",
+            default_target,
+        )
+        return
 
 
 def _b64url_decode(raw: str) -> bytes:

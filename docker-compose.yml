@@ -6,7 +6,10 @@ services:
     container_name: trading_dash
     restart: unless-stopped
     env_file:
-      - src/dashboard/config/credentials.env
+      - path: ./config/credentials.env
+        required: false
+      - path: ./src/dashboard/config/credentials.env
+        required: false
     environment:
       - TZ=Europe/Helsinki
       - HOST=0.0.0.0
@@ -31,7 +34,10 @@ services:
     image: trading-dashboard:latest
     container_name: trading_jobs
     env_file:
-      - src/dashboard/config/credentials.env
+      - path: ./config/credentials.env
+        required: false
+      - path: ./src/dashboard/config/credentials.env
+        required: false
     restart: unless-stopped
     environment:
       - TZ=Europe/Helsinki
