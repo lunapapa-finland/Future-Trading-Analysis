@@ -21,16 +21,17 @@ from dashboard.services.analysis import compute
 from dashboard.services.analysis.behavioral import behavior_heatmap
 from dashboard.services.analysis.plots import get_statistics
 from dashboard.config.settings import DATA_SOURCE_DROPDOWN, PERFORMANCE_CSV, SYMBOL_CATALOG, CONTRACT_SPECS_CSV
-from dashboard.config.env import TIMEFRAME_OPTIONS, PLAYBACK_SPEEDS
-from dashboard.config.env import TEMP_PERF_DIR
+from dashboard.config.env import TEMP_PERF_DIR, playback_speeds, timeframe_options
 from dashboard.config.analysis import (
-    RISK_FREE_RATE,
-    INITIAL_NET_LIQ,
-    PORTFOLIO_START_DATE,
-    RULE_COMPLIANCE_DEFAULTS,
     ANALYSIS_TIMEZONE,
+    include_unmatched_default,
+    initial_net_liq,
+    portfolio_start_date,
+    risk_free_rate,
+    rule_compliance_defaults,
 )
 from dashboard.config.app_config import get_app_config
+from dashboard.config.runtime_config import runtime_config_payload, update_runtime_config
 from dashboard.config.runtime_manifest import runtime_manifest
 from dashboard.services.data.load_data import load_performance, load_future
 from dashboard.services.portfolio import equity_series, append_manual
@@ -109,7 +110,7 @@ def _coerce_bool(value: Any, default: bool = False) -> bool:
 def _cors_headers(response, allowed_origin: str):
     response.headers["Access-Control-Allow-Origin"] = allowed_origin
     response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-    response.headers["Access-Control-Allow-Methods"] = "GET,POST,DELETE,OPTIONS"
+    response.headers["Access-Control-Allow-Methods"] = "GET,POST,PATCH,DELETE,OPTIONS"
     response.headers["Access-Control-Allow-Credentials"] = "true"
     response.headers["Vary"] = "Origin"
     return response
@@ -522,8 +523,6 @@ def register_api(server):
 
     @api.route("/config", methods=["GET"])
     def config():
-        analysis_cfg = get_app_config().get("analysis", {})
-        include_unmatched_default = _coerce_bool(analysis_cfg.get("include_unmatched_default", False), default=False)
         symbols = []
         for symbol, cfg in SYMBOL_CATALOG.items():
             if not cfg.get("enabled", True):
@@ -542,24 +541,41 @@ def register_api(server):
         return jsonify(
             {
                 "symbols": symbols,
-                "timeframes": TIMEFRAME_OPTIONS,
-                "playback_speeds": PLAYBACK_SPEEDS,
+                "timeframes": timeframe_options(),
+                "playback_speeds": playback_speeds(),
                 "portfolio": {
-                    "initial_net_liq": INITIAL_NET_LIQ,
-                    "start_date": PORTFOLIO_START_DATE,
-                    "risk_free_rate": RISK_FREE_RATE,
+                    "initial_net_liq": initial_net_liq(),
+                    "start_date": portfolio_start_date(),
+                    "risk_free_rate": risk_free_rate(),
                 },
                 "insights_defaults": {
-                    "rule_compliance": RULE_COMPLIANCE_DEFAULTS,
+                    "rule_compliance": rule_compliance_defaults(),
                 },
                 "analysis_defaults": {
-                    "include_unmatched": include_unmatched_default,
+                    "include_unmatched": include_unmatched_default(),
                 },
                 "tag_taxonomy": taxonomy_payload(),
                 "day_plan_taxonomy": day_plan_taxonomy_payload(),
                 "runtime_manifest": runtime_manifest(),
             }
         )
+
+    @api.route("/runtime-config", methods=["GET", "PATCH", "OPTIONS"])
+    def runtime_config():
+        if request.method == "OPTIONS":
+            return _cors_headers(jsonify({"ok": True}), allowed_origin)
+        try:
+            if request.method == "GET":
+                return jsonify(runtime_config_payload()), 200
+            payload = _require_json_object()
+            updates = payload.get("updates", payload)
+            if not isinstance(updates, dict):
+                raise ValueError("updates must be an object")
+            return jsonify(update_runtime_config(updates)), 200
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except OSError as exc:
+            return jsonify({"error": f"failed to save runtime config: {exc}"}), 500
 
     @api.route("/data/fetch/status", methods=["GET", "OPTIONS"])
     def data_fetch_status():
@@ -640,7 +656,7 @@ def register_api(server):
             series = equity_series(limit=500)
             latest = series[-1] if series else None
             metrics = portfolio_metrics()
-            return jsonify({"latest": latest, "series": series, "risk_free_rate": RISK_FREE_RATE, "metrics": metrics})
+            return jsonify({"latest": latest, "series": series, "risk_free_rate": risk_free_rate(), "metrics": metrics})
         except Exception as exc:
             return jsonify({"error": f"failed to load portfolio: {exc}"}), 500
 
@@ -819,8 +835,8 @@ def register_api(server):
             out = compute.sharpe_ratio(
                 df,
                 window=resolved_window,
-                risk_free_rate=params.get("risk_free_rate", 0.02),
-                initial_capital=params.get("initial_capital", INITIAL_NET_LIQ),
+                risk_free_rate=params.get("risk_free_rate", risk_free_rate()),
+                initial_capital=params.get("initial_capital", initial_net_liq()),
             )
             return _to_records(out), 200
         elif metric == "trade_efficiency":

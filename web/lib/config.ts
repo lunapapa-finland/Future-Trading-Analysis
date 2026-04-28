@@ -67,11 +67,50 @@ export type ConfigResponse = {
   };
 };
 
+export type RuntimeConfigField = {
+  key: string;
+  label: string;
+  section: string;
+  type: "number" | "integer" | "boolean" | "string_list" | "integer_list" | "date";
+  description: string;
+  min?: number | null;
+  max?: number | null;
+  value: unknown;
+};
+
+export type RuntimeConfigResponse = {
+  config_path: string;
+  apply_mode: "live";
+  fields: RuntimeConfigField[];
+};
+
 export async function fetchConfig(): Promise<ConfigResponse> {
   const res = await fetch("/api/config", { cache: "no-store" });
   if (!res.ok) {
     const msg = await res.text().catch(() => res.statusText);
     throw new Error(msg || "Failed to load config");
+  }
+  return res.json();
+}
+
+export async function fetchRuntimeConfig(): Promise<RuntimeConfigResponse> {
+  const res = await fetch("/api/runtime-config", { cache: "no-store" });
+  if (!res.ok) {
+    const msg = await res.text().catch(() => res.statusText);
+    throw new Error(msg || "Failed to load runtime config");
+  }
+  return res.json();
+}
+
+export async function patchRuntimeConfig(updates: Record<string, unknown>): Promise<RuntimeConfigResponse> {
+  const res = await fetch("/api/runtime-config", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ updates }),
+  });
+  if (!res.ok) {
+    const msg = await res.text().catch(() => res.statusText);
+    throw new Error(msg || "Failed to save runtime config");
   }
   return res.json();
 }

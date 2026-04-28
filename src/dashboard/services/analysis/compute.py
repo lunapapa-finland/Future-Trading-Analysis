@@ -1,10 +1,19 @@
 import pandas as pd
 from dashboard.config.settings import DEFAULT_GRANULARITY, DEFAULT_ROLLING_WINDOW
-from dashboard.config.analysis import RULE_COMPLIANCE_DEFAULTS, ANALYSIS_TIMEZONE
+from dashboard.config.analysis import ANALYSIS_TIMEZONE, rule_compliance_defaults
 import numpy as np
 from dashboard.services.analysis.schema import validate_performance_df
 from dashboard.services.utils.day_plan import load_day_plan
 import re
+
+# Backward-compatible test/extension hook. Leave as None in normal runtime so
+# rule defaults come from the live config loader on each operation.
+RULE_COMPLIANCE_DEFAULTS = None
+
+
+def _rule_defaults():
+    return RULE_COMPLIANCE_DEFAULTS if isinstance(RULE_COMPLIANCE_DEFAULTS, dict) else rule_compliance_defaults()
+
 
 def _coerce_window(window, fallback=DEFAULT_ROLLING_WINDOW):
     value = fallback if window is None else window
@@ -835,25 +844,25 @@ def rule_compliance_score(
     max_trades_after_big_loss=None,
 ):
     max_trades_per_day = int(
-        RULE_COMPLIANCE_DEFAULTS["max_trades_per_day"]
+        _rule_defaults()["max_trades_per_day"]
         if max_trades_per_day is None
         else max_trades_per_day
     )
     max_consecutive_losses = int(
-        RULE_COMPLIANCE_DEFAULTS["max_consecutive_losses"]
+        _rule_defaults()["max_consecutive_losses"]
         if max_consecutive_losses is None
         else max_consecutive_losses
     )
     max_daily_loss = float(
-        RULE_COMPLIANCE_DEFAULTS["max_daily_loss"] if max_daily_loss is None else max_daily_loss
+        _rule_defaults()["max_daily_loss"] if max_daily_loss is None else max_daily_loss
     )
     big_loss_threshold = float(
-        RULE_COMPLIANCE_DEFAULTS["big_loss_threshold"]
+        _rule_defaults()["big_loss_threshold"]
         if big_loss_threshold is None
         else big_loss_threshold
     )
     max_trades_after_big_loss = int(
-        RULE_COMPLIANCE_DEFAULTS["max_trades_after_big_loss"]
+        _rule_defaults()["max_trades_after_big_loss"]
         if max_trades_after_big_loss is None
         else max_trades_after_big_loss
     )
@@ -1065,7 +1074,7 @@ def playbook_builder(
     min_trades=5,
 ):
     journal = setup_journal(performance_df, min_trades=min_trades)
-    rules = rules or RULE_COMPLIANCE_DEFAULTS
+    rules = rules or _rule_defaults()
     execution_quality = execution_quality or {"by_entry_hour": [], "by_hold_bucket": []}
     compliance_daily = compliance_daily if isinstance(compliance_daily, pd.DataFrame) else pd.DataFrame(compliance_daily or [])
     if journal.empty:
@@ -1432,7 +1441,7 @@ def _build_applied_config(params, defaults):
 
 def insights_bundle(performance_df, params=None):
     params = params or {}
-    rules = RULE_COMPLIANCE_DEFAULTS
+    rules = _rule_defaults()
     applied_config = _build_applied_config(params, rules)
     min_trades = int(applied_config["min_trades"])
 

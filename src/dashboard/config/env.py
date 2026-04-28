@@ -56,3 +56,25 @@ TIMEFRAME_OPTIONS = list(get_app_config().get("ui", {}).get("timeframes", ["5m",
 
 # Playback speed presets (seconds per bar)
 PLAYBACK_SPEEDS = list(get_app_config().get("ui", {}).get("playback_speeds", [15, 30, 45, 60]))
+
+
+def timeframe_options() -> list[str]:
+    cfg = get_app_config().get("ui", {})
+    raw = cfg.get("timeframes", ["5m", "15m", "30m", "1h", "4h", "1d", "1w"]) if isinstance(cfg, dict) else []
+    values = [str(v).strip() for v in raw] if isinstance(raw, list) else []
+    return [v for v in values if v] or ["5m", "15m", "30m", "1h", "4h", "1d", "1w"]
+
+
+def playback_speeds() -> list[int]:
+    cfg = get_app_config().get("ui", {})
+    raw = cfg.get("playback_speeds", [15, 30, 45, 60]) if isinstance(cfg, dict) else []
+    values: list[int] = []
+    if isinstance(raw, list):
+        for item in raw:
+            try:
+                value = int(item)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                values.append(value)
+    return values or [15, 30, 45, 60]

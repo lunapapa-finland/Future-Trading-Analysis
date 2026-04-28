@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import math
 from dashboard.services.portfolio import equity_series  # type: ignore
-from dashboard.config.analysis import RISK_FREE_RATE
+from dashboard.config.analysis import risk_free_rate
 
 
 def load_portfolio_df() -> pd.DataFrame:
@@ -46,7 +46,7 @@ def portfolio_metrics():
     cagr = (df["equity"].iloc[-1] / df["equity"].iloc[0]) ** (1 / years) - 1 if df["equity"].iloc[0] > 0 else None
 
     # Sharpe using daily returns vs risk-free
-    rf_daily = RISK_FREE_RATE / 365.0
+    rf_daily = risk_free_rate() / 365.0
     excess = df["return"] - rf_daily
     mean_excess = excess.mean()
     std_excess = excess.std(ddof=1) or math.nan

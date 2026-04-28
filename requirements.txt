@@ -7,6 +7,6 @@ exchange-calendars==4.13.1
 yfinance==0.2.54
 gunicorn==23.0.0
 pytz==2024.2
-python-dotenv==1.0.1
+python-dotenv==1.2.2
 PyYAML==6.0.2
 pytest==9.0.3

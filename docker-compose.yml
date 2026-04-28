@@ -26,6 +26,7 @@ services:
       - ./data/temp_performance:/app/data/temp_performance
       - ./data/metadata:/app/data/metadata
       - ./data/portfolio:/app/data/portfolio
+      - ./config/app_config.yaml:/app/config/app_config.yaml
       - ./log:/app/log
     ports:
       - "${HOST_PORT:-8050}:8050"
@@ -50,6 +51,7 @@ services:
       - ./data/temp_performance:/app/data/temp_performance
       - ./data/metadata:/app/data/metadata
       - ./data/portfolio:/app/data/portfolio
+      - ./config/app_config.yaml:/app/config/app_config.yaml
       - ./log:/app/log
     command: ["/bin/bash","-lc","cron -f"]
     healthcheck:

@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
-import type { ConfigResponse, SymbolConfig } from "@/lib/config";
-import { fetchConfig } from "@/lib/config";
+import type { ConfigResponse, RuntimeConfigField, RuntimeConfigResponse, SymbolConfig } from "@/lib/config";
+import { fetchConfig, fetchRuntimeConfig, patchRuntimeConfig } from "@/lib/config";
 import { getDataFetchStatus, postDataFetchRun } from "@/lib/api";
 
 type FetchStatusRow = {
@@ -78,6 +78,12 @@ export default function ConfigPage() {
   const [fetchBusy, setFetchBusy] = useState(false);
   const [fetchMessage, setFetchMessage] = useState("");
   const [fetchRateLimit, setFetchRateLimit] = useState<RateLimitStatus | undefined>(undefined);
+  const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigResponse | null>(null);
+  const [runtimeLoading, setRuntimeLoading] = useState(true);
+  const [runtimeSaving, setRuntimeSaving] = useState(false);
+  const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const [runtimeMessage, setRuntimeMessage] = useState("");
+  const [runtimeDraft, setRuntimeDraft] = useState<Record<string, unknown>>({});
 
   useEffect(() => {
     let mounted = true;
@@ -97,6 +103,24 @@ export default function ConfigPage() {
     return () => {
       mounted = false;
     };
+  }, []);
+
+  async function loadRuntimeConfig() {
+    setRuntimeLoading(true);
+    setRuntimeError(null);
+    try {
+      const data = await fetchRuntimeConfig();
+      setRuntimeConfig(data);
+      setRuntimeDraft(draftFromFields(data.fields));
+    } catch (err) {
+      setRuntimeError((err as Error).message || "Failed to load runtime config");
+    } finally {
+      setRuntimeLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadRuntimeConfig();
   }, []);
 
   async function loadFetchStatus() {
@@ -135,8 +159,7 @@ export default function ConfigPage() {
       <div className="space-y-4">
         <div className="flex flex-col gap-1">
           <p className="text-xs uppercase tracking-[0.2em] text-accent sm:text-sm">Configuration</p>
-          <h1 className="text-xl font-semibold text-white sm:text-2xl">Symbol data paths</h1>
-          <p className="text-sm text-slate-300">Read-only view of symbols and their CSV sources. Editing coming later.</p>
+          <h1 className="text-xl font-semibold text-white sm:text-2xl">Runtime Config</h1>
         </div>
 
         {loading && <p className="text-slate-300">Loading...</p>}
@@ -144,23 +167,203 @@ export default function ConfigPage() {
 
         {config ? (
           <>
-            <DataFetchPanel
-              rows={fetchRows}
-              loading={fetchLoading}
-              busy={fetchBusy}
-              message={fetchMessage}
-              rateLimit={fetchRateLimit}
-              onRefresh={loadFetchStatus}
-              onRun={runManualFetch}
-            />
-            {config.runtime_manifest ? <RuntimeManifestPanel manifest={config.runtime_manifest} /> : null}
-            <SymbolTable symbols={config.symbols} />
-            {config.timeframes?.length ? <TimeframeList timeframes={config.timeframes} /> : null}
-            <HoldTypeInfo />
+            <ConfigDisclosure title="Data Fetch" badge="fetch enabled">
+              <DataFetchPanel
+                rows={fetchRows}
+                loading={fetchLoading}
+                busy={fetchBusy}
+                message={fetchMessage}
+                rateLimit={fetchRateLimit}
+                onRefresh={loadFetchStatus}
+                onRun={runManualFetch}
+              />
+            </ConfigDisclosure>
+            <ConfigDisclosure title="Live Runtime Settings" badge="live">
+              <RuntimeConfigEditor
+                runtimeConfig={runtimeConfig}
+                draft={runtimeDraft}
+                loading={runtimeLoading}
+                saving={runtimeSaving}
+                error={runtimeError}
+                message={runtimeMessage}
+                onChange={(key, value) => {
+                  setRuntimeDraft((current) => ({ ...current, [key]: value }));
+                  setRuntimeMessage("");
+                }}
+                onRefresh={loadRuntimeConfig}
+                onSave={async () => {
+                  if (!runtimeConfig) return;
+                  setRuntimeSaving(true);
+                  setRuntimeError(null);
+                  setRuntimeMessage("");
+                  try {
+                    const saved = await patchRuntimeConfig(runtimeDraft);
+                    setRuntimeConfig(saved);
+                    setRuntimeDraft(draftFromFields(saved.fields));
+                    setRuntimeMessage("Saved. Changes apply to the next backend operation.");
+                    const refreshed = await fetchConfig();
+                    setConfig(refreshed);
+                  } catch (err) {
+                    setRuntimeError((err as Error).message || "Failed to save runtime config");
+                  } finally {
+                    setRuntimeSaving(false);
+                  }
+                }}
+              />
+            </ConfigDisclosure>
+            <ConfigDisclosure title="Static Manifest" badge="rebuild required">
+              {config.runtime_manifest ? <RuntimeManifestPanel manifest={config.runtime_manifest} /> : null}
+              <SymbolTable symbols={config.symbols} />
+              <HoldTypeInfo />
+            </ConfigDisclosure>
           </>
         ) : null}
       </div>
     </AppShell>
+  );
+}
+
+function ConfigDisclosure({
+  title,
+  badge,
+  children,
+}: {
+  title: string;
+  badge: string;
+  children: ReactNode;
+}) {
+  return (
+    <details className="group rounded-2xl border border-white/10 bg-surface/60 shadow-lg">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="text-sm text-slate-400 transition group-open:rotate-90">›</span>
+          <h2 className="truncate text-base font-semibold text-white">{title}</h2>
+        </div>
+        <span className="shrink-0 rounded border border-white/10 px-2 py-1 text-[11px] uppercase tracking-[0.12em] text-slate-300">{badge}</span>
+      </summary>
+      <div className="border-t border-white/10 p-4">{children}</div>
+    </details>
+  );
+}
+
+function formatDraftValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.join(", ");
+  return value;
+}
+
+function draftFromFields(fields: RuntimeConfigField[]): Record<string, unknown> {
+  return Object.fromEntries(fields.map((field) => [field.key, formatDraftValue(field.value)]));
+}
+
+function fieldsBySection(fields: RuntimeConfigField[]): Array<[string, RuntimeConfigField[]]> {
+  const grouped = new Map<string, RuntimeConfigField[]>();
+  fields.forEach((field) => {
+    grouped.set(field.section, [...(grouped.get(field.section) || []), field]);
+  });
+  return Array.from(grouped.entries());
+}
+
+function RuntimeConfigEditor({
+  runtimeConfig,
+  draft,
+  loading,
+  saving,
+  error,
+  message,
+  onChange,
+  onRefresh,
+  onSave,
+}: {
+  runtimeConfig: RuntimeConfigResponse | null;
+  draft: Record<string, unknown>;
+  loading: boolean;
+  saving: boolean;
+  error: string | null;
+  message: string;
+  onChange: (key: string, value: unknown) => void;
+  onRefresh: () => void;
+  onSave: () => void;
+}) {
+  const sections = fieldsBySection(runtimeConfig?.fields || []);
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          {runtimeConfig?.config_path ? (
+            <p className="max-w-full truncate text-xs text-slate-400" title={runtimeConfig.config_path}>
+              {runtimeConfig.config_path}
+            </p>
+          ) : null}
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={onRefresh} disabled={loading || saving} className="rounded border border-white/20 px-3 py-2 text-xs text-slate-200 disabled:opacity-60">
+            {loading ? "Refreshing..." : "Refresh"}
+          </button>
+          <button onClick={onSave} disabled={loading || saving || !runtimeConfig} className="rounded border border-cyan-300/40 px-3 py-2 text-xs text-cyan-200 disabled:opacity-60">
+            {saving ? "Saving..." : "Save"}
+          </button>
+        </div>
+      </div>
+      {error ? <p className="rounded border border-red-400/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">{error}</p> : null}
+      {message ? <p className="rounded border border-emerald-400/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">{message}</p> : null}
+      {loading ? <p className="text-sm text-slate-300">Loading live settings...</p> : null}
+      {!loading && !sections.length ? <p className="text-sm text-slate-300">No live-editable settings returned by backend.</p> : null}
+      <div className="grid gap-4 xl:grid-cols-2">
+        {sections.map(([section, fields]) => (
+          <div key={section} className="rounded-xl border border-white/10 bg-white/5 p-3">
+            <h2 className="text-sm font-semibold text-white">{section}</h2>
+            <div className="mt-3 space-y-3">
+              {fields.map((field) => (
+                <RuntimeFieldControl
+                  key={field.key}
+                  field={field}
+                  value={draft[field.key]}
+                  onChange={(value) => onChange(field.key, value)}
+                />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RuntimeFieldControl({
+  field,
+  value,
+  onChange,
+}: {
+  field: RuntimeConfigField;
+  value: unknown;
+  onChange: (value: unknown) => void;
+}) {
+  const common = "mt-1 w-full rounded-lg border border-white/10 bg-slate-950/60 px-3 py-2 text-sm text-white outline-none focus:border-accent";
+  return (
+    <label className="block">
+      <div className="flex items-start justify-between gap-3">
+        <span className="text-sm font-medium text-slate-100">{field.label}</span>
+        <span className="shrink-0 rounded border border-white/10 px-2 py-0.5 text-[11px] text-slate-400">live</span>
+      </div>
+      <p className="mt-0.5 text-xs text-slate-400">{field.description}</p>
+      {field.type === "boolean" ? (
+        <select className={common} value={String(Boolean(value))} onChange={(e) => onChange(e.target.value === "true")}>
+          <option value="true">Enabled</option>
+          <option value="false">Disabled</option>
+        </select>
+      ) : (
+        <input
+          className={common}
+          type={field.type === "number" || field.type === "integer" ? "number" : field.type === "date" ? "date" : "text"}
+          min={field.min ?? undefined}
+          max={field.max ?? undefined}
+          step={field.type === "integer" ? 1 : field.type === "number" ? "any" : undefined}
+          value={String(value ?? "")}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={field.type.endsWith("_list") ? "Comma-separated values" : undefined}
+        />
+      )}
+    </label>
   );
 }
 
@@ -183,10 +386,9 @@ function DataFetchPanel({
 }) {
   const rateLimitMessage = describeRateLimit(rateLimit);
   return (
-    <div className="space-y-3 rounded-2xl border border-white/10 bg-surface/60 p-4 shadow-lg">
+    <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <p className="text-sm uppercase tracking-[0.2em] text-accent">Data Fetch</p>
           <p className="mt-1 text-slate-300">Per-symbol future data status and manual yfinance fetch trigger.</p>
         </div>
         <div className="flex items-center gap-2">
@@ -257,10 +459,9 @@ function RuntimeManifestPanel({
 }) {
   const sourceEntries = Object.entries(manifest.sources || {});
   return (
-    <div className="space-y-3 rounded-2xl border border-white/10 bg-surface/60 p-4 shadow-lg">
+    <div className="space-y-3">
       <div>
-        <p className="text-sm uppercase tracking-[0.2em] text-accent">Runtime Manifest</p>
-        <p className="mt-1 text-slate-300">Single control view for active data roots and CSV sources used by backend APIs.</p>
+        <p className="text-slate-300">Backend roots, source files, and symbol catalog are static manifest values in this screen.</p>
       </div>
       {manifest.app_config ? (
         <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">

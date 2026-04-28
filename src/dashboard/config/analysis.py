@@ -4,6 +4,8 @@ Analysis-specific configuration.
 
 import os
 
+from typing import Any, Dict
+
 from dashboard.config.app_config import get_app_config
 
 _CFG = get_app_config().get("analysis", {})
@@ -37,3 +39,41 @@ RULE_COMPLIANCE_DEFAULTS = {
     "big_loss_threshold": _float_env("RULE_BIG_LOSS_THRESHOLD", float(_CFG.get("rule_compliance", {}).get("big_loss_threshold", 200.0))),
     "max_trades_after_big_loss": _int_env("RULE_MAX_TRADES_AFTER_BIG_LOSS", int(_CFG.get("rule_compliance", {}).get("max_trades_after_big_loss", 2))),
 }
+
+
+def analysis_config() -> Dict[str, Any]:
+    cfg = get_app_config().get("analysis", {})
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def initial_net_liq() -> float:
+    return float(analysis_config().get("initial_net_liq", 10000.0))
+
+
+def risk_free_rate() -> float:
+    return float(analysis_config().get("risk_free_rate", 0.02))
+
+
+def portfolio_start_date() -> str:
+    return str(analysis_config().get("portfolio_start_date", "2025-11-01"))
+
+
+def include_unmatched_default() -> bool:
+    raw = analysis_config().get("include_unmatched_default", False)
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(raw)
+
+
+def rule_compliance_defaults() -> Dict[str, Any]:
+    cfg = analysis_config().get("rule_compliance", {})
+    cfg = cfg if isinstance(cfg, dict) else {}
+    return {
+        "max_trades_per_day": _int_env("RULE_MAX_TRADES_PER_DAY", int(cfg.get("max_trades_per_day", 8))),
+        "max_consecutive_losses": _int_env("RULE_MAX_CONSECUTIVE_LOSSES", int(cfg.get("max_consecutive_losses", 3))),
+        "max_daily_loss": _float_env("RULE_MAX_DAILY_LOSS", float(cfg.get("max_daily_loss", 500.0))),
+        "big_loss_threshold": _float_env("RULE_BIG_LOSS_THRESHOLD", float(cfg.get("big_loss_threshold", 200.0))),
+        "max_trades_after_big_loss": _int_env("RULE_MAX_TRADES_AFTER_BIG_LOSS", int(cfg.get("max_trades_after_big_loss", 2))),
+    }

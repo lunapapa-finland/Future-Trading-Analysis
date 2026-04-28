@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import copy
+import errno
 import os
 import logging
-from functools import lru_cache
+import tempfile
+import threading
 from pathlib import Path
 from typing import Any, Dict
 
@@ -83,6 +85,12 @@ def _resolve_project_root() -> Path:
     return Path.cwd()
 
 
+_CONFIG_LOCK = threading.RLock()
+_CONFIG_CACHE: Dict[str, Any] | None = None
+_CONFIG_CACHE_MTIME_NS: int | None = None
+_CONFIG_CACHE_PATH: Path | None = None
+
+
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
     out = copy.deepcopy(base)
     for k, v in override.items():
@@ -93,7 +101,6 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
     return out
 
 
-@lru_cache(maxsize=1)
 def app_config_path() -> Path:
     raw = os.environ.get("APP_CONFIG_PATH", "").strip()
     if raw:
@@ -101,18 +108,77 @@ def app_config_path() -> Path:
     return (_resolve_project_root() / "config" / "app_config.yaml").resolve()
 
 
-@lru_cache(maxsize=1)
 def get_app_config() -> Dict[str, Any]:
-    cfg = copy.deepcopy(DEFAULT_APP_CONFIG)
+    global _CONFIG_CACHE, _CONFIG_CACHE_MTIME_NS, _CONFIG_CACHE_PATH
     p = app_config_path()
-    if p.exists():
+    try:
+        mtime_ns = p.stat().st_mtime_ns if p.exists() else None
+    except OSError:
+        mtime_ns = None
+    with _CONFIG_LOCK:
+        if _CONFIG_CACHE is not None and _CONFIG_CACHE_PATH == p and _CONFIG_CACHE_MTIME_NS == mtime_ns:
+            return copy.deepcopy(_CONFIG_CACHE)
+
+        cfg = copy.deepcopy(DEFAULT_APP_CONFIG)
+        if p.exists():
+            try:
+                loaded = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+                if isinstance(loaded, dict):
+                    cfg = _deep_merge(cfg, loaded)
+            except (OSError, yaml.YAMLError, TypeError, ValueError) as exc:
+                log.warning("Failed to load app config from %s, using defaults: %s", p, exc)
+        _CONFIG_CACHE = cfg
+        _CONFIG_CACHE_MTIME_NS = mtime_ns
+        _CONFIG_CACHE_PATH = p
+        return copy.deepcopy(cfg)
+
+
+def clear_app_config_cache() -> None:
+    global _CONFIG_CACHE, _CONFIG_CACHE_MTIME_NS, _CONFIG_CACHE_PATH
+    with _CONFIG_LOCK:
+        _CONFIG_CACHE = None
+        _CONFIG_CACHE_MTIME_NS = None
+        _CONFIG_CACHE_PATH = None
+
+
+def raw_app_config() -> Dict[str, Any]:
+    p = app_config_path()
+    if not p.exists():
+        return {}
+    loaded = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    if not isinstance(loaded, dict):
+        raise ValueError("app config YAML must contain an object at the top level")
+    return loaded
+
+
+def write_app_config(raw_config: Dict[str, Any]) -> None:
+    if not isinstance(raw_config, dict):
+        raise ValueError("app config must be an object")
+    p = app_config_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    content = yaml.safe_dump(raw_config, sort_keys=False, allow_unicode=False)
+    with _CONFIG_LOCK:
+        fd, tmp_name = tempfile.mkstemp(prefix=f".{p.name}.", suffix=".tmp", dir=str(p.parent), text=True)
+        tmp_path = Path(tmp_name)
         try:
-            loaded = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-            if isinstance(loaded, dict):
-                cfg = _deep_merge(cfg, loaded)
-        except (OSError, yaml.YAMLError, TypeError, ValueError) as exc:
-            log.warning("Failed to load app config from %s, using defaults: %s", p, exc)
-    return cfg
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+            try:
+                os.replace(tmp_path, p)
+            except OSError as exc:
+                if exc.errno != errno.EBUSY:
+                    raise
+                # Docker single-file bind mounts can reject atomic replace with
+                # EBUSY. In that case keep the mount identity and update the
+                # file contents in place.
+                p.write_text(content, encoding="utf-8")
+            clear_app_config_cache()
+        finally:
+            if tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except OSError:
+                    pass
 
 
 def resolve_path(path_value: str, base_dir: Path) -> Path:

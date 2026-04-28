@@ -330,7 +330,7 @@ def acquire_missing_data(max_retries=5, retry_delay=300, fallback_source=None):
                         if _is_rate_limit_error_message(err_msg):
                             day_failed = True
                             summary["rate_limited"] = True
-                            cooldown_until = pd.Timestamp.utcnow() + pd.Timedelta(minutes=RATE_LIMIT_COOLDOWN_MINUTES)
+                            cooldown_until = pd.Timestamp.utcnow() + pd.Timedelta(minutes=_resolve_rate_limit_cooldown_minutes())
                             if cooldown_until.tzinfo is None:
                                 cooldown_until = cooldown_until.tz_localize("UTC")
                             else:
@@ -389,7 +389,7 @@ def acquire_missing_data(max_retries=5, retry_delay=300, fallback_source=None):
                     if _is_rate_limit_error_message(e):
                         day_failed = True
                         summary["rate_limited"] = True
-                        cooldown_until = pd.Timestamp.utcnow() + pd.Timedelta(minutes=RATE_LIMIT_COOLDOWN_MINUTES)
+                        cooldown_until = pd.Timestamp.utcnow() + pd.Timedelta(minutes=_resolve_rate_limit_cooldown_minutes())
                         if cooldown_until.tzinfo is None:
                             cooldown_until = cooldown_until.tz_localize("UTC")
                         else:
