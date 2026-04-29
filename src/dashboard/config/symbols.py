@@ -34,7 +34,7 @@ SYMBOLS: Dict[str, Dict[str, Any]] = {
         "source": {
             "type": "yfinance",
             "ticker_format": "{symbol}{month_code}{yy}.{exchange}",
-            "roll_rule": "weds_before_third_friday",
+            "roll_rule": "equity_index_3bd_before_ltd",
             "months": QUARTERLY_MONTHS,
             "codes": QUARTERLY_CODES,
         },
@@ -51,7 +51,7 @@ SYMBOLS: Dict[str, Dict[str, Any]] = {
         "source": {
             "type": "yfinance",
             "ticker_format": "{symbol}{month_code}{yy}.{exchange}",
-            "roll_rule": "weds_before_third_friday",
+            "roll_rule": "equity_index_3bd_before_ltd",
             "months": QUARTERLY_MONTHS,
             "codes": QUARTERLY_CODES,
         },
@@ -68,7 +68,7 @@ SYMBOLS: Dict[str, Dict[str, Any]] = {
         "source": {
             "type": "yfinance",
             "ticker_format": "{symbol}{month_code}{yy}.{exchange}",
-            "roll_rule": "weds_before_third_friday",
+            "roll_rule": "equity_index_3bd_before_ltd",
             "months": QUARTERLY_MONTHS,
             "codes": QUARTERLY_CODES,
         },
@@ -85,7 +85,7 @@ SYMBOLS: Dict[str, Dict[str, Any]] = {
         "source": {
             "type": "yfinance",
             "ticker_format": "{symbol}{month_code}{yy}.{exchange}",
-            "roll_rule": "weds_before_third_friday",
+            "roll_rule": "fx_3bd_before_ltd",
             "months": QUARTERLY_MONTHS,
             "codes": QUARTERLY_CODES,
         },
@@ -102,7 +102,7 @@ SYMBOLS: Dict[str, Dict[str, Any]] = {
         "source": {
             "type": "yfinance",
             "ticker_format": "{symbol}{month_code}{yy}.{exchange}",
-            "roll_rule": "weds_before_third_friday",
+            "roll_rule": "fx_3bd_before_ltd",
             "months": QUARTERLY_MONTHS,
             "codes": QUARTERLY_CODES,
         },
@@ -119,7 +119,7 @@ SYMBOLS: Dict[str, Dict[str, Any]] = {
         "source": {
             "type": "yfinance",
             "ticker_format": "{symbol}{month_code}{yy}.{exchange}",
-            "roll_rule": "last_wednesday",
+            "roll_rule": "crypto_3bd_before_ltd",
             "months": MONTHLY_MONTHS,
             "codes": MONTHLY_CODES,
         },
@@ -136,7 +136,7 @@ SYMBOLS: Dict[str, Dict[str, Any]] = {
         "source": {
             "type": "yfinance",
             "ticker_format": "{symbol}{month_code}{yy}.{exchange}",
-            "roll_rule": "last_wednesday",
+            "roll_rule": "crypto_3bd_before_ltd",
             "months": MONTHLY_MONTHS,
             "codes": MONTHLY_CODES,
         },

@@ -149,6 +149,13 @@ def get_third_friday(year, month):
     third_friday = first_friday + datetime.timedelta(weeks=2)
     return third_friday
 
+def get_third_wednesday(year, month):
+    """Calculate the third Wednesday of the given month and year."""
+    first_day = datetime.date(year, month, 1)
+    first_wednesday = first_day + datetime.timedelta(days=(2 - first_day.weekday() + 7) % 7)
+    third_wednesday = first_wednesday + datetime.timedelta(weeks=2)
+    return third_wednesday
+
 def get_last_wednesday(year, month):
     """Calculate the last Wednesday of the given month and year."""
     next_month = month % 12 + 1
@@ -158,6 +165,58 @@ def get_last_wednesday(year, month):
     days_to_wednesday = (last_day.weekday() - 2) % 7  # Wednesday = 2
     last_wednesday = last_day - datetime.timedelta(days=days_to_wednesday)
     return last_wednesday
+
+def get_last_friday(year, month):
+    """Calculate the last Friday of the given month and year."""
+    next_month = month % 12 + 1
+    next_year = year + (month // 12)
+    first_day_next_month = datetime.date(next_year, next_month, 1)
+    last_day = first_day_next_month - datetime.timedelta(days=1)
+    days_to_friday = (last_day.weekday() - 4) % 7  # Friday = 4
+    last_friday = last_day - datetime.timedelta(days=days_to_friday)
+    return last_friday
+
+def _is_exchange_session(calendar_name, date):
+    """Return whether date is a session on an exchange calendar."""
+    try:
+        cal = get_calendar(calendar_name)
+        return bool(cal.is_session(pd.Timestamp(date)))
+    except (ValueError, KeyError, TypeError, AttributeError) as e:
+        logger.warning(f"Calendar check failed for {calendar_name} on {date}: {e}. Falling back to weekday.")
+        return date.weekday() < 5
+
+def _is_common_exchange_session(calendar_names, date):
+    """Return whether date is a session on every requested exchange calendar."""
+    return all(_is_exchange_session(calendar_name, date) for calendar_name in calendar_names)
+
+def get_previous_common_exchange_session(date, calendar_names=("CME",)):
+    """Walk backward to the nearest date that is open on all requested exchange calendars."""
+    session_date = date
+    while not _is_common_exchange_session(calendar_names, session_date):
+        session_date -= datetime.timedelta(days=1)
+    return session_date
+
+def subtract_exchange_business_days(date, days, calendar_names=("CME",)):
+    """Subtract exchange sessions from a date, excluding the date itself."""
+    session_date = date
+    remaining = days
+    while remaining > 0:
+        session_date -= datetime.timedelta(days=1)
+        if _is_common_exchange_session(calendar_names, session_date):
+            remaining -= 1
+    return session_date
+
+def get_equity_index_last_trading_day(year, month):
+    """Calculate equity index futures LTD: third Friday, adjusted to prior CME session."""
+    return get_previous_common_exchange_session(get_third_friday(year, month), ("CME",))
+
+def get_fx_last_trading_day(year, month):
+    """Calculate FX futures LTD: two CME business days before the third Wednesday."""
+    return subtract_exchange_business_days(get_third_wednesday(year, month), 2, ("CME",))
+
+def get_crypto_last_trading_day(year, month):
+    """Calculate crypto futures LTD: last Friday, adjusted to prior U.K./U.S. business day."""
+    return get_previous_common_exchange_session(get_last_friday(year, month), ("CME", "XLON"))
 
 def get_active_contract(symbol, current_date=None, symbol_cfg=None):
     """Determine the active futures contract using per-symbol roll rules."""
@@ -195,6 +254,28 @@ def get_active_contract(symbol, current_date=None, symbol_cfg=None):
             rollover_date = third_friday - datetime.timedelta(days=2)  # Wednesday before third Friday
         elif roll_rule == "last_wednesday":
             rollover_date = get_last_wednesday(contract_year, contract_month)
+        elif roll_rule == "last_friday":
+            rollover_date = get_last_friday(contract_year, contract_month)
+        elif roll_rule == "crypto_last_trading_day":
+            rollover_date = get_crypto_last_trading_day(contract_year, contract_month)
+        elif roll_rule == "equity_index_3bd_before_ltd":
+            rollover_date = subtract_exchange_business_days(
+                get_equity_index_last_trading_day(contract_year, contract_month),
+                3,
+                ("CME",),
+            )
+        elif roll_rule == "fx_3bd_before_ltd":
+            rollover_date = subtract_exchange_business_days(
+                get_fx_last_trading_day(contract_year, contract_month),
+                3,
+                ("CME",),
+            )
+        elif roll_rule == "crypto_3bd_before_ltd":
+            rollover_date = subtract_exchange_business_days(
+                get_crypto_last_trading_day(contract_year, contract_month),
+                3,
+                ("CME", "XLON"),
+            )
         else:
             rollover_date = None
 
